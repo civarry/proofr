@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Smart Rewrite</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    :root {
+      --primary: #6366f1;
+      --primary-dark: #4f46e5;
+      --secondary: #06b6d4;
+      --dark: #0f172a;
+      --darker: #020617;
+      --light: #f1f5f9;
+      --card-bg: rgba(255, 255, 255, 0.05);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --success: #10b981;
+      --error: #ef4444;
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'Inter', sans-serif;
+      width: 380px;
+      background: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
+      color: var(--light);
+      padding: 0;
+      margin: 0;
+      overflow-x: hidden;
+    }
+    
+    .header {
+      padding: 16px 20px;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+    
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0;
+    }
+    
+    .container {
+      padding: 20px;
+    }
+    
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      transition: all 0.3s ease;
+    }
+    
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+    }
+    
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    
+    .card-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--light);
+    }
+    
+    input, textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--card-border);
+      background: rgba(0, 0, 0, 0.2);
+      color: var(--light);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      margin-bottom: 12px;
+      transition: all 0.3s ease;
+    }
+    
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    }
+    
+    input::placeholder, textarea::placeholder {
+      color: #94a3b8;
+    }
+    
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    
+    .btn {
+      padding: 12px 20px;
+      border-radius: 12px;
+      border: none;
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: linear-gradient(135deg, var(--primary-dark) 0%, #4338ca 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(79, 70, 229, 0.4);
+    }
+    
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--light);
+      border: 1px solid var(--card-border);
+    }
+    
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    }
+    
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--error);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.25);
+      transform: translateY(-2px);
+    }
+    
+    .btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    
+    .btn-full {
+      grid-column: span 2;
+    }
+    
+    .status {
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .status-success {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    
+    .status-error {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--error);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    
+    #output {
+      margin-top: 16px;
+      padding: 16px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 12px;
+      border: 1px solid var(--card-border);
+      font-size: 13px;
+      line-height: 1.6;
+      max-height: 200px;
+      overflow-y: auto;
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+      position: relative;
+      scroll-behavior: smooth;
+    }
+
+    #output::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #output::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 4px;
+    }
+
+    #output::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      transition: all 0.3s ease;
+    }
+
+    #output::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .output-loading {
+      color: #94a3b8;
+      font-style: italic;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .output-loading::after {
+      content: '';
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--primary);
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .output-success {
+      color: var(--light);
+      position: relative;
+      padding-left: 8px;
+      border-left: 2px solid var(--primary);
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    
+    .instructions {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #94a3b8;
+    }
+    
+    .instructions a {
+      color: var(--secondary);
+      text-decoration: none;
+    }
+    
+    .instructions a:hover {
+      text-decoration: underline;
+    }
+    
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+    
+    .fade-in {
+      animation: fadeIn 0.5s ease-in;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">SR</div>
+    <h1>Smart Rewrite</h1>
+  </div>
+  
+  <div class="container">
+    <!-- API Key Section -->
+    <div class="card fade-in">
+      <div class="card-header">
+        <h3>API Key Setup</h3>
+      </div>
+      <div id="apiStatus"></div>
+      <input type="password" id="apiKeyInput" placeholder="Enter your Groq API key...">
+      <div style="display: flex; gap: 10px;">
+        <button id="btnSaveKey" class="btn btn-primary" style="flex: 1;">Save API Key</button>
+        <button id="btnClearKey" class="btn btn-danger" style="flex: 1;">Clear Key</button>
+      </div>
+    </div>
+    
+    <!-- Instructions -->
+    <div class="card fade-in" style="animation-delay: 0.2s;">
+      <div class="card-header">
+        <h3>How to Use</h3>
+      </div>
+      <div class="instructions">
+        <p>1. Get your API key from <a href="https://console.groq.com/keys" target="_blank">Groq Console</a></p>
+        <p>2. Enter and save your API key above</p>
+        <p>3. Select any text on a webpage</p>
+        <p>4. Right-click and choose "Smart Rewrite" from the menu</p>
+        <p>5. Select your desired rewriting style</p>
+        <p><strong>Available Styles:</strong></p>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 5px;">
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Friendly</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Professional</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Concise</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">LinkedIn</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Academic</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Marketing</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Plain English</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 6px; border-radius: 6px; font-size: 11px; text-align: center; display: block;">Executive</span>
+        </div>
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--card-border);">
+          <p style="font-size: 11px; color: #64748b; text-align: center;">
+            By using this extension, you agree to the 
+            <a href="https://groq.com/terms-of-use" target="_blank" rel="noopener noreferrer">Groq Terms of Use</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
