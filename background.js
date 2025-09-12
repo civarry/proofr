@@ -274,7 +274,7 @@ function showRewriteResult(originalText, rewrittenText, tone) {
       // FIX: Close the modal after showing success
       setTimeout(() => {
         window.SmartRewriteModal.hide();
-      }, 2000); // Close after 2 seconds
+      }, 750); // Close after 2 seconds
     }
   } else {
     if (window.SmartRewriteModal) {
