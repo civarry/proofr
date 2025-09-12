@@ -215,6 +215,7 @@
         { id: 'marketing', name: 'Marketing Copy', desc: 'Persuasive and compelling', icon: '📢' },
         { id: 'simple', name: 'Plain English', desc: 'Easy to understand', icon: '📖' },
         { id: 'executive', name: 'Executive Brief', desc: 'Strategic and concise', icon: '📊' },
+        { id: 'news', name: 'News Style', desc: 'Clear, factual, and objective', icon: '📰' },
         { id: 'translate', name: 'Translate', desc: 'Convert text into english', icon: '🔠' }
       ];
       
@@ -336,6 +337,7 @@
         marketing: 'Marketing',
         simple: 'Plain English',
         executive: 'Executive',
+        news: 'News Style',
         translate: 'Translate'
       };
       return names[tone] || tone.charAt(0).toUpperCase() + tone.slice(1);

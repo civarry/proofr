@@ -106,6 +106,7 @@ class StatsManager {
       marketing: 'Marketing',
       simple: 'Plain English',
       executive: 'Executive',
+      news: 'News Style',
       translate: 'Translate'
     };
     return names[style] || style;
@@ -335,6 +336,7 @@ async function clearAPIKey() {
 }
 
 // === Action Handlers ===
+// Complete ActionHandlers object with all fixes
 const ActionHandlers = {
   async getApiKey() {
     try {
@@ -398,11 +400,19 @@ const ActionHandlers = {
           </div>
         </div>
         <div class="modal-footer">
-          <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">Close</button>
+          <button id="closeHistoryModal" class="btn btn-primary">Close</button>
         </div>
       `;
       
-      UIHelper.createModal(modalContent);
+      const modal = UIHelper.createModal(modalContent);
+      
+      // Add event listener for the close button
+      const closeButton = modal.querySelector('#closeHistoryModal');
+      if (closeButton) {
+        closeButton.addEventListener('click', () => {
+          modal.remove();
+        });
+      }
     } catch (error) {
       console.error('Error viewing history:', error);
       UIHelper.showStatus("Error loading history", "error", "❌");
@@ -464,17 +474,21 @@ const ActionHandlers = {
           <li>API keys are stored securely in Chrome's sync storage</li>
           <li>No logs or copies of your text are kept by this extension</li>
         </ul>
-        
-        <p style="margin-top: 16px;">
-          <strong>Contact:</strong> For privacy concerns, contact us at privacy@smartrewrite.com
-        </p>
       </div>
       <div class="modal-footer">
-        <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">Close</button>
+        <button id="closePrivacyModal" class="btn btn-primary">Close</button>
       </div>
     `;
     
-    UIHelper.createModal(modalContent);
+    const modal = UIHelper.createModal(modalContent);
+    
+    // Add event listener for the close button
+    const closeButton = modal.querySelector('#closePrivacyModal');
+    if (closeButton) {
+      closeButton.addEventListener('click', () => {
+        modal.remove();
+      });
+    }
   },
 
   showSupport() {
@@ -500,9 +514,9 @@ const ActionHandlers = {
         
         <p><strong>Still need help?</strong></p>
         <p>
-          Email: support@smartrewrite.com<br>
-          GitHub: github.com/yourusername/smart-rewrite<br>
-          Version: 1.0.0
+          Email: cjcarito15@gmail.com<br>
+          GitHub: github.com/civarry/<br>
+          Version: 1.0.1
         </p>
         
         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -517,11 +531,19 @@ const ActionHandlers = {
         </div>
       </div>
       <div class="modal-footer">
-        <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">Close</button>
+        <button id="closeSupportModal" class="btn btn-primary">Close</button>
       </div>
     `;
     
-    UIHelper.createModal(modalContent);
+    const modal = UIHelper.createModal(modalContent);
+    
+    // Add event listener for the close button
+    const closeButton = modal.querySelector('#closeSupportModal');
+    if (closeButton) {
+      closeButton.addEventListener('click', () => {
+        modal.remove();
+      });
+    }
   }
 };
 

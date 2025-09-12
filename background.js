@@ -75,6 +75,7 @@ chrome.runtime.onInstalled.addListener(() => {
     { id: "rewriteMarketing", title: "📢 Marketing Copy" },
     { id: "rewriteSimple", title: "📖 Plain English" },
     { id: "rewriteExecutive", title: "📊 Executive Brief" },
+    { id: "rewriteNews", title: "📰 News Style" },
     { id: "rewriteEnglish", title: "🔠 Translate" }
   ];
 
@@ -344,75 +345,52 @@ async function callGroqAPI(text, tone) {
 
 function buildSophisticatedPrompt(text, tone) {
   const toneInstructions = {
-    friendly: `Rewrite the following text in a warm, approachable, and conversational tone. 
-    Use inclusive language, contractions, and positive phrasing. 
-    Make it sound like a helpful friend or colleague offering assistance.
-    Keep the core meaning intact while making it more engaging and personable.`,
+    friendly: `Rewrite the following text in a warm, approachable, and conversational tone. Use inclusive language, contractions, and positive phrasing. Keep the meaning intact while making it more engaging and personable.`,
     
-    professional: `Rewrite the following text in a formal, polished, and business-appropriate tone.
-    Use precise language, avoid colloquialisms, and maintain a respectful demeanor.
-    Structure the content logically with clear points while preserving all important information.
-    Ensure it would be appropriate for a business communication, report, or professional setting.`,
+    professional: `Rewrite the following text in a formal, polished, and business-appropriate tone. Use precise language, avoid colloquialisms, and structure logically while preserving important information.`,
     
-    short: `Rewrite the following text to be concise and direct while preserving the core meaning.
-    Eliminate redundancy, unnecessary words, and verbose expressions.
-    Prioritize clarity and impact over elaboration.
-    Create the most efficient version possible without losing essential information.`,
+    short: `Rewrite the following text concisely and directly. Eliminate redundancy and verbose expressions while keeping clarity and impact.`,
+    
+    linkedin: `Rewrite the following text in an engaging, achievement-focused LinkedIn style. Use power words, metrics, and industry buzzwords. Highlight impact and results while staying credible.`,
+    
+    academic: `Rewrite the following text in a scholarly, analytical academic style. Use formal language, precise terminology, and a logical flow. Ensure rigor and clarity for academic content.`,
+    
+    marketing: `Convert the following text into persuasive marketing copy. Use calls-to-action, emotional triggers, and customer benefits. Emphasize value and create urgency while maintaining professionalism.`,
+    
+    simple: `Simplify the following text using basic English and short sentences. Avoid jargon and complex words. Make it clear and accessible for everyone.`,
+    
+    executive: `Condense the following text into an executive summary. Focus on key points, business impact, and actionable insights. Structure for quick scanning by decision-makers.`,
 
-    linkedin: `Rewrite the text in an engaging, achievement-focused LinkedIn style.
-    Use power words, metrics, and compelling language that highlights value.
-    Include appropriate professional buzzwords and industry terminology.
-    Make achievements sound more impressive while maintaining credibility.
-    Focus on impact and results-oriented language.`,
-
-    academic: `Rewrite the text in a scholarly, analytical academic style.
-    Use formal language, precise terminology, and objective tone.
-    Include logical structure and evidence-based reasoning.
-    Maintain intellectual rigor while ensuring clarity.
-    Suitable for academic papers, research, or educational content.`,
-
-    marketing: `Convert the text into persuasive marketing copy.
-    Use compelling calls-to-action and benefit-focused language.
-    Incorporate emotional triggers and persuasive techniques.
-    Emphasize unique value propositions and customer benefits.
-    Create urgency while maintaining professionalism and credibility.`,
-
-    simple: `Simplify the text using basic English vocabulary and structure.
-    Use short sentences and common words that everyone can understand.
-    Avoid jargon, idioms, and complex phrases.
-    Make content accessible to non-native English speakers and general audiences.
-    Maintain clarity while reducing complexity.`,
-
-    executive: `Condense the text into a clear executive summary format.
-    Focus on key points, decisions, and business impact.
-    Use business-appropriate language and strategic framing.
-    Prioritize actionable insights and bottom-line results.
-    Structure for quick scanning by busy executives and decision-makers.`,
-
-    translate: `Translate the following text into English only.
-    Do not rewrite, summarize, or change the meaning.
-    Preserve the original tone, style, and nuances as much as possible.
-    Provide a clear and accurate English translation only.`,
+    news: `Rewrite the following text as a fast, punchy news update. Use very short sentences. Get straight to the facts with no filler. Prioritize urgency and impact, like TikTok or breaking news headlines. Each sentence should deliver one fact quickly.`,
+    
+    translate: `Translate the following text into English only. Do not rewrite or summarize. Preserve the original tone, meaning, and nuances as closely as possible.`,
   };
 
   const baseInstruction = toneInstructions[tone] || toneInstructions.friendly;
   
   return `You are an expert writing assistant. ${baseInstruction}
 
-Text to rewrite:
+Text to process:
 """
 ${text}
 """
 
-Important guidelines:
-- Preserve all factual information and key points
-- Maintain appropriate technical terms when necessary
-- Ensure grammatical correctness and readability
-- Adapt to the requested tone consistently throughout
-- Keep the same general length unless the tone specifically requires otherwise
-- Output ONLY the rewritten text without any additional commentary or explanations
+Process:
+1. Rewrite the text according to the tone instruction.
+2. Internally review for clarity, tone consistency, grammar, and readability.
+3. Quietly refine once or twice if needed to improve quality.
+4. Return only the final polished version.
 
-Rewritten text:`;
+Output requirements:
+- Preserve all facts and key points
+- Maintain the requested tone consistently
+- Keep the same general length unless tone requires otherwise
+- Ensure grammatical correctness and readability
+- Output ONLY the final rewritten text
+- Do NOT include markdown, code blocks, lists, headers, or explanations
+- Return plain text only, no extra formatting
+
+Final rewritten text:`;
 }
 
 function getTemperatureForTone(tone) {
@@ -425,6 +403,7 @@ function getTemperatureForTone(tone) {
     marketing: 0.8,
     simple: 0.4,
     executive: 0.5,
+    news: 0.3,
     translate: 0.2
   };
   
