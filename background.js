@@ -271,6 +271,10 @@ function showRewriteResult(originalText, rewrittenText, tone) {
     
     if (window.SmartRewriteModal) {
       window.SmartRewriteModal.showSuccess("Text replaced successfully!");
+      // FIX: Close the modal after showing success
+      setTimeout(() => {
+        window.SmartRewriteModal.hide();
+      }, 2000); // Close after 2 seconds
     }
   } else {
     if (window.SmartRewriteModal) {
