@@ -335,7 +335,8 @@
         academic: 'Academic',
         marketing: 'Marketing',
         simple: 'Plain English',
-        executive: 'Executive'
+        executive: 'Executive',
+        translate: 'Translate'
       };
       return names[tone] || tone.charAt(0).toUpperCase() + tone.slice(1);
     }
