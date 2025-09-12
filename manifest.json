@@ -1,17 +1,42 @@
 {
   "manifest_version": 3,
-  "name": "Smart Rewrite",
-  "version": "1.0",
-  "description": "Rewrite highlighted text in different tones using Groq AI.",
-  "permissions": ["contextMenus", "scripting", "storage", "activeTab"],
-  "host_permissions": ["https://api.groq.com/*"],
+  "name": "Smart Rewrite - AI Text Enhancement",
+  "version": "1.0.1",
+  "description": "Transform any text into the perfect tone with AI. Professional, friendly, concise, and 5 more writing styles. Works on any website with one-click rewriting.",
+  "permissions": [
+    "contextMenus",
+    "scripting",
+    "storage",
+    "activeTab",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://api.groq.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_title": "Smart Rewrite"
   },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["modal.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["modal.css", "icons/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "icons": {
     "128": "icons/icon128.png"
-  }
+  },
+  "homepage_url": "https://github.com/civarry",
+  "author": "Civarry"
 }

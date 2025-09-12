@@ -1,4 +1,3 @@
-// === API Key Manager Class ===
 class APIKeyManager {
   static async getAPIKey() {
     const result = await chrome.storage.sync.get(['groqAPIKey']);
@@ -19,25 +18,64 @@ class APIKeyManager {
   }
 }
 
-// === Context Menu Creation ===
+class StatsManager {
+  static async getStats() {
+    const result = await chrome.storage.local.get(['rewriteStats']);
+    return result.rewriteStats || {
+      totalRewrites: 0,
+      styleUsage: {},
+      lastUsed: null
+    };
+  }
+
+  static async updateStats(style) {
+    const stats = await this.getStats();
+    stats.totalRewrites++;
+    stats.styleUsage[style] = (stats.styleUsage[style] || 0) + 1;
+    stats.lastUsed = Date.now();
+    
+    await chrome.storage.local.set({ rewriteStats: stats });
+    return stats;
+  }
+}
+
+function isValidGroqAPIKey(apiKey) {
+  return apiKey && apiKey.startsWith("gsk_") && apiKey.length >= 40;
+}
+
+async function validateAPIKey(apiKey) {
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/models", {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("API key validation error:", error);
+    return false;
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  // Create parent menu item
   chrome.contextMenus.create({
     id: "smartRewrite",
     title: "Smart Rewrite",
     contexts: ["selection"]
   });
 
-  // Create submenu items for different tones
   const rewriteModes = [
-    { id: "rewriteFriendly", title: "Friendly Tone" },
-    { id: "rewriteProfessional", title: "Professional Tone" },
-    { id: "rewriteShort", title: "Concise Rewrite" },
-    { id: "rewriteLinkedin", title: "LinkedIn Ready" },
-    { id: "rewriteAcademic", title: "Academic Style" },
-    { id: "rewriteMarketing", title: "Marketing Copy" },
-    { id: "rewriteSimple", title: "Plain English" },
-    { id: "rewriteExecutive", title: "Executive Brief" }
+    { id: "rewriteFriendly", title: "🤝 Friendly Tone" },
+    { id: "rewriteProfessional", title: "👔 Professional Tone" },
+    { id: "rewriteShort", title: "⚡ Concise Rewrite" },
+    { id: "rewriteLinkedin", title: "💼 LinkedIn Ready" },
+    { id: "rewriteAcademic", title: "🎓 Academic Style" },
+    { id: "rewriteMarketing", title: "📢 Marketing Copy" },
+    { id: "rewriteSimple", title: "📖 Plain English" },
+    { id: "rewriteExecutive", title: "📊 Executive Brief" },
+    { id: "rewriteEnglish", title: "🔠 Translate" }
   ];
 
   rewriteModes.forEach(mode => {
@@ -48,18 +86,36 @@ chrome.runtime.onInstalled.addListener(() => {
       contexts: ["selection"]
     });
   });
+
+  chrome.contextMenus.create({
+    id: "separator1",
+    parentId: "smartRewrite",
+    type: "separator",
+    contexts: ["selection"]
+  });
+
+  chrome.contextMenus.create({
+    id: "openSettings",
+    parentId: "smartRewrite",
+    title: "⚙️ Settings",
+    contexts: ["selection"]
+  });
 });
 
-// === Handle Menu Clicks ===
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "openSettings") {
+    chrome.action.openPopup();
+    return;
+  }
+
   if (info.menuItemId.startsWith("rewrite")) {
     try {
-      // Check if API key exists
       const hasKey = await APIKeyManager.hasAPIKey();
       if (!hasKey) {
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: () => alert("Please set your Groq API key in the extension popup first!")
+          func: showErrorMessage,
+          args: ["Please set your Groq API key in the extension popup first! Click the extension icon to get started."]
         });
         return;
       }
@@ -70,63 +126,175 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       if (!text || text.trim().length === 0) {
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: () => alert("Please select some text first!")
+          func: showErrorMessage,
+          args: ["Please select some text first!"]
         });
         return;
       }
 
-      const rewritten = await callGroqAPI(text, tone);
-      
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: replaceSelectedText,
-        args: [rewritten]
+        func: showLoadingModal,
+        args: [text, tone]
       });
+
+      const rewritten = await callGroqAPI(text, tone);
+      
+      await StatsManager.updateStats(tone);
+
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: showRewriteResult,
+        args: [text, rewritten, tone]
+      });
+
     } catch (error) {
       console.error("Error rewriting text:", error);
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: (errorMsg) => alert("Error: " + errorMsg),
+        func: showErrorMessage,
         args: [error.message]
       });
     }
   }
 });
 
-// === Function to Replace Selected Text (injected into page) ===
-function replaceSelectedText(newText) {
-  const selection = window.getSelection();
-  if (selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
-    
-    const activeElement = document.activeElement;
-    if (activeElement && (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT' || activeElement.contentEditable === 'true')) {
-      if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
-        const start = activeElement.selectionStart;
-        const end = activeElement.selectionEnd;
-        const value = activeElement.value;
-        activeElement.value = value.substring(0, start) + newText + value.substring(end);
-        activeElement.setSelectionRange(start, start + newText.length);
-      } else {
-        range.deleteContents();
-        range.insertNode(document.createTextNode(newText));
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  if (message.action === 'quickRewrite') {
+    try {
+      const hasKey = await APIKeyManager.hasAPIKey();
+      if (!hasKey) {
+        chrome.scripting.executeScript({
+          target: { tabId: sender.tab.id },
+          func: showErrorMessage,
+          args: ["Please set your Groq API key first!"]
+        });
+        return;
       }
-    } else {
-      alert("Rewritten Text:\n\n" + newText);
+
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showLoadingModal,
+        args: [message.text, message.tone]
+      });
+
+      const rewritten = await callGroqAPI(message.text, message.tone);
+      await StatsManager.updateStats(message.tone);
+
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showRewriteResult,
+        args: [message.text, rewritten, message.tone]
+      });
+
+    } catch (error) {
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showErrorMessage,
+        args: [error.message]
+      });
     }
+  } else if (message.action === 'rewriteWithTone') {
+    try {
+      const hasKey = await APIKeyManager.hasAPIKey();
+      if (!hasKey) {
+        chrome.scripting.executeScript({
+          target: { tabId: sender.tab.id },
+          func: showErrorMessage,
+          args: ["Please set your Groq API key first!"]
+        });
+        return;
+      }
+
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showLoadingModal,
+        args: [message.text, message.tone]
+      });
+
+      const rewritten = await callGroqAPI(message.text, message.tone);
+      await StatsManager.updateStats(message.tone);
+
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showRewriteResult,
+        args: [message.text, rewritten, message.tone]
+      });
+
+    } catch (error) {
+      chrome.scripting.executeScript({
+        target: { tabId: sender.tab.id },
+        func: showErrorMessage,
+        args: [error.message]
+      });
+    }
+  }
+});
+
+function showErrorMessage(message) {
+  if (window.SmartRewriteModal) {
+    window.SmartRewriteModal.showError(message);
   } else {
-    alert("Rewritten Text:\n\n" + newText);
+    alert("Smart Rewrite Error: " + message);
   }
 }
 
-// === Groq API Call ===
+function showLoadingModal(originalText, tone) {
+  if (window.SmartRewriteModal) {
+    window.SmartRewriteModal.showLoading(originalText, tone);
+  }
+}
+
+function showRewriteResult(originalText, rewrittenText, tone) {
+  const selection = window.getSelection();
+  const activeElement = document.activeElement;
+  
+  const canReplace = activeElement && 
+    (activeElement.tagName === 'TEXTAREA' || 
+     activeElement.tagName === 'INPUT' || 
+     activeElement.contentEditable === 'true') &&
+    selection.rangeCount > 0;
+
+  if (canReplace) {
+    if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
+      const start = activeElement.selectionStart;
+      const end = activeElement.selectionEnd;
+      const value = activeElement.value;
+      activeElement.value = value.substring(0, start) + rewrittenText + value.substring(end);
+      activeElement.setSelectionRange(start, start + rewrittenText.length);
+      activeElement.focus();
+    } else if (activeElement.contentEditable === 'true') {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(rewrittenText));
+    }
+    
+    if (window.SmartRewriteModal) {
+      window.SmartRewriteModal.showSuccess("Text replaced successfully!");
+    }
+  } else {
+    if (window.SmartRewriteModal) {
+      window.SmartRewriteModal.showResult(originalText, rewrittenText, tone);
+    } else {
+      navigator.clipboard.writeText(rewrittenText).then(() => {
+        alert("Rewritten text copied to clipboard:\n\n" + rewrittenText);
+      }).catch(() => {
+        alert("Rewritten text:\n\n" + rewrittenText);
+      });
+    }
+  }
+}
+
 async function callGroqAPI(text, tone) {
   const apiKey = await APIKeyManager.getAPIKey();
   if (!apiKey) {
     throw new Error("API key not found. Please set it in the extension popup.");
   }
 
-  // Use the sophisticated prompt
+  if (!isValidGroqAPIKey(apiKey)) {
+    throw new Error("Invalid API key format. Please check your Groq API key.");
+  }
+
   const prompt = buildSophisticatedPrompt(text, tone);
 
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -138,19 +306,24 @@ async function callGroqAPI(text, tone) {
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 500,
+      max_tokens: 1000,
       temperature: getTemperatureForTone(tone),
       top_p: 0.9,
       frequency_penalty: 0.1,
-      presence_penalty: 0.1
+      presence_penalty: 0.1,
+      stream: false
     })
   });
 
   if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    
     if (response.status === 401) {
-      throw new Error("Invalid API key. Please check your Groq API key.");
+      throw new Error("Invalid API key. Please check your Groq API key in the extension settings.");
     } else if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again later.");
+      throw new Error("Rate limit exceeded. Please try again in a moment.");
+    } else if (response.status === 400) {
+      throw new Error("Request error: " + (errorData.error?.message || "Invalid request"));
     } else {
       throw new Error(`API request failed: ${response.status} ${response.statusText}`);
     }
@@ -162,10 +335,9 @@ async function callGroqAPI(text, tone) {
     throw new Error("Invalid API response format");
   }
   
-  return data.choices[0].message.content;
+  return data.choices[0].message.content.trim();
 }
 
-// Build sophisticated prompt function
 function buildSophisticatedPrompt(text, tone) {
   const toneInstructions = {
     friendly: `Rewrite the following text in a warm, approachable, and conversational tone. 
@@ -189,55 +361,67 @@ function buildSophisticatedPrompt(text, tone) {
     Make achievements sound more impressive while maintaining credibility.
     Focus on impact and results-oriented language.`,
 
+    academic: `Rewrite the text in a scholarly, analytical academic style.
+    Use formal language, precise terminology, and objective tone.
+    Include logical structure and evidence-based reasoning.
+    Maintain intellectual rigor while ensuring clarity.
+    Suitable for academic papers, research, or educational content.`,
+
     marketing: `Convert the text into persuasive marketing copy.
     Use compelling calls-to-action and benefit-focused language.
     Incorporate emotional triggers and persuasive techniques.
     Emphasize unique value propositions and customer benefits.
-    Create urgency while maintaining professionalism.`,
+    Create urgency while maintaining professionalism and credibility.`,
 
     simple: `Simplify the text using basic English vocabulary and structure.
-    Use short sentences and common words.
-    Avoid idioms, jargon, and complex phrases.
-    Make content accessible to non-native English speakers.
+    Use short sentences and common words that everyone can understand.
+    Avoid jargon, idioms, and complex phrases.
+    Make content accessible to non-native English speakers and general audiences.
     Maintain clarity while reducing complexity.`,
 
-    executive: `Condense the text into a clear executive summary.
+    executive: `Condense the text into a clear executive summary format.
     Focus on key points, decisions, and business impact.
     Use business-appropriate language and strategic framing.
     Prioritize actionable insights and bottom-line results.
-    Structure for quick scanning by busy executives.`,
+    Structure for quick scanning by busy executives and decision-makers.`,
+
+    translate: `Translate the following text into English only.
+    Do not rewrite, summarize, or change the meaning.
+    Preserve the original tone, style, and nuances as much as possible.
+    Provide a clear and accurate English translation only.`,
   };
 
   const baseInstruction = toneInstructions[tone] || toneInstructions.friendly;
   
-  return `As an expert writing assistant, please ${baseInstruction}
+  return `You are an expert writing assistant. ${baseInstruction}
 
 Text to rewrite:
 """
 ${text}
 """
 
-Guidelines:
+Important guidelines:
 - Preserve all factual information and key points
 - Maintain appropriate technical terms when necessary
 - Ensure grammatical correctness and readability
 - Adapt to the requested tone consistently throughout
-- Output only the rewritten text without additional commentary
+- Keep the same general length unless the tone specifically requires otherwise
+- Output ONLY the rewritten text without any additional commentary or explanations
 
 Rewritten text:`;
 }
 
-// Add temperature control
 function getTemperatureForTone(tone) {
   const temperatures = {
-    friendly: 0.7,     // More creative for friendly tone
-    professional: 0.3, // More deterministic for professional tone
-    short: 0.4,       // Balanced for concise rewriting
-    linkedin: 0.7,    // More creative for engagement
-    academic: 0.3,    // More precise for accuracy
-    marketing: 0.8,   // More creative for persuasion
-    simple: 0.4,      // Balanced for clarity
-    executive: 0.5    // Balanced for professionalism
+    friendly: 0.7,
+    professional: 0.3,
+    short: 0.4,
+    linkedin: 0.7,
+    academic: 0.3,
+    marketing: 0.8,
+    simple: 0.4,
+    executive: 0.5,
+    translate: 0.2
   };
   
   return temperatures[tone] || 0.5;
