@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Proofr – Private AI Proofreader & Rewriter",
   "version": "1.2.0",
-  "description": "Free, private AI to proofread, rewrite in any tone & translate — on-device, no account, no API key. Works in Gmail, Docs & more.",
+  "description": "Free, private AI that proofreads, rewrites in any tone, and translates. Runs on your device. No account, no API key.",
   "permissions": [
     "contextMenus",
     "scripting",

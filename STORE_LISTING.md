@@ -15,7 +15,7 @@ Proofr – Private AI Proofreader, Rewriter & Translator
 
 ## Short description (max 132 chars)
 ```
-Free, private AI to proofread, rewrite in any tone & translate — on-device, no account, no API key. Works in Gmail, Docs & more.
+Free, private AI that proofreads, rewrites in any tone, and translates. Runs on your device. No account, no API key.
 ```
 
 ## Category
@@ -25,32 +25,38 @@ Free, private AI to proofread, rewrite in any tone & translate — on-device, no
 
 ## Detailed description
 
-> Front-loaded first paragraph = the part the ranking algorithm reads. Keep it first.
+> Keep the first paragraph first. It carries the most ranking weight, and it front-loads the keywords without sounding stuffed. No em-dashes, plain voice.
 
-**Proofr is a free, private AI writing assistant that proofreads your grammar and spelling, rewrites text in any tone, and translates — all on-device using Chrome's Built-in AI, so your text never leaves your computer. No account, no login, no API key.** Select text on any page, right‑click, and get a cleaner sentence in a click.
+Proofr is a free AI proofreader, rewriter, and translator that lives in your right-click menu. Select any text on a page, then pick what you want: fix the grammar, rewrite it in a different tone, or translate it. You get a cleaner version in a second, right where you were typing.
 
-Most writing tools send everything you type to the cloud and hide the good parts behind a login and a paywall. Proofr flips that: it runs locally, works offline after a one‑time model download, and asks for nothing.
+Most writing tools send everything you type to their servers and make you sign in first. Proofr works differently. By default it runs on your own computer using Chrome's built-in AI, so your text never leaves your machine. There is no account, no login, and no API key to set up.
 
-**What you can do**
-- ✅ **Proofread** — fix grammar, spelling, and punctuation while keeping your exact wording and voice
-- 🔁 **Rewrite in any tone** — Professional, Friendly, Concise, Plain English, LinkedIn, Marketing, Executive, Academic, News
-- 🌐 **Translate** — into English, Spanish, French, German, or Japanese
-- ✍️ **Replace inline** — in editable fields it swaps your text in place; elsewhere it shows a clean side‑by‑side you can copy
+What you can do:
+- Proofread. Fix grammar, spelling, and punctuation while keeping your own wording and voice.
+- Rewrite in a tone that fits: Professional, Friendly, Concise, Plain English, LinkedIn, Marketing, Executive, Academic, or News.
+- Translate into English, Spanish, French, German, or Japanese.
 
-**Why Proofr**
-- 🔒 **Private by default** — on‑device AI means your text stays on your machine. Nothing is tracked or sent to us.
-- 🆓 **Actually free** — no account, no trial, no word limit for the on‑device engine.
-- ⚡ **Everywhere you type** — Gmail, Google Docs, LinkedIn, X/Twitter, Notion, and any text box.
-- 🔌 **Optional power mode** — add a free Groq API key to use a larger cloud model for more languages and tougher text. Your choice, off by default.
+How it works:
+1. Install it. There is nothing to sign up for.
+2. Select some text on any page.
+3. Right-click and choose Proofr, then pick proofread, a tone, or translate. You can also press Ctrl+Shift+R for a quick fix.
 
-**How it works**
-1. Install — no sign‑up.
-2. Select any text on a page.
-3. Right‑click → Proofr → pick Proofread, a tone, or Translate. (Or press Ctrl+Shift+R for a quick fix.)
+In an editable field like a Gmail draft or a comment box, Proofr replaces your text in place. Everywhere else it shows the result in a small panel you can copy from.
 
-**Great for** students, non‑native English writers, job seekers polishing LinkedIn posts, professionals cleaning up email, and anyone who wants private, one‑click writing help.
+Why people use it:
+- It is genuinely free, with no word limit on the on-device engine.
+- It is private. Your writing stays on your computer.
+- It works where you already write: Gmail, Google Docs, LinkedIn, X, Notion, and any text box.
+- It stays out of the way. No sidebars and no pop-ups while you type.
 
-Proofr uses Chrome's Built‑in AI (Gemini Nano) on‑device. On‑device supports English, Spanish, French, German, and Japanese; other languages use the optional Groq engine.
+Want more power? You can add a free Groq API key to switch to a larger cloud model that handles more languages and harder text. That is optional and off by default. If you use it, your text goes straight to Groq for processing, and nothing passes through us.
+
+Your privacy, in plain terms:
+- On-device by default, so your text is not sent anywhere.
+- No accounts, no tracking, no analytics, no ads.
+- Your settings and optional key are stored only in your browser.
+
+Try it: select some text, right-click, and see the difference.
 
 ---
 

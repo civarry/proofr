@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Build & marketing artifacts (regenerable, not source)
+*.zip
+/screenshots/
+/store-screenshots/
+
+# Python
+__pycache__/
+*.pyc

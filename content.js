@@ -111,12 +111,43 @@
       return '';
     }
 
+    // True when the focused element is a field we can replace text in.
+    isEditableTarget() {
+      const el = document.activeElement;
+      return !!(el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable));
+    }
+
+    // A small corner indicator for inline replacements — no full modal.
+    showLoadingToast(tone) {
+      this.hideLoadingToast();
+      const toneName = this.getToneName(tone);
+      const label = tone === 'translate' ? 'Translating' : `Rewriting to ${toneName}`;
+      const toast = document.createElement('div');
+      toast.className = 'sr-loading-toast';
+      toast.id = 'sr-loading-toast';
+      toast.innerHTML = `<span class="sr-toast-spin"></span><span>${label}…</span>`;
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('sr-show'));
+    }
+
+    hideLoadingToast() {
+      const toast = document.getElementById('sr-loading-toast');
+      if (toast) {
+        toast.classList.remove('sr-show');
+        setTimeout(() => toast.remove(), 200);
+      }
+    }
+
     showLoading(originalText, tone, targetLang) {
       this.currentText = originalText;
       this.currentTone = tone;
       this.currentRewrite = '';
       if (targetLang) this.currentLang = targetLang;
       this.busy = true;
+
+      // Editable target → the result gets replaced in place, so skip the big modal
+      // and show a light corner indicator instead.
+      if (this.isEditableTarget()) { this.showLoadingToast(tone); return; }
 
       if (!this.modal) this.createModal();
 
@@ -149,6 +180,7 @@
       this.currentRewrite = rewrittenText;
       this.currentTone = tone;
       this.busy = false;
+      this.hideLoadingToast();
       if (targetLang) this.currentLang = targetLang;
 
       if (!this.modal) this.createModal();
@@ -182,6 +214,7 @@
 
     showError(message) {
       this.busy = false;
+      this.hideLoadingToast();
       if (!this.modal) this.createModal();
 
       document.getElementById('sr-modal-content').innerHTML = `
@@ -213,6 +246,8 @@
     }
 
     showSuccess(message) {
+      this.busy = false;
+      this.hideLoadingToast();
       const notification = document.createElement('div');
       notification.className = 'sr-success-notification';
       notification.innerHTML = `
