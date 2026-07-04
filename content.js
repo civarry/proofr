@@ -20,9 +20,8 @@
           <div class="sr-modal-container">
             <div class="sr-modal-header">
               <div class="sr-modal-title">
-                <div class="sr-logo">SR</div>
-                <h3>Smart Rewrite</h3>
-                <span class="sr-tone-badge" id="sr-tone-badge"></span>
+                <div class="sr-logo">${(typeof SR_LOGO_SVG !== 'undefined') ? SR_LOGO_SVG : 'SR'}</div>
+                <h3>Proofr</h3>
               </div>
               <button class="sr-close-btn" id="sr-close-btn">✕</button>
             </div>
@@ -60,106 +59,134 @@
       });
     }
 
-    showLoading(originalText, tone) {
+    toneChipsHtml(activeTone) {
+      const tones = (typeof SR_TONES !== 'undefined') ? SR_TONES : [];
+      const icon = (id) => (typeof SR_iconFor === 'function') ? SR_iconFor(id) : '';
+      return `<div class="sr-chips">${tones.map(t => `
+        <button class="sr-chip ${t.id === activeTone ? 'sr-chip-active' : ''}" data-tone="${t.id}" title="${t.desc}">
+          <span class="sr-chip-ic">${icon(t.id)}</span><span class="sr-chip-label">${t.name}</span>
+        </button>`).join('')}</div>`;
+    }
+
+    bindChips() {
+      this.modal.querySelectorAll('.sr-chip').forEach(chip => {
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (this.busy) return;
+          const selected = e.currentTarget.dataset.tone;
+          if (selected !== this.currentTone) this.rewriteWithTone(selected);
+        });
+      });
+    }
+
+    // Shown only for the Translate tone: pick the target language.
+    langRowHtml(tone, targetLang) {
+      if (tone !== 'translate' || typeof SR_LANGUAGES === 'undefined') return '';
+      const current = targetLang || this.currentLang || 'en';
+      const opts = SR_LANGUAGES
+        .map(l => `<option value="${l.code}" ${l.code === current ? 'selected' : ''}>${l.name}</option>`)
+        .join('');
+      return `<div class="sr-lang-row">
+        <span>Translate to</span>
+        <select class="sr-lang-select" id="sr-lang-select">${opts}</select>
+      </div>`;
+    }
+
+    bindLangRow() {
+      const select = this.modal.querySelector('#sr-lang-select');
+      if (!select) return;
+      select.addEventListener('change', (e) => {
+        e.stopPropagation();
+        if (this.busy) return;
+        const code = e.target.value;
+        this.currentLang = code;
+        try { chrome.storage.sync.set({ srTargetLang: code }); } catch (_) {}
+        this.rewriteWithTone('translate', code);
+      });
+    }
+
+    providerLabel(provider) {
+      if (provider === 'device') return 'On-device';
+      if (provider === 'groq') return 'Groq';
+      return '';
+    }
+
+    showLoading(originalText, tone, targetLang) {
       this.currentText = originalText;
       this.currentTone = tone;
-      
+      this.currentRewrite = '';
+      if (targetLang) this.currentLang = targetLang;
+      this.busy = true;
+
       if (!this.modal) this.createModal();
-      
+
       const toneName = this.getToneName(tone);
-      const truncatedText = originalText.length > 100 ? originalText.substring(0, 100) + '...' : originalText;
-      
-      document.getElementById('sr-tone-badge').textContent = toneName;
-      
+      const working = tone === 'translate' ? 'Translating' : `Rewriting to ${toneName}`;
+
       document.getElementById('sr-modal-content').innerHTML = `
-        <div class="sr-loading-content">
-          <div class="sr-loading-spinner"></div>
-          <h4>Rewriting your text...</h4>
-          <p>Converting to <strong>${toneName}</strong> style</p>
-          <div class="sr-original-preview">
-            <strong>Original:</strong>
-            <p>"${truncatedText}"</p>
-          </div>
+        ${this.toneChipsHtml(tone)}
+        ${this.langRowHtml(tone, this.currentLang)}
+        <div class="sr-skeleton" role="status" aria-label="${working}">
+          <div class="sr-skeleton-line"></div>
+          <div class="sr-skeleton-line"></div>
+          <div class="sr-skeleton-line"></div>
+          <div class="sr-skeleton-line"></div>
         </div>
       `;
-      
+
       document.getElementById('sr-modal-footer').innerHTML = `
-        <div class="sr-loading-footer">
-          <p>Powered by Groq AI • Please wait...</p>
-        </div>
+        <button class="sr-btn sr-btn-primary" disabled>Copy</button>
+        <span class="sr-hint">${working}…</span>
       `;
-      
+
+      this.bindChips();
+      this.bindLangRow();
       this.show();
     }
 
-    showResult(originalText, rewrittenText, tone) {
+    showResult(originalText, rewrittenText, tone, provider, targetLang) {
       this.currentText = originalText;
       this.currentRewrite = rewrittenText;
       this.currentTone = tone;
-      
+      this.busy = false;
+      if (targetLang) this.currentLang = targetLang;
+
       if (!this.modal) this.createModal();
-      
-      const toneName = this.getToneName(tone);
-      
-      document.getElementById('sr-tone-badge').textContent = toneName;
-      
+
       document.getElementById('sr-modal-content').innerHTML = `
-        <div class="sr-result-content">
-          <div class="sr-text-comparison">
-            <div class="sr-text-section">
-              <h4>Original Text</h4>
-              <div class="sr-text-box sr-original sr-scrollable">${this.escapeHtml(originalText)}</div>
-            </div>
-            <div class="sr-arrow">→</div>
-            <div class="sr-text-section">
-              <h4>Rewritten (${toneName})</h4>
-              <div class="sr-text-box sr-rewritten sr-scrollable" id="sr-rewritten-text">${this.escapeHtml(rewrittenText)}</div>
-            </div>
-          </div>
-        </div>
+        ${this.toneChipsHtml(tone)}
+        ${this.langRowHtml(tone, targetLang)}
+        <div class="sr-result-box sr-scrollable" id="sr-rewritten-text">${this.escapeHtml(rewrittenText)}</div>
+        <details class="sr-original">
+          <summary>Show original</summary>
+          <div class="sr-original-text">${this.escapeHtml(originalText)}</div>
+        </details>
       `;
-      
+
+      const engineName = this.providerLabel(provider);
+      const engineTag = engineName ? `<span class="sr-engine">${engineName}</span>` : '';
       document.getElementById('sr-modal-footer').innerHTML = `
-        <div class="sr-action-buttons">
-          <button class="sr-btn sr-btn-primary" id="sr-copy-btn">
-            📋 Copy to Clipboard
-          </button>
-          <button class="sr-btn sr-btn-secondary" id="sr-select-text-btn">
-            🔍 Select Text
-          </button>
-          <button class="sr-btn sr-btn-secondary" id="sr-rewrite-again-btn">
-            🔄 Try Different Tone
-          </button>
-        </div>
-        <div class="sr-footer-info">
-          <p>💡 Tip: Press Ctrl+C to copy • ESC to close</p>
-        </div>
+        <button class="sr-btn sr-btn-primary" id="sr-copy-btn">Copy</button>
+        <span class="sr-hint">Tap a tone to rewrite again · Esc to close</span>
+        ${engineTag}
       `;
-      
+
       document.getElementById('sr-copy-btn').addEventListener('click', () => {
         this.copyToClipboard(rewrittenText);
       });
-      
-      document.getElementById('sr-select-text-btn').addEventListener('click', () => {
-        this.selectText('sr-rewritten-text');
-      });
-      
-      document.getElementById('sr-rewrite-again-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.showToneSelector();
-      });
-      
+
+      this.bindChips();
+      this.bindLangRow();
       this.show();
     }
 
     showError(message) {
+      this.busy = false;
       if (!this.modal) this.createModal();
-      
-      document.getElementById('sr-tone-badge').textContent = 'Error';
-      
+
       document.getElementById('sr-modal-content').innerHTML = `
         <div class="sr-error-content">
-          <div class="sr-error-icon">⚠️</div>
+          <div class="sr-error-icon"><svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7.5" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg></div>
           <h4>Something went wrong</h4>
           <p class="sr-error-message">${this.escapeHtml(message)}</p>
           <div class="sr-error-tips">
@@ -190,7 +217,7 @@
       notification.className = 'sr-success-notification';
       notification.innerHTML = `
         <div class="sr-success-content">
-          <span class="sr-success-icon">✅</span>
+          <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
         </div>
       `;
@@ -205,58 +232,11 @@
       }, 3000);
     }
 
-    showToneSelector() {
-      const tones = [
-        { id: 'friendly', name: 'Friendly Tone', desc: 'Warm and approachable', icon: '🤝' },
-        { id: 'professional', name: 'Professional Tone', desc: 'Formal and business-appropriate', icon: '👔' },
-        { id: 'short', name: 'Concise Rewrite', desc: 'Brief and to the point', icon: '⚡' },
-        { id: 'linkedin', name: 'LinkedIn Ready', desc: 'Perfect for professional networking', icon: '💼' },
-        { id: 'academic', name: 'Academic Style', desc: 'Scholarly and formal', icon: '🎓' },
-        { id: 'marketing', name: 'Marketing Copy', desc: 'Persuasive and compelling', icon: '📢' },
-        { id: 'simple', name: 'Plain English', desc: 'Easy to understand', icon: '📖' },
-        { id: 'executive', name: 'Executive Brief', desc: 'Strategic and concise', icon: '📊' },
-        { id: 'news', name: 'News Style', desc: 'Clear, factual, and objective', icon: '📰' },
-        { id: 'translate', name: 'Translate', desc: 'Convert text into english', icon: '🔠' }
-      ];
-      
-      document.getElementById('sr-modal-content').innerHTML = `
-        <div class="sr-tone-selector">
-          <h4>Choose a different tone:</h4>
-          <div class="sr-tone-grid">
-            ${tones.map(tone => `
-              <button class="sr-tone-option ${tone.id === this.currentTone ? 'sr-active' : ''}" data-tone="${tone.id}">
-                <span class="sr-tone-icon">${tone.icon}</span>
-                <span class="sr-tone-name">${tone.name}</span>
-                <span class="sr-tone-desc">${tone.desc}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
-      `;
-      
-      document.getElementById('sr-modal-footer').innerHTML = `
-        <div class="sr-action-buttons">
-          <button class="sr-btn sr-btn-secondary" onclick="window.SmartRewriteModal.hide()">
-            Cancel
-          </button>
-        </div>
-      `;
-      
-      document.querySelectorAll('.sr-tone-option').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const selectedTone = e.currentTarget.dataset.tone;
-          this.rewriteWithTone(selectedTone);
-        });
-      });
-    }
-
     show() {
       if (this.modal) {
         this.modal.style.display = 'block';
-        document.body.style.overflow = 'hidden';
         this.isVisible = true;
-        
+
         setTimeout(() => {
           this.modal.classList.add('sr-visible');
         }, 10);
@@ -268,7 +248,6 @@
         this.modal.classList.remove('sr-visible');
         setTimeout(() => {
           this.modal.style.display = 'none';
-          document.body.style.overflow = '';
           this.isVisible = false;
         }, 300);
       }
@@ -306,7 +285,7 @@
       const copyBtn = document.getElementById('sr-copy-btn');
       if (copyBtn) {
         const originalText = copyBtn.textContent;
-        copyBtn.textContent = '✅ Copied!';
+        copyBtn.textContent = 'Copied';
         copyBtn.classList.add('sr-success');
         
         setTimeout(() => {
@@ -316,31 +295,9 @@
       }
     }
 
-    selectText(elementId) {
-      const element = document.getElementById(elementId);
-      if (element) {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        const selection = window.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    }
-
     getToneName(tone) {
-      const names = {
-        friendly: 'Friendly',
-        professional: 'Professional',
-        short: 'Concise',
-        linkedin: 'LinkedIn',
-        academic: 'Academic',
-        marketing: 'Marketing',
-        simple: 'Plain English',
-        executive: 'Executive',
-        news: 'News Style',
-        translate: 'Translate'
-      };
-      return names[tone] || tone.charAt(0).toUpperCase() + tone.slice(1);
+      if (typeof SR_getToneName === 'function') return SR_getToneName(tone);
+      return tone.charAt(0).toUpperCase() + tone.slice(1);
     }
 
     escapeHtml(text) {
@@ -349,13 +306,15 @@
       return div.innerHTML;
     }
 
-    rewriteWithTone(tone) {
-      this.showLoading(this.currentText, tone);
-      
+    rewriteWithTone(tone, targetLang) {
+      const lang = targetLang || this.currentLang;
+      this.showLoading(this.currentText, tone, lang);
+
       chrome.runtime.sendMessage({
         action: 'rewriteWithTone',
         text: this.currentText,
-        tone: tone
+        tone: tone,
+        targetLang: lang
       });
     }
   }
@@ -376,81 +335,6 @@
         });
       }
     }
-  });
-
-  function getSelectionContext() {
-    const selection = window.getSelection();
-    const activeElement = document.activeElement;
-    
-    return {
-      hasSelection: selection.toString().trim().length > 0,
-      selectedText: selection.toString().trim(),
-      isEditable: activeElement && (
-        activeElement.tagName === 'TEXTAREA' ||
-        activeElement.tagName === 'INPUT' ||
-        activeElement.contentEditable === 'true'
-      ),
-      canReplace: selection.rangeCount > 0 && !selection.isCollapsed,
-      elementType: activeElement ? activeElement.tagName.toLowerCase() : null
-    };
-  }
-
-  chrome.runtime.onMessage?.addListener((message, sender, sendResponse) => {
-    if (message.action === 'showLoading') {
-      window.SmartRewriteModal.showLoading(message.text, message.tone);
-    } else if (message.action === 'showResult') {
-      window.SmartRewriteModal.showResult(message.originalText, message.rewrittenText, message.tone);
-    } else if (message.action === 'showError') {
-      window.SmartRewriteModal.showError(message.error);
-    }
-    
-    sendResponse({ success: true });
-  });
-
-  function enhanceTextAreas() {
-    const textAreas = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
-    
-    textAreas.forEach(element => {
-      if (!element.hasAttribute('data-sr-enhanced')) {
-        element.setAttribute('data-sr-enhanced', 'true');
-        
-        element.addEventListener('contextmenu', (e) => {
-          const selectedText = element.value ? 
-            element.value.substring(element.selectionStart, element.selectionEnd) :
-            window.getSelection().toString();
-            
-          if (selectedText.trim()) {
-            window._srActiveElement = element;
-          }
-        });
-      }
-    });
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', enhanceTextAreas);
-  } else {
-    enhanceTextAreas();
-  }
-
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          if (node.matches('textarea, input[type="text"], [contenteditable="true"]')) {
-            enhanceTextAreas();
-          }
-          if (node.querySelector && node.querySelector('textarea, input[type="text"], [contenteditable="true"]')) {
-            enhanceTextAreas();
-          }
-        }
-      });
-    });
-  });
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
   });
 
 })();

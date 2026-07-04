@@ -1,31 +1,27 @@
+// Shared tone metadata + Groq call (SR_TONES, SR_rewrite, SR_getToneName, …)
+importScripts('constants.js');
+
 class APIKeyManager {
   static async getAPIKey() {
     const result = await chrome.storage.sync.get(['groqAPIKey']);
     return result.groqAPIKey || null;
   }
 
-  static async setAPIKey(apiKey) {
-    await chrome.storage.sync.set({ groqAPIKey: apiKey });
-  }
-
   static async hasAPIKey() {
     const apiKey = await this.getAPIKey();
     return apiKey && apiKey.trim().length > 0;
   }
+}
 
-  static async clearAPIKey() {
-    await chrome.storage.sync.remove(['groqAPIKey']);
-  }
+async function getSettings() {
+  const r = await chrome.storage.sync.get(['srEngine', 'srTargetLang']);
+  return { engine: r.srEngine || 'auto', targetLang: r.srTargetLang || 'en' };
 }
 
 class StatsManager {
   static async getStats() {
     const result = await chrome.storage.local.get(['rewriteStats']);
-    return result.rewriteStats || {
-      totalRewrites: 0,
-      styleUsage: {},
-      lastUsed: null
-    };
+    return result.rewriteStats || { totalRewrites: 0, styleUsage: {}, lastUsed: null };
   }
 
   static async updateStats(style) {
@@ -33,226 +29,169 @@ class StatsManager {
     stats.totalRewrites++;
     stats.styleUsage[style] = (stats.styleUsage[style] || 0) + 1;
     stats.lastUsed = Date.now();
-    
     await chrome.storage.local.set({ rewriteStats: stats });
     return stats;
   }
 }
 
-function isValidGroqAPIKey(apiKey) {
-  return apiKey && apiKey.startsWith("gsk_") && apiKey.length >= 40;
-}
-
-async function validateAPIKey(apiKey) {
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/models", {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      }
-    });
-    return response.ok;
-  } catch (error) {
-    console.error("API key validation error:", error);
-    return false;
-  }
-}
-
+// === Context menu ===
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: "smartRewrite",
-    title: "Smart Rewrite",
-    contexts: ["selection"]
+    id: 'smartRewrite',
+    title: 'Proofr',
+    contexts: ['selection'],
   });
 
-  const rewriteModes = [
-    { id: "rewriteFriendly", title: "🤝 Friendly Tone" },
-    { id: "rewriteProfessional", title: "👔 Professional Tone" },
-    { id: "rewriteShort", title: "⚡ Concise Rewrite" },
-    { id: "rewriteLinkedin", title: "💼 LinkedIn Ready" },
-    { id: "rewriteAcademic", title: "🎓 Academic Style" },
-    { id: "rewriteMarketing", title: "📢 Marketing Copy" },
-    { id: "rewriteSimple", title: "📖 Plain English" },
-    { id: "rewriteExecutive", title: "📊 Executive Brief" },
-    { id: "rewriteNews", title: "📰 News Style" },
-    { id: "rewriteEnglish", title: "🔠 Translate" }
-  ];
-
-  rewriteModes.forEach(mode => {
+  SR_TONES.forEach(tone => {
     chrome.contextMenus.create({
-      id: mode.id,
-      parentId: "smartRewrite",
-      title: mode.title,
-      contexts: ["selection"]
+      id: `sr:${tone.id}`,
+      parentId: 'smartRewrite',
+      title: tone.name,
+      contexts: ['selection'],
     });
   });
 
   chrome.contextMenus.create({
-    id: "separator1",
-    parentId: "smartRewrite",
-    type: "separator",
-    contexts: ["selection"]
+    id: 'separator1',
+    parentId: 'smartRewrite',
+    type: 'separator',
+    contexts: ['selection'],
   });
 
   chrome.contextMenus.create({
-    id: "openSettings",
-    parentId: "smartRewrite",
-    title: "⚙️ Settings",
-    contexts: ["selection"]
+    id: 'openSettings',
+    parentId: 'smartRewrite',
+    title: 'Settings…',
+    contexts: ['selection'],
   });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === "openSettings") {
-    chrome.action.openPopup();
+  if (info.menuItemId === 'openSettings') {
+    Promise.resolve(chrome.action.openPopup?.()).catch(() => {
+      inject(tab.id, showErrorMessage, ['Click the Proofr toolbar icon to open settings.']);
+    });
     return;
   }
 
-  if (info.menuItemId.startsWith("rewrite")) {
-    try {
-      const hasKey = await APIKeyManager.hasAPIKey();
-      if (!hasKey) {
-        chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: showErrorMessage,
-          args: ["Please set your Groq API key in the extension popup first! Click the extension icon to get started."]
-        });
-        return;
-      }
-
-      const tone = info.menuItemId.replace("rewrite", "").toLowerCase();
-      const text = info.selectionText;
-
-      if (!text || text.trim().length === 0) {
-        chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: showErrorMessage,
-          args: ["Please select some text first!"]
-        });
-        return;
-      }
-
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: showLoadingModal,
-        args: [text, tone]
-      });
-
-      const rewritten = await callGroqAPI(text, tone);
-      
-      await StatsManager.updateStats(tone);
-
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: showRewriteResult,
-        args: [text, rewritten, tone]
-      });
-
-    } catch (error) {
-      console.error("Error rewriting text:", error);
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: showErrorMessage,
-        args: [error.message]
-      });
-    }
+  if (typeof info.menuItemId === 'string' && info.menuItemId.startsWith('sr:')) {
+    const tone = info.menuItemId.slice(3);
+    await handleRewrite(tab.id, info.selectionText, tone, { ensure: true });
   }
 });
 
-chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-  if (message.action === 'quickRewrite') {
-    try {
-      const hasKey = await APIKeyManager.hasAPIKey();
-      if (!hasKey) {
-        chrome.scripting.executeScript({
-          target: { tabId: sender.tab.id },
-          func: showErrorMessage,
-          args: ["Please set your Groq API key first!"]
-        });
-        return;
-      }
-
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id },
-        func: showLoadingModal,
-        args: [message.text, message.tone]
-      });
-
-      const rewritten = await callGroqAPI(message.text, message.tone);
-      await StatsManager.updateStats(message.tone);
-
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id },
-        func: showRewriteResult,
-        args: [message.text, rewritten, message.tone]
-      });
-
-    } catch (error) {
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id },
-        func: showErrorMessage,
-        args: [error.message]
-      });
-    }
-  } else if (message.action === 'rewriteWithTone') {
-    try {
-      const hasKey = await APIKeyManager.hasAPIKey();
-      if (!hasKey) {
-        chrome.scripting.executeScript({
-          target: { tabId: sender.tab.id },
-          func: showErrorMessage,
-          args: ["Please set your Groq API key first!"]
-        });
-        return;
-      }
-
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id },
-        func: showLoadingModal,
-        args: [message.text, message.tone]
-      });
-
-      const rewritten = await callGroqAPI(message.text, message.tone);
-      await StatsManager.updateStats(message.tone);
-
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id },
-        func: showRewriteResult,
-        args: [message.text, rewritten, message.tone]
-      });
-
-    } catch (error) {
-      chrome.scripting.executeScript({
-        target: { tabId: sender.tab.id },
-        func: showErrorMessage,
-        args: [error.message]
-      });
-    }
+// === Messages from content script (keyboard shortcut, "try another tone") ===
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.action === 'quickRewrite' || message.action === 'rewriteWithTone') {
+    handleRewrite(sender.tab.id, message.text, message.tone, { targetLang: message.targetLang });
   }
 });
 
+// === Core flow: validate → loading modal → rewrite → show result ===
+async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } = {}) {
+  try {
+    if (!text || text.trim().length === 0) {
+      inject(tabId, showErrorMessage, ['Select some text first, then choose a tone.']);
+      return;
+    }
+
+    // On tabs opened before the extension loaded/reloaded, the content script
+    // (which draws the modal) isn't present yet. Inject it before we show anything,
+    // otherwise showRewriteResult falls back to a raw alert().
+    if (ensure) await ensureContentAssets(tabId);
+
+    const settings = await getSettings();
+    const engine = settings.engine;
+    // Prefer the language the caller passed (avoids racing storage), else the saved default.
+    const lang = targetLang || settings.targetLang;
+    const deviceReady = await SR_deviceReady();
+    const hasKey = await APIKeyManager.hasAPIKey();
+
+    if (engine === 'device' && !deviceReady) {
+      inject(tabId, showErrorMessage, [
+        'The engine is set to "On-device only", but Chrome’s built-in AI isn’t available here. Switch it to Auto or Groq in the Proofr popup.',
+      ]);
+      return;
+    }
+    if (engine === 'groq' && !hasKey) {
+      inject(tabId, showErrorMessage, [
+        'The engine is set to "Groq only", but no key is saved. Add a free Groq API key in the Proofr popup, or switch the engine to Auto.',
+      ]);
+      return;
+    }
+    if (!deviceReady && !hasKey) {
+      inject(tabId, showErrorMessage, [
+        'No AI is set up yet. Open the Proofr popup to use Chrome’s built-in AI, or add a free Groq API key.',
+      ]);
+      return;
+    }
+
+    inject(tabId, showLoadingModal, [text, tone, lang]);
+
+    const apiKey = await APIKeyManager.getAPIKey();
+    const { text: rewritten, provider } = await SR_rewriteAuto(text, tone, { apiKey, engine, targetLang: lang });
+    await StatsManager.updateStats(tone);
+
+    inject(tabId, showRewriteResult, [text, rewritten, tone, provider, lang]);
+  } catch (error) {
+    console.error('Rewrite failed:', error);
+    // If we reached the rewrite with no key, on-device was the engine used — the
+    // most common failure is an unsupported language. Point at the real fix.
+    const hasKey = await APIKeyManager.hasAPIKey();
+    if (!hasKey) {
+      inject(tabId, showErrorMessage, [
+        'On-device AI couldn’t rewrite this — it only supports EN, ES, FR, DE, JA. Open the Proofr popup and add a free Groq key to handle other languages.',
+      ]);
+      return;
+    }
+    inject(tabId, showErrorMessage, [error.message]);
+  }
+}
+
+function inject(tabId, func, args) {
+  chrome.scripting.executeScript({ target: { tabId }, func, args });
+}
+
+// Make sure the modal's content assets are on the page. content.js self-guards
+// against double-init, so calling this repeatedly is safe. Silently ignores pages
+// that block injection (e.g. chrome:// pages, the Web Store).
+async function ensureContentAssets(tabId) {
+  try {
+    const [{ result: alreadyLoaded } = {}] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => !!window.SmartRewriteModal,
+    });
+    if (alreadyLoaded) return;
+
+    await chrome.scripting.insertCSS({ target: { tabId }, files: ['modal.css'] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['constants.js', 'content.js'] });
+  } catch (error) {
+    console.warn('Could not inject Proofr into this page:', error?.message || error);
+  }
+}
+
+// === Functions injected into the page (talk to window.SmartRewriteModal) ===
 function showErrorMessage(message) {
   if (window.SmartRewriteModal) {
     window.SmartRewriteModal.showError(message);
   } else {
-    alert("Smart Rewrite Error: " + message);
+    alert('Proofr: ' + message);
   }
 }
 
-function showLoadingModal(originalText, tone) {
+function showLoadingModal(originalText, tone, targetLang) {
   if (window.SmartRewriteModal) {
-    window.SmartRewriteModal.showLoading(originalText, tone);
+    window.SmartRewriteModal.showLoading(originalText, tone, targetLang);
   }
 }
 
-function showRewriteResult(originalText, rewrittenText, tone) {
+function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang) {
   const selection = window.getSelection();
   const activeElement = document.activeElement;
-  
-  const canReplace = activeElement && 
-    (activeElement.tagName === 'TEXTAREA' || 
-     activeElement.tagName === 'INPUT' || 
+
+  const canReplace = activeElement &&
+    (activeElement.tagName === 'TEXTAREA' ||
+     activeElement.tagName === 'INPUT' ||
      activeElement.contentEditable === 'true') &&
     selection.rangeCount > 0;
 
@@ -269,143 +208,18 @@ function showRewriteResult(originalText, rewrittenText, tone) {
       range.deleteContents();
       range.insertNode(document.createTextNode(rewrittenText));
     }
-    
+
     if (window.SmartRewriteModal) {
-      window.SmartRewriteModal.showSuccess("Text replaced successfully!");
-      // FIX: Close the modal after showing success
-      setTimeout(() => {
-        window.SmartRewriteModal.hide();
-      }, 750); // Close after 2 seconds
+      window.SmartRewriteModal.showSuccess('Text replaced.');
+      setTimeout(() => window.SmartRewriteModal.hide(), 750);
     }
   } else {
     if (window.SmartRewriteModal) {
-      window.SmartRewriteModal.showResult(originalText, rewrittenText, tone);
+      window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang);
     } else {
-      navigator.clipboard.writeText(rewrittenText).then(() => {
-        alert("Rewritten text copied to clipboard:\n\n" + rewrittenText);
-      }).catch(() => {
-        alert("Rewritten text:\n\n" + rewrittenText);
-      });
+      navigator.clipboard.writeText(rewrittenText)
+        .then(() => alert('Rewritten text copied to clipboard:\n\n' + rewrittenText))
+        .catch(() => alert('Rewritten text:\n\n' + rewrittenText));
     }
   }
-}
-
-async function callGroqAPI(text, tone) {
-  const apiKey = await APIKeyManager.getAPIKey();
-  if (!apiKey) {
-    throw new Error("API key not found. Please set it in the extension popup.");
-  }
-
-  if (!isValidGroqAPIKey(apiKey)) {
-    throw new Error("Invalid API key format. Please check your Groq API key.");
-  }
-
-  const prompt = buildSophisticatedPrompt(text, tone);
-
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1000,
-      temperature: getTemperatureForTone(tone),
-      top_p: 0.9,
-      frequency_penalty: 0.1,
-      presence_penalty: 0.1,
-      stream: false
-    })
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    
-    if (response.status === 401) {
-      throw new Error("Invalid API key. Please check your Groq API key in the extension settings.");
-    } else if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again in a moment.");
-    } else if (response.status === 400) {
-      throw new Error("Request error: " + (errorData.error?.message || "Invalid request"));
-    } else {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
-    }
-  }
-
-  const data = await response.json();
-  
-  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-    throw new Error("Invalid API response format");
-  }
-  
-  return data.choices[0].message.content.trim();
-}
-
-function buildSophisticatedPrompt(text, tone) {
-  const toneInstructions = {
-    friendly: `Rewrite the following text in a warm, approachable, and conversational tone. Use inclusive language, contractions, and positive phrasing. Keep the meaning intact while making it more engaging and personable.`,
-    
-    professional: `Rewrite the following text in a formal, polished, and business-appropriate tone. Use precise language, avoid colloquialisms, and structure logically while preserving important information.`,
-    
-    short: `Rewrite the following text concisely and directly. Eliminate redundancy and verbose expressions while keeping clarity and impact.`,
-    
-    linkedin: `Rewrite the following text in an engaging, achievement-focused LinkedIn style. Use power words, metrics, and industry buzzwords. Highlight impact and results while staying credible.`,
-    
-    academic: `Rewrite the following text in a scholarly, analytical academic style. Use formal language, precise terminology, and a logical flow. Ensure rigor and clarity for academic content.`,
-    
-    marketing: `Convert the following text into persuasive marketing copy. Use calls-to-action, emotional triggers, and customer benefits. Emphasize value and create urgency while maintaining professionalism.`,
-    
-    simple: `Simplify the following text using basic English and short sentences. Avoid jargon and complex words. Make it clear and accessible for everyone.`,
-    
-    executive: `Condense the following text into an executive summary. Focus on key points, business impact, and actionable insights. Structure for quick scanning by decision-makers.`,
-
-    news: `Rewrite the following text as a fast, punchy news update. Use very short sentences. Get straight to the facts with no filler. Prioritize urgency and impact, like TikTok or breaking news headlines. Each sentence should deliver one fact quickly.`,
-    
-    translate: `Translate the following text into English only. Do not rewrite or summarize. Preserve the original tone, meaning, and nuances as closely as possible.`,
-  };
-
-  const baseInstruction = toneInstructions[tone] || toneInstructions.friendly;
-  
-  return `You are an expert writing assistant. ${baseInstruction}
-
-Text to process:
-"""
-${text}
-"""
-
-Process:
-1. Rewrite the text according to the tone instruction.
-2. Internally review for clarity, tone consistency, grammar, and readability.
-3. Quietly refine once or twice if needed to improve quality.
-4. Return only the final polished version.
-
-Output requirements:
-- Preserve all facts and key points
-- Maintain the requested tone consistently
-- Keep the same general length unless tone requires otherwise
-- Ensure grammatical correctness and readability
-- Output ONLY the final rewritten text
-- Do NOT include markdown, code blocks, lists, headers, or explanations
-- Return plain text only, no extra formatting
-
-Final rewritten text:`;
-}
-
-function getTemperatureForTone(tone) {
-  const temperatures = {
-    friendly: 0.7,
-    professional: 0.3,
-    short: 0.4,
-    linkedin: 0.7,
-    academic: 0.3,
-    marketing: 0.8,
-    simple: 0.4,
-    executive: 0.5,
-    news: 0.3,
-    translate: 0.2
-  };
-  
-  return temperatures[tone] || 0.5;
 }
