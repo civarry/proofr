@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writing Playground</title>
+<style>
+  :root{
+    /* Proofr's warm, near-monochrome "paper" palette */
+    --ink:#26251f; --muted:#57554e; --faint:#8a887f;
+    --line:#e4e2db; --bg:#f3f2ee; --white:#faf9f7; --accent:#2a2926; --accent-soft:#eeece6;
+    --shadow:0 1px 2px rgba(38,37,31,.05), 0 20px 44px -24px rgba(38,37,31,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif;
+    background:linear-gradient(180deg,#eeece6 0%, var(--bg) 32%);
+    color:var(--ink); line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:820px;margin:0 auto;padding:56px 24px 96px}
+  header{text-align:center;margin-bottom:14px}
+  .kicker{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--accent);background:var(--accent-soft);padding:6px 12px;border-radius:999px}
+  h1{font-size:38px;font-weight:800;letter-spacing:-1px;margin:16px 0 10px}
+  .lede{font-size:18px;color:var(--muted);max-width:600px;margin:0 auto}
+  .how{display:flex;gap:12px;justify-content:center;margin:26px 0 40px;flex-wrap:wrap}
+  .step{background:var(--white);border:1px solid var(--line);border-radius:12px;padding:10px 16px;font-size:14px;color:var(--muted);box-shadow:var(--shadow)}
+  .step b{color:var(--ink)}
+  .card{background:var(--white);border:1px solid var(--line);border-radius:18px;padding:28px 30px;margin-bottom:22px;box-shadow:var(--shadow)}
+  .label{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .num{flex:none;width:26px;height:26px;border-radius:8px;background:var(--ink);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .label h2{font-size:17px;font-weight:700;letter-spacing:-.2px}
+  .label > span:last-child{font-size:13px;color:var(--faint);margin-left:auto;text-align:right}
+  .prose{font-size:18px;line-height:1.7;color:#2b323f}
+  .prose.selectme{cursor:text}
+  .hint{margin-top:14px;font-size:13px;color:var(--faint)}
+  textarea, .editable{
+    width:100%;border:1px solid var(--line);border-radius:12px;padding:16px 18px;
+    font-family:inherit;font-size:16px;line-height:1.6;color:var(--ink);background:#fffdf9;resize:vertical;min-height:120px;
+  }
+  textarea:focus, .editable:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .editable{min-height:auto}
+  .compose{border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .compose .to{padding:12px 18px;border-bottom:1px solid var(--line);font-size:14px;color:var(--muted)}
+  .compose .to b{color:var(--ink)}
+  .compose .subject{padding:12px 18px;border-bottom:1px solid var(--line);font-size:15px;font-weight:600}
+  .compose textarea{border:none;border-radius:0;min-height:150px}
+  footer{text-align:center;color:var(--faint);font-size:13px;margin-top:40px}
+  .badge{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="kicker">Proofr demo</span>
+      <h1>Writing Playground</h1>
+      <p class="lede">A clean page for testing the extension and capturing screenshots. The text below is intentionally rough, so you can fix it in a click.</p>
+      <div class="how">
+        <div class="step"><b>1.</b> Select some text</div>
+        <div class="step"><b>2.</b> Right-click → <b>Proofr</b></div>
+        <div class="step"><b>3.</b> Pick Proofread, a tone, or Translate</div>
+      </div>
+    </header>
+
+    <!-- 1: Proofread (errors on purpose) -->
+    <div class="card">
+      <div class="label"><span class="num">1</span><h2>Proofread this</h2><span>select the paragraph</span></div>
+      <p class="prose selectme">We was hoping to recieve the report by friday, but it dont arrive yet. Their going to send it tomorow instead, so we should of planned for a small delay. Please let me know if you has any questions.</p>
+      <div class="hint">Great for the “before → after” hero shot. Proofread keeps the wording and only fixes grammar and spelling.</div>
+    </div>
+
+    <!-- 2: Tone -->
+    <div class="card">
+      <div class="label"><span class="num">2</span><h2>Change the tone</h2><span>try Professional or Concise</span></div>
+      <p class="prose selectme">hey! just circling back on the thing we chatted about last week — lmk if that still works for u or if we should find another time. no worries either way 🙂</p>
+      <div class="hint">Same meaning, different voice. Good for showing the tone chips.</div>
+    </div>
+
+    <!-- 3: Translate -->
+    <div class="card">
+      <div class="label"><span class="num">3</span><h2>Translate</h2><span>English → Spanish, French, German, Japanese</span></div>
+      <p class="prose selectme">Good morning, everyone. Thank you for joining today’s meeting. Let’s start with a quick update on the project.</p>
+      <div class="hint">Pick “Translate,” then choose a target language.</div>
+    </div>
+
+    <!-- 4: Edit in place (email) -->
+    <div class="card">
+      <div class="label"><span class="num">4</span><h2>Replace in place</h2><span>edit inside a real field</span></div>
+      <div class="compose">
+        <div class="to">To: <b>team@company.com</b></div>
+        <div class="subject">Subject: Quick update</div>
+        <textarea>hi team, wanted to give a fast update. the launch is basically on track but we hit a small snag with the payment thing, its being looked at rn and should be fixed by eod. will keep u posted.</textarea>
+      </div>
+      <div class="hint">Select the text inside the box, right-click → Proofr → Professional. It swaps the text right in the field. Perfect for the “works in your email” shot.</div>
+    </div>
+
+    <!-- 5: Comment box -->
+    <div class="card">
+      <div class="label"><span class="num">5</span><h2>Any text box</h2><span>comment / post field</span></div>
+      <textarea>this is honestly one of the most useful tool i have installed, it save me so much time and the writing come out way more clearer then before.</textarea>
+      <div class="hint">Shows it working in ordinary comment and post boxes too.</div>
+    </div>
+
+    <footer>
+      <span class="badge">Local demo · nothing here is sent anywhere</span>
+      <p style="margin-top:12px">Tip: for the cleanest screenshots, zoom the browser to 100% and hide bookmarks bar (Cmd+Shift+B).</p>
+    </footer>
+  </div>
+</body>
+</html>

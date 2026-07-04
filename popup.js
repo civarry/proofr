@@ -1,4 +1,4 @@
-// === API Key Manager Class ===
+// === API Key storage ===
 class APIKeyManager {
   static async getAPIKey() {
     try {
@@ -21,13 +21,8 @@ class APIKeyManager {
   }
 
   static async hasAPIKey() {
-    try {
-      const apiKey = await this.getAPIKey();
-      return apiKey && apiKey.trim().length > 0;
-    } catch (error) {
-      console.error('Error checking API key:', error);
-      return false;
-    }
+    const apiKey = await this.getAPIKey();
+    return !!(apiKey && apiKey.trim().length > 0);
   }
 
   static async clearAPIKey() {
@@ -41,655 +36,416 @@ class APIKeyManager {
   }
 }
 
-// === Statistics Manager ===
+// === Usage stats (kept small, shown only as a quiet footer line) ===
 class StatsManager {
   static async getStats() {
     try {
       const result = await chrome.storage.local.get(['rewriteStats']);
-      return result.rewriteStats || {
-        totalRewrites: 0,
-        styleUsage: {},
-        lastUsed: null
-      };
+      return result.rewriteStats || { totalRewrites: 0, styleUsage: {}, lastUsed: null };
     } catch (error) {
-      console.error('Error getting stats:', error);
-      return {
-        totalRewrites: 0,
-        styleUsage: {},
-        lastUsed: null
-      };
+      return { totalRewrites: 0, styleUsage: {}, lastUsed: null };
     }
   }
 
   static async updateStats(style) {
+    const stats = await this.getStats();
+    stats.totalRewrites++;
+    stats.styleUsage[style] = (stats.styleUsage[style] || 0) + 1;
+    stats.lastUsed = Date.now();
+    await chrome.storage.local.set({ rewriteStats: stats });
+    return stats;
+  }
+}
+
+// === Settings (engine + translate target) ===
+class Settings {
+  static async get() {
     try {
-      const stats = await this.getStats();
-      stats.totalRewrites++;
-      stats.styleUsage[style] = (stats.styleUsage[style] || 0) + 1;
-      stats.lastUsed = Date.now();
-      
-      await chrome.storage.local.set({ rewriteStats: stats });
-      return stats;
-    } catch (error) {
-      console.error('Error updating stats:', error);
-      return null;
+      const r = await chrome.storage.sync.get(['srEngine', 'srTargetLang']);
+      return { engine: r.srEngine || 'auto', targetLang: r.srTargetLang || 'en' };
+    } catch {
+      return { engine: 'auto', targetLang: 'en' };
     }
   }
-
-  static async getFavoriteStyle() {
-    try {
-      const stats = await this.getStats();
-      let maxCount = 0;
-      let favoriteStyle = '-';
-      
-      for (const [style, count] of Object.entries(stats.styleUsage)) {
-        if (count > maxCount) {
-          maxCount = count;
-          favoriteStyle = this.getStyleName(style);
-        }
-      }
-      
-      return favoriteStyle;
-    } catch (error) {
-      console.error('Error getting favorite style:', error);
-      return '-';
-    }
-  }
-
-  static getStyleName(style) {
-    const names = {
-      friendly: 'Friendly',
-      professional: 'Professional',
-      short: 'Concise',
-      linkedin: 'LinkedIn',
-      academic: 'Academic',
-      marketing: 'Marketing',
-      simple: 'Plain English',
-      executive: 'Executive',
-      news: 'News Style',
-      translate: 'Translate'
-    };
-    return names[style] || style;
+  static async set(patch) {
+    try { await chrome.storage.sync.set(patch); } catch { /* ignore */ }
   }
 }
 
-// === UI Helper Functions ===
-class UIHelper {
-  static showStatus(message, type, icon = '') {
-    const statusDiv = document.getElementById("apiStatus");
-    if (!statusDiv) return;
-    
-    statusDiv.className = `status status-${type}`;
-    statusDiv.innerHTML = `
-      <span class="status-icon">${icon}</span>
-      <span>${message}</span>
-    `;
-    statusDiv.classList.remove('hidden');
-    
-    if (type === 'success') {
-      setTimeout(() => {
-        statusDiv.classList.add('hidden');
-      }, 5000);
-    }
-  }
+// === DOM refs ===
+const el = (id) => document.getElementById(id);
+const refs = {};
 
-  static clearStatus() {
-    const statusDiv = document.getElementById("apiStatus");
-    if (statusDiv) {
-      statusDiv.className = 'status hidden';
-      statusDiv.innerHTML = '';
-    }
-  }
+// === Provider state (on-device AI vs Groq) ===
+let deviceReady = false;
+let rewriting = false;
+let keyFieldMode = 'save'; // 'save' = empty editable input; 'change' = masked, showing a saved key
 
-  static setButtonLoading(buttonId, loading, originalText = '') {
-    const button = document.getElementById(buttonId);
-    if (!button) return;
-    
-    if (loading) {
-      button.disabled = true;
-      button.classList.add('loading');
-      button.textContent = 'Loading...';
-    } else {
-      button.disabled = false;
-      button.classList.remove('loading');
-      button.textContent = originalText || 'Save Key';
-    }
-  }
-
-  static createModal(content) {
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-      <div class="modal-content">
-        ${content}
-      </div>
-    `;
-    
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        modal.remove();
-      }
-    });
-    
-    // Close on ESC key
-    const handleEsc = (e) => {
-      if (e.key === 'Escape') {
-        modal.remove();
-        document.removeEventListener('keydown', handleEsc);
-      }
-    };
-    document.addEventListener('keydown', handleEsc);
-    
-    document.body.appendChild(modal);
-    return modal;
-  }
-
-  static async downloadFile(filename, content, contentType = 'text/plain') {
-    try {
-      const blob = new Blob([content], { type: contentType });
-      const url = URL.createObjectURL(blob);
-      
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.style.display = 'none';
-      
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      URL.revokeObjectURL(url);
-      return true;
-    } catch (error) {
-      console.error('Error downloading file:', error);
-      return false;
-    }
+// Show a masked "saved" state when a key exists, so the field never looks empty/lost.
+async function renderKeyField(hasKey) {
+  if (hasKey) {
+    const key = await APIKeyManager.getAPIKey();
+    const last4 = key ? key.slice(-4) : '';
+    refs.apiKeyInput.type = 'text';
+    refs.apiKeyInput.readOnly = true;
+    refs.apiKeyInput.value = `gsk_••••••••••••${last4}`;
+    refs.btnSaveKey.textContent = 'Change';
+    keyFieldMode = 'change';
+  } else {
+    refs.apiKeyInput.type = 'password';
+    refs.apiKeyInput.readOnly = false;
+    refs.apiKeyInput.value = '';
+    refs.apiKeyInput.placeholder = 'gsk_…';
+    refs.btnSaveKey.textContent = 'Save';
+    keyFieldMode = 'save';
   }
 }
 
-// === Enhanced API Key Validation ===
-function isValidGroqAPIKey(apiKey) {
-  if (!apiKey || typeof apiKey !== 'string') return false;
-  return apiKey.startsWith("gsk_") && apiKey.length >= 40;
-}
-
-// === API Key Validation Test ===
-async function validateAPIKey(apiKey) {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-    
-    const response = await fetch("https://api.groq.com/openai/v1/models", {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    return response.ok;
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      console.error("API validation timeout");
-    } else {
-      console.error("API key validation error:", error);
-    }
-    return false;
-  }
-}
-
-// === Update API Key Status ===
-async function updateAPIKeyStatus() {
-  try {
-    const hasKey = await APIKeyManager.hasAPIKey();
-    
-    if (hasKey) {
-      UIHelper.showStatus("✅ API Key configured and ready", "success");
-    } else {
-      UIHelper.showStatus("⚠️ No API Key - Extension won't work", "error");
-    }
-  } catch (error) {
-    console.error('Error updating API key status:', error);
-    UIHelper.showStatus("❌ Error checking API key", "error");
-  }
-}
-
-// === Update Statistics Display ===
-async function updateStatsDisplay() {
-  try {
-    const stats = await StatsManager.getStats();
-    const favoriteStyle = await StatsManager.getFavoriteStyle();
-    
-    const totalElement = document.getElementById('totalRewrites');
-    const favoriteElement = document.getElementById('favoriteStyle');
-    
-    if (totalElement) totalElement.textContent = stats.totalRewrites.toString();
-    if (favoriteElement) favoriteElement.textContent = favoriteStyle;
-  } catch (error) {
-    console.error('Error updating stats display:', error);
-  }
-}
-
-// === Save API Key Function ===
-async function saveAPIKey() {
-  const apiKeyInput = document.getElementById("apiKeyInput");
-  const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
-  
-  if (!apiKey) {
-    UIHelper.showStatus("Please enter an API key", "error", "⚠️");
+// "Change" turns the masked field back into an editable one; "Save" validates + stores.
+function onSaveClick() {
+  if (keyFieldMode === 'change') {
+    refs.apiKeyInput.type = 'password';
+    refs.apiKeyInput.readOnly = false;
+    refs.apiKeyInput.value = '';
+    refs.apiKeyInput.placeholder = 'Enter a new key (gsk_…)';
+    refs.btnSaveKey.textContent = 'Save';
+    keyFieldMode = 'save';
+    refs.apiKeyInput.focus();
     return;
   }
-  
-  if (!isValidGroqAPIKey(apiKey)) {
-    UIHelper.showStatus("Invalid API key format. Should start with 'gsk_' and be 40+ characters", "error", "❌");
+  saveKey();
+}
+
+async function refreshProviderState() {
+  const availability = await SR_deviceAvailability();
+  deviceReady = availability === 'available' || availability === 'downloadable' || availability === 'downloading';
+  const hasKey = await APIKeyManager.hasAPIKey();
+  const { engine } = await Settings.get();
+
+  // Reflect the chosen engine in the selector, disabling on-device when it isn't available.
+  refs.engineSelect.value = engine;
+  const deviceOpt = refs.engineSelect.querySelector('option[value="device"]');
+  if (deviceOpt) {
+    deviceOpt.disabled = !deviceReady;
+    deviceOpt.textContent = deviceReady ? 'On-device only' : 'On-device only (unavailable)';
+  }
+
+  // Which engine will actually run, given the preference + what's available.
+  let activeLabel, runnable;
+  if (engine === 'groq') {
+    activeLabel = hasKey ? 'Groq' : 'Add key';
+    runnable = hasKey;
+  } else if (engine === 'device') {
+    activeLabel = deviceReady ? 'On-device' : 'Unavailable';
+    runnable = deviceReady;
+  } else { // auto
+    activeLabel = deviceReady ? 'On-device' : (hasKey ? 'Groq' : 'Add key');
+    runnable = deviceReady || hasKey;
+  }
+
+  const pill = refs.keyPill;
+  pill.classList.remove('connected', 'missing');
+  pill.classList.add(runnable ? 'connected' : 'missing');
+  refs.keyPillText.textContent = activeLabel;
+
+  refs.btnClearKey.classList.toggle('hidden', !hasKey);
+  refs.btnRewrite.disabled = !runnable;
+  // The Groq key only matters for engines that use it — hide it under "On-device only".
+  refs.keySection.classList.toggle('hidden', engine === 'device');
+  await renderKeyField(hasKey);
+
+  refs.engineHint.textContent = deviceReady
+    ? 'On-device runs locally in EN, ES, FR, DE, JA — no key. For other languages, use Groq (needs a key).'
+    : 'On-device AI isn’t available in this browser — Groq needs a key.';
+
+  refs.keyHint.innerHTML = hasKey
+    ? `Groq key saved — stored only in your browser. Use "Change" to replace it.`
+    : deviceReady
+      ? `Chrome’s built-in AI is on — no key needed. Add a <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq key</a> to use the Groq engine.`
+      : `Free key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>. Stored only in your browser.`;
+
+  return { deviceReady, hasKey, runnable };
+}
+
+function toggleKeyPanel(forceOpen) {
+  const panel = refs.keyPanel;
+  const open = forceOpen !== undefined ? forceOpen : panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !open);
+  if (open) {
+    // Reset to the true saved/empty state each time the panel opens.
+    APIKeyManager.hasAPIKey().then((has) => {
+      renderKeyField(has);
+      if (!has) setTimeout(() => refs.apiKeyInput.focus(), 30);
+    });
+  }
+}
+
+async function saveKey() {
+  const key = refs.apiKeyInput.value.trim();
+  if (!key) { showNotice('Enter your Groq API key first.', 'error'); return; }
+  if (!SR_isValidApiKey(key)) {
+    showNotice('That key looks off — it should start with "gsk_" and be 40+ characters.', 'error');
     return;
   }
-  
-  UIHelper.setButtonLoading('btnSaveKey', true);
-  
+
+  refs.btnSaveKey.disabled = true;
+  refs.btnSaveKey.textContent = 'Checking…';
   try {
-    const isValid = await validateAPIKey(apiKey);
-    
-    if (isValid) {
-      const saved = await APIKeyManager.setAPIKey(apiKey);
-      
-      if (saved) {
-        apiKeyInput.value = "";
-        await updateAPIKeyStatus();
-        UIHelper.showStatus("API key saved and validated successfully!", "success", "🎉");
-      } else {
-        UIHelper.showStatus("Failed to save API key. Please try again.", "error", "❌");
-      }
-    } else {
-      UIHelper.showStatus("API key validation failed. Please check your key.", "error", "❌");
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { 'Authorization': `Bearer ${key}` },
+    });
+    if (!res.ok) {
+      showNotice('Groq rejected that key. Double-check and try again.', 'error');
+      return;
     }
+    await APIKeyManager.setAPIKey(key);
+    refs.apiKeyInput.value = '';
+    clearNotice();
+    await refreshProviderState();
+    toggleKeyPanel(false);
   } catch (error) {
-    console.error('Error saving API key:', error);
-    UIHelper.showStatus("Error validating API key: " + error.message, "error", "⚠️");
+    showNotice('Could not reach Groq to verify the key. Check your connection.', 'error');
   } finally {
-    UIHelper.setButtonLoading('btnSaveKey', false, 'Save Key');
+    refs.btnSaveKey.disabled = false;
+    // On success, renderKeyField already set the label to "Change"; only restore on failure.
+    if (keyFieldMode !== 'change') refs.btnSaveKey.textContent = 'Save';
   }
 }
 
-// === Clear API Key Function ===
-async function clearAPIKey() {
-  try {
-    UIHelper.setButtonLoading('btnClearKey', true);
-    
-    const cleared = await APIKeyManager.clearAPIKey();
-    
-    if (cleared) {
-      await updateAPIKeyStatus();
-      UIHelper.showStatus("API key cleared successfully", "success", "✅");
-    } else {
-      UIHelper.showStatus("Failed to clear API key", "error", "❌");
-    }
-  } catch (error) {
-    console.error('Error clearing API key:', error);
-    UIHelper.showStatus("Error clearing API key: " + error.message, "error", "❌");
-  } finally {
-    UIHelper.setButtonLoading('btnClearKey', false, 'Clear Key');
-  }
+async function clearKey() {
+  await APIKeyManager.clearAPIKey();
+  await refreshProviderState();
+  clearResult();
+  showNotice(deviceReady ? 'Groq key removed — still using on-device AI.' : 'API key removed.', 'info');
 }
 
-// === Action Handlers ===
-// Complete ActionHandlers object with all fixes
-const ActionHandlers = {
-  async getApiKey() {
-    try {
-      window.open('https://console.groq.com/keys', '_blank', 'noopener,noreferrer');
-    } catch (error) {
-      console.error('Error opening API key page:', error);
-      UIHelper.showStatus("Please manually visit: https://console.groq.com/keys", "error", "🌐");
-    }
-  },
+// === Tone selector ===
+function populateTones() {
+  refs.tone.innerHTML = SR_TONES
+    .map(t => `<option value="${t.id}">${t.name}</option>`)
+    .join('');
+  onToneChange();
+}
 
-  async testExtension() {
-    try {
-      const hasKey = await APIKeyManager.hasAPIKey();
-      
-      if (!hasKey) {
-        UIHelper.showStatus("Please set up your API key first", "error", "⚠️");
-        return;
-      }
-      
-      UIHelper.showStatus("Extension is working! Try selecting text on any webpage.", "success", "✅");
-    } catch (error) {
-      console.error('Error testing extension:', error);
-      UIHelper.showStatus("Error testing extension", "error", "❌");
-    }
-  },
+function populateLanguages() {
+  refs.translateLang.innerHTML = SR_LANGUAGES
+    .map(l => `<option value="${l.code}">${l.name}</option>`)
+    .join('');
+}
 
-  async viewHistory() {
-    try {
-      const stats = await StatsManager.getStats();
-      
-      if (stats.totalRewrites === 0) {
-        UIHelper.showStatus("No rewrite history yet. Start using the extension!", "error", "📝");
-        return;
-      }
-      
-      const historyItems = Object.entries(stats.styleUsage)
-        .sort(([,a], [,b]) => b - a)
-        .map(([style, count]) => 
-          `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
-            <span>${StatsManager.getStyleName(style)}</span>
-            <span style="color: var(--primary); font-weight: 600;">${count} uses</span>
-          </div>`
-        ).join('');
-        
-      const lastUsedDate = stats.lastUsed ? new Date(stats.lastUsed).toLocaleDateString() : 'Never';
-      
-      const modalContent = `
-        <div class="modal-header">
-          <h3>Usage History</h3>
-        </div>
-        <div class="modal-body">
-          <div style="margin-bottom: 20px;">
-            <strong>Total Rewrites:</strong> ${stats.totalRewrites}<br>
-            <strong>Last Used:</strong> ${lastUsedDate}
-          </div>
-          <div style="margin-bottom: 16px;">
-            <strong>Style Usage:</strong>
-          </div>
-          <div>
-            ${historyItems}
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button id="closeHistoryModal" class="btn btn-primary">Close</button>
-        </div>
-      `;
-      
-      const modal = UIHelper.createModal(modalContent);
-      
-      // Add event listener for the close button
-      const closeButton = modal.querySelector('#closeHistoryModal');
-      if (closeButton) {
-        closeButton.addEventListener('click', () => {
-          modal.remove();
-        });
-      }
-    } catch (error) {
-      console.error('Error viewing history:', error);
-      UIHelper.showStatus("Error loading history", "error", "❌");
-    }
-  },
+function onToneChange() {
+  const tone = SR_getTone(refs.tone.value);
+  refs.toneDesc.innerHTML = `<b>${tone.name}</b> — ${tone.desc}`;
+  refs.langRow.classList.toggle('hidden', tone.id !== 'translate');
+}
 
-  async exportSettings() {
-    try {
-      const hasKey = await APIKeyManager.hasAPIKey();
-      const stats = await StatsManager.getStats();
-      
-      const settings = {
-        hasApiKey: hasKey,
-        stats: stats,
-        exportDate: new Date().toISOString(),
-        version: '1.0.0'
-      };
-      
-      const success = await UIHelper.downloadFile(
-        'smart-rewrite-settings.json', 
-        JSON.stringify(settings, null, 2),
-        'application/json'
+// === Notices ===
+// action (optional): { label, onClick } renders a one-tap button inside the notice.
+function showNotice(message, type, action) {
+  refs.notice.className = `notice ${type}`;
+  refs.notice.textContent = message;
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'notice-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', action.onClick);
+    refs.notice.appendChild(btn);
+  }
+}
+function clearNotice() {
+  refs.notice.className = 'notice hidden';
+  refs.notice.textContent = '';
+}
+
+// === Result ===
+function clearResult() {
+  refs.result.classList.add('hidden');
+  refs.resultBox.textContent = '';
+}
+
+async function runRewrite() {
+  if (rewriting) return;
+  const text = refs.srcText.value.trim();
+  if (!text) { showNotice('Type or paste some text to rewrite.', 'error'); refs.srcText.focus(); return; }
+
+  const hasKey = await APIKeyManager.hasAPIKey();
+  const { engine } = await Settings.get();
+  const targetLang = refs.translateLang.value || 'en';
+  const runnable = engine === 'groq' ? hasKey : engine === 'device' ? deviceReady : (deviceReady || hasKey);
+  if (!runnable) {
+    showNotice('Add a Groq key to start rewriting — or switch the engine to Auto/On-device.', 'error');
+    toggleKeyPanel(true);
+    return;
+  }
+
+  const tone = refs.tone.value;
+  clearNotice();
+
+  // Enter loading state
+  rewriting = true;
+  refs.btnRewrite.disabled = true;
+  refs.btnRedo.disabled = true;
+  refs.btnRewrite.textContent = tone === 'translate' ? 'Translating…' : 'Rewriting…';
+  refs.result.classList.remove('hidden');
+  refs.resultLabel.textContent = tone === 'translate'
+    ? `Translate → ${SR_langName(targetLang)}`
+    : `${SR_getToneName(tone)} rewrite`;
+  refs.resultBox.textContent = '';
+  refs.resultBox.classList.add('loading');
+  refs.resultBox.textContent = tone === 'translate' ? 'Translating your text…' : 'Rewriting your text…';
+
+  try {
+    const apiKey = await APIKeyManager.getAPIKey();
+    const onStatus = (msg) => { if (refs.resultBox.classList.contains('loading')) refs.resultBox.textContent = msg; };
+    const { text: rewritten, provider } = await SR_rewriteAuto(text, tone, { apiKey, engine, targetLang, onStatus });
+    refs.resultBox.classList.remove('loading');
+    refs.resultBox.textContent = rewritten;
+    const engineName = provider === 'device' ? 'on-device' : 'Groq';
+    refs.resultLabel.textContent = tone === 'translate'
+      ? `Translate → ${SR_langName(targetLang)} · ${engineName}`
+      : `${SR_getToneName(tone)} · ${engineName}`;
+    resetCopyButton();
+    await StatsManager.updateStats(tone);
+    updateStatLine();
+  } catch (error) {
+    refs.resultBox.classList.remove('loading');
+    clearResult();
+    // On-device was the only engine (no key) and it failed — most often an unsupported
+    // language. Point the user at the one real fix: add a Groq key.
+    if (!hasKey) {
+      showNotice(
+        'On-device AI couldn’t rewrite this — it only supports EN/ES/FR/DE/JA. Add a free Groq key for other languages.',
+        'error',
+        { label: 'Add key', onClick: () => toggleKeyPanel(true) }
       );
-      
-      if (success) {
-        UIHelper.showStatus("Settings exported successfully!", "success", "📤");
-      } else {
-        UIHelper.showStatus("Failed to export settings", "error", "❌");
-      }
-    } catch (error) {
-      console.error('Error exporting settings:', error);
-      UIHelper.showStatus("Error exporting settings", "error", "❌");
+    } else {
+      showNotice(error.message || 'Something went wrong. Try again.', 'error');
     }
-  },
-
-  showPrivacyPolicy() {
-    const modalContent = `
-      <div class="modal-header">
-        <h3>Privacy Policy</h3>
-      </div>
-      <div class="modal-body">
-        <p><strong>Data Collection:</strong></p>
-        <ul>
-          <li>Your API key is stored locally in your browser</li>
-          <li>Usage statistics are stored locally on your device</li>
-          <li>No personal data is sent to our servers</li>
-        </ul>
-        
-        <p><strong>Third-Party Services:</strong></p>
-        <ul>
-          <li>Text processing is done via Groq AI API</li>
-          <li>Your text is sent to Groq for processing</li>
-          <li>Groq's privacy policy applies to their service</li>
-        </ul>
-        
-        <p><strong>Data Security:</strong></p>
-        <ul>
-          <li>All communications use HTTPS encryption</li>
-          <li>API keys are stored securely in Chrome's sync storage</li>
-          <li>No logs or copies of your text are kept by this extension</li>
-        </ul>
-      </div>
-      <div class="modal-footer">
-        <button id="closePrivacyModal" class="btn btn-primary">Close</button>
-      </div>
-    `;
-    
-    const modal = UIHelper.createModal(modalContent);
-    
-    // Add event listener for the close button
-    const closeButton = modal.querySelector('#closePrivacyModal');
-    if (closeButton) {
-      closeButton.addEventListener('click', () => {
-        modal.remove();
-      });
-    }
-  },
-
-  showSupport() {
-    const modalContent = `
-      <div class="modal-header">
-        <h3>Need Help?</h3>
-      </div>
-      <div class="modal-body">
-        <p><strong>Common Issues:</strong></p>
-        <ul>
-          <li>Make sure your API key starts with "gsk_"</li>
-          <li>Check your internet connection</li>
-          <li>Try refreshing the webpage</li>
-          <li>Ensure you've selected text before right-clicking</li>
-          <li>Some websites may block the extension - try a different site</li>
-        </ul>
-        
-        <p><strong>Keyboard Shortcuts:</strong></p>
-        <ul>
-          <li><code>Ctrl+Shift+R</code> - Quick professional rewrite</li>
-          <li><code>F1</code> - Open this help dialog</li>
-        </ul>
-        
-        <p><strong>Still need help?</strong></p>
-        <p>
-          Email: cjcarito15@gmail.com<br>
-          GitHub: github.com/civarry/<br>
-          Version: 1.0.1
-        </p>
-        
-        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
-          <p><strong>Troubleshooting Steps:</strong></p>
-          <ol>
-            <li>Verify your API key is correct</li>
-            <li>Check browser console for errors (F12)</li>
-            <li>Try disabling other extensions temporarily</li>
-            <li>Restart your browser</li>
-            <li>Contact support if issue persists</li>
-          </ol>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button id="closeSupportModal" class="btn btn-primary">Close</button>
-      </div>
-    `;
-    
-    const modal = UIHelper.createModal(modalContent);
-    
-    // Add event listener for the close button
-    const closeButton = modal.querySelector('#closeSupportModal');
-    if (closeButton) {
-      closeButton.addEventListener('click', () => {
-        modal.remove();
-      });
-    }
+  } finally {
+    rewriting = false;
+    refs.btnRewrite.disabled = false;
+    refs.btnRedo.disabled = false;
+    refs.btnRewrite.textContent = 'Rewrite';
   }
+}
+
+function resetCopyButton() {
+  refs.btnCopy.textContent = 'Copy';
+  refs.btnCopy.classList.remove('done');
+}
+
+async function copyResult() {
+  const text = refs.resultBox.textContent;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+  }
+  refs.btnCopy.textContent = 'Copied';
+  refs.btnCopy.classList.add('done');
+  setTimeout(resetCopyButton, 1600);
+}
+
+// === Footer stat line ===
+async function updateStatLine() {
+  const stats = await StatsManager.getStats();
+  refs.statLine.textContent = stats.totalRewrites > 0
+    ? `${stats.totalRewrites} rewrite${stats.totalRewrites === 1 ? '' : 's'} so far`
+    : 'Proofr v1.2';
+}
+
+// === Info overlays ===
+function openOverlay(html) {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="overlay-card">${html}
+    <button class="btn-rewrite" data-close="1" type="button">Close</button></div>`;
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay || e.target.dataset.close) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+}
+
+const InfoOverlays = {
+  showPrivacyPolicy() {
+    openOverlay(`
+      <h3>Privacy</h3>
+      <p>Your <strong>API key</strong> and <strong>usage counts</strong> live only in your browser storage — nothing is sent to us.</p>
+      <p>With <strong>on-device AI</strong>, your text is rewritten locally and never leaves your computer.</p>
+      <p>If Groq is used instead, the selected text goes directly to Groq over HTTPS, governed by their privacy policy. No copies of your text are kept by this extension either way.</p>
+    `);
+  },
+  showSupport() {
+    openOverlay(`
+      <h3>Help</h3>
+      <p><strong>How it rewrites:</strong> if your Chrome has built-in AI, everything runs on-device with no key. Otherwise it uses Groq with your API key. The pill up top shows which is active.</p>
+      <p><strong>Not working?</strong></p>
+      <ul>
+        <li>Check the pill reads "On-device AI" or "Groq connected".</li>
+        <li>No built-in AI? Add a Groq key, or update Chrome — built-in AI needs a recent Chrome on supported hardware.</li>
+        <li>On a webpage, select text first, then right-click → Proofr.</li>
+        <li>Some sites block extensions — try another page.</li>
+      </ul>
+      <p><strong>Shortcut:</strong> <strong>Ctrl+Shift+R</strong> rewrites the current selection in a Professional tone.</p>
+      <p>Questions? <a href="mailto:cjcarito15@gmail.com">cjcarito15@gmail.com</a> · <a href="https://github.com/civarry" target="_blank" rel="noopener">github.com/civarry</a></p>
+    `);
+  },
 };
 
-// === Event Handlers ===
-function initializeEventHandlers() {
-  // API Key input handlers
-  const apiKeyInput = document.getElementById('apiKeyInput');
-  const saveBtn = document.getElementById('btnSaveKey');
-  const clearBtn = document.getElementById('btnClearKey');
-  
-  if (saveBtn) {
-    saveBtn.addEventListener('click', saveAPIKey);
-  }
-  
-  if (clearBtn) {
-    clearBtn.addEventListener('click', clearAPIKey);
-  }
-  
-  if (apiKeyInput) {
-    apiKeyInput.addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        saveAPIKey();
-      }
-    });
-    
-    // Clear status when user starts typing
-    apiKeyInput.addEventListener('input', function() {
-      UIHelper.clearStatus();
-    });
-  }
-  
-  // Quick action handlers
-  const quickActions = document.querySelectorAll('.quick-action');
-  quickActions.forEach(action => {
-    action.addEventListener('click', function(e) {
+// === Wire up ===
+document.addEventListener('DOMContentLoaded', async () => {
+  ['logo','keyPill','keyPillText','keyPanel','engineSelect','engineHint','keySection','apiKeyInput','btnSaveKey','btnClearKey','keyHint',
+   'srcText','tone','toneDesc','langRow','translateLang','btnRewrite','notice','result','resultLabel',
+   'resultBox','btnCopy','btnRedo','statLine'].forEach(id => refs[id] = el(id));
+
+  if (typeof SR_LOGO_SVG !== 'undefined') refs.logo.innerHTML = SR_LOGO_SVG;
+
+  populateTones();
+  populateLanguages();
+  const { engine, targetLang } = await Settings.get();
+  refs.translateLang.value = targetLang;
+  const { deviceReady: hasDevice, hasKey } = await refreshProviderState();
+  await updateStatLine();
+
+  refs.keyPill.addEventListener('click', () => toggleKeyPanel());
+  refs.btnSaveKey.addEventListener('click', onSaveClick);
+  refs.btnClearKey.addEventListener('click', clearKey);
+  refs.apiKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onSaveClick(); });
+  refs.apiKeyInput.addEventListener('input', clearNotice);
+
+  refs.engineSelect.addEventListener('change', async () => {
+    await Settings.set({ srEngine: refs.engineSelect.value });
+    await refreshProviderState();
+  });
+  refs.translateLang.addEventListener('change', () => Settings.set({ srTargetLang: refs.translateLang.value }));
+
+  refs.tone.addEventListener('change', onToneChange);
+  refs.btnRewrite.addEventListener('click', runRewrite);
+  refs.btnRedo.addEventListener('click', runRewrite);
+  refs.btnCopy.addEventListener('click', copyResult);
+
+  // Cmd/Ctrl+Enter from the textarea triggers a rewrite
+  refs.srcText.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); runRewrite(); }
+  });
+
+  document.querySelectorAll('[data-action]').forEach(node => {
+    node.addEventListener('click', (e) => {
       e.preventDefault();
-      const actionName = this.dataset.action;
-      if (ActionHandlers[actionName]) {
-        ActionHandlers[actionName]();
-      }
+      const fn = InfoOverlays[node.dataset.action];
+      if (fn) fn();
     });
   });
-  
-  // Version info link handlers
-  const versionLinks = document.querySelectorAll('.version-info a');
-  versionLinks.forEach(link => {
-    link.addEventListener('click', function(e) {
-      e.preventDefault();
-      const actionName = this.dataset.action;
-      if (ActionHandlers[actionName]) {
-        ActionHandlers[actionName]();
-      }
-    });
-  });
-  
-  // Global keyboard shortcuts
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'F1') {
-      e.preventDefault();
-      ActionHandlers.showSupport();
-    }
-    
-    // Escape key to close any modal
-    if (e.key === 'Escape') {
-      const modal = document.querySelector('.modal-overlay');
-      if (modal) {
-        modal.remove();
-      }
-    }
-  });
-}
 
-// === Animation and UI Enhancement ===
-function initializeAnimations() {
-  // Animate cards in sequence
-  const cards = document.querySelectorAll('.card');
-  cards.forEach((card, index) => {
-    card.style.animationDelay = `${index * 0.1}s`;
-  });
-  
-  // Add hover effects to interactive elements
-  const interactiveElements = document.querySelectorAll('.quick-action, .feature-item, .btn');
-  interactiveElements.forEach(element => {
-    element.addEventListener('mouseenter', function() {
-      this.style.transform = 'translateY(-2px)';
-    });
-    
-    element.addEventListener('mouseleave', function() {
-      this.style.transform = 'translateY(0)';
-    });
-  });
-}
-
-// === Background Script Communication ===
-function initializeMessaging() {
-  // Listen for messages from background script
-  if (chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      try {
-        if (message.action === 'statsUpdated') {
-          updateStatsDisplay();
-          sendResponse({ success: true });
-        } else if (message.action === 'keyValidationFailed') {
-          UIHelper.showStatus("API key validation failed. Please check your key.", "error", "❌");
-          sendResponse({ success: true });
-        }
-      } catch (error) {
-        console.error('Error handling message:', error);
-        sendResponse({ success: false, error: error.message });
-      }
-    });
-  }
-}
-
-// === Error Handling ===
-window.addEventListener('error', function(e) {
-  console.error('Global error in popup:', e.error);
-});
-
-window.addEventListener('unhandledrejection', function(e) {
-  console.error('Unhandled promise rejection in popup:', e.reason);
-});
-
-// === DOM Content Loaded Event Listener ===
-document.addEventListener('DOMContentLoaded', async function() {
-  try {
-    // Initialize all components
-    await updateAPIKeyStatus();
-    await updateStatsDisplay();
-    initializeEventHandlers();
-    initializeAnimations();
-    initializeMessaging();
-    
-    // Auto-focus API key input if no key is set
-    const hasKey = await APIKeyManager.hasAPIKey();
-    if (!hasKey) {
-      const apiKeyInput = document.getElementById('apiKeyInput');
-      if (apiKeyInput) {
-        setTimeout(() => apiKeyInput.focus(), 300);
-      }
-    }
-    
-    console.log('Smart Rewrite popup initialized successfully');
-  } catch (error) {
-    console.error('Error initializing popup:', error);
-    UIHelper.showStatus("Error initializing extension popup", "error", "❌");
+  // No provider at all? Open the key panel so the first thing a user sees is how to start.
+  // If on-device AI is ready, there's nothing to set up — go straight to the textarea.
+  if (!hasDevice && !hasKey) {
+    toggleKeyPanel(true);
+  } else {
+    setTimeout(() => refs.srcText.focus(), 100);
   }
 });
