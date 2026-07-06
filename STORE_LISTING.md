@@ -15,7 +15,7 @@ Proofr – Private AI Proofreader, Rewriter & Translator
 
 ## Short description (max 132 chars)
 ```
-Free, private AI that proofreads, rewrites in any tone, and translates. Runs on your device. No account, no API key.
+Private AI that proofreads, rewrites in any tone, and translates. Works on your device, no account needed.
 ```
 
 ## Category
@@ -27,7 +27,7 @@ Free, private AI that proofreads, rewrites in any tone, and translates. Runs on 
 
 > Keep the first paragraph first. It carries the most ranking weight, and it front-loads the keywords without sounding stuffed. No em-dashes, plain voice.
 
-Proofr is a free AI proofreader, rewriter, and translator that lives in your right-click menu. Select any text on a page, then pick what you want: fix the grammar, rewrite it in a different tone, or translate it. You get a cleaner version in a second, right where you were typing.
+Proofr is an AI proofreader, rewriter, and translator that lives in your right-click menu. Select any text on a page, then pick what you want: fix the grammar, rewrite it in a different tone, or translate it. You get a cleaner version in a second, right where you were typing.
 
 Most writing tools send everything you type to their servers and make you sign in first. Proofr works differently. By default it runs on your own computer using Chrome's built-in AI, so your text never leaves your machine. There is no account, no login, and no API key to set up.
 
@@ -44,12 +44,12 @@ How it works:
 In an editable field like a Gmail draft or a comment box, Proofr replaces your text in place. Everywhere else it shows the result in a small panel you can copy from.
 
 Why people use it:
-- It is genuinely free, with no word limit on the on-device engine.
+- The on-device engine has no word limit.
 - It is private. Your writing stays on your computer.
 - It works where you already write: Gmail, Google Docs, LinkedIn, X, Notion, and any text box.
 - It stays out of the way. No sidebars and no pop-ups while you type.
 
-Want more power? You can add a free Groq API key to switch to a larger cloud model that handles more languages and harder text. That is optional and off by default. If you use it, your text goes straight to Groq for processing, and nothing passes through us.
+Want more power? You can add a Groq API key to switch to a larger cloud model that handles more languages and harder text. That is optional and off by default. If you use it, your text goes straight to Groq for processing, and nothing passes through us.
 
 Your privacy, in plain terms:
 - On-device by default, so your text is not sent anywhere.
@@ -62,7 +62,7 @@ Try it: select some text, right-click, and see the difference.
 
 ## Keywords to target (weave naturally into title/description, don't stuff)
 Primary: `proofreader`, `grammar checker`, `AI rewriter`, `paraphrase`, `rewrite text`
-Secondary: `private / on-device AI`, `Grammarly alternative`, `free grammar`, `translate`, `tone changer`, `AI writing assistant`
+Secondary: `private / on-device AI`, `Grammarly alternative`, `grammar fix`, `translate`, `tone changer`, `AI writing assistant`
 
 ## Screenshots (1280×800 or 640×400) — sell the outcome, not the setup
 1. **Before → after proofread** on a real sentence (the hero — show the value in 1 second).

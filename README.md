@@ -1,6 +1,6 @@
 # Proofr — Private AI Proofreader & Rewriter
 
-Free, private AI that proofreads, rewrites in any tone, and translates. Runs on your device. No account, no API key.
+Private AI that proofreads, rewrites in any tone, and translates. Works on your device, no account needed.
 
 Proofr is a Chrome extension (Manifest V3). By default it uses Chrome's Built-in AI (Gemini Nano), which runs entirely on your computer, so your text never leaves your device. You can optionally add a Groq API key to use a cloud model instead.
 

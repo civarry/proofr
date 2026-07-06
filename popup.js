@@ -162,7 +162,7 @@ async function refreshProviderState() {
     ? `Groq key saved — stored only in your browser. Use "Change" to replace it.`
     : deviceReady
       ? `Chrome’s built-in AI is on — no key needed. Add a <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq key</a> to use the Groq engine.`
-      : `Free key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>. Stored only in your browser.`;
+      : `Get a key from <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a>. Stored only in your browser.`;
 
   return { deviceReady, hasKey, runnable };
 }
@@ -315,7 +315,7 @@ async function runRewrite() {
     // language. Point the user at the one real fix: add a Groq key.
     if (!hasKey) {
       showNotice(
-        'On-device AI couldn’t rewrite this — it only supports EN/ES/FR/DE/JA. Add a free Groq key for other languages.',
+        'On-device AI couldn’t rewrite this — it only supports EN/ES/FR/DE/JA. Add a Groq key for other languages.',
         'error',
         { label: 'Add key', onClick: () => toggleKeyPanel(true) }
       );

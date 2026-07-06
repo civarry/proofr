@@ -115,13 +115,13 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } =
     }
     if (engine === 'groq' && !hasKey) {
       inject(tabId, showErrorMessage, [
-        'The engine is set to "Groq only", but no key is saved. Add a free Groq API key in the Proofr popup, or switch the engine to Auto.',
+        'The engine is set to "Groq only", but no key is saved. Add a Groq API key in the Proofr popup, or switch the engine to Auto.',
       ]);
       return;
     }
     if (!deviceReady && !hasKey) {
       inject(tabId, showErrorMessage, [
-        'No AI is set up yet. Open the Proofr popup to use Chrome’s built-in AI, or add a free Groq API key.',
+        'No AI is set up yet. Open the Proofr popup to use Chrome’s built-in AI, or add a Groq API key.',
       ]);
       return;
     }
@@ -140,7 +140,7 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } =
     const hasKey = await APIKeyManager.hasAPIKey();
     if (!hasKey) {
       inject(tabId, showErrorMessage, [
-        'On-device AI couldn’t rewrite this — it only supports EN, ES, FR, DE, JA. Open the Proofr popup and add a free Groq key to handle other languages.',
+        'On-device AI couldn’t rewrite this — it only supports EN, ES, FR, DE, JA. Open the Proofr popup and add a Groq key to handle other languages.',
       ]);
       return;
     }
