@@ -229,7 +229,7 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
   if ((text || '').length > SR_DEVICE_MAX_CHARS) {
     throw new Error(
       `That selection is too long for the on-device model (${text.length.toLocaleString()} characters, ` +
-      `limit ${SR_DEVICE_MAX_CHARS.toLocaleString()}). Switch to the Groq engine for long text, or select less.`
+      `limit ${SR_DEVICE_MAX_CHARS.toLocaleString()}). Add a Groq key for long text, or select less.`
     );
   }
 
@@ -282,7 +282,7 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
       out = await Promise.race([run, timeout]);
     } catch (err) {
       if (err && err.message === 'device-timeout') {
-        throw new Error('The on-device model took too long and was stopped. Try a shorter selection, or switch to the Groq engine for long text.');
+        throw new Error('The on-device model took too long and was stopped. Try a shorter selection, or add a Groq key for long text.');
       }
       throw err;
     } finally {
