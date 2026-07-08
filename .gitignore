@@ -6,6 +6,9 @@
 /screenshots/
 /store-screenshots/
 
+# Internal store-listing notes (keep local, not public)
+STORE_LISTING.md
+
 # Python
 __pycache__/
 *.pyc
