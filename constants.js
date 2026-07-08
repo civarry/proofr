@@ -215,9 +215,23 @@ async function SR_deviceReady() {
   return a === 'available' || a === 'downloadable' || a === 'downloading';
 }
 
+// Gemini Nano has a small context window; oversized input can stall prompt()
+// indefinitely. Cap input length and time out the call so it fails fast instead
+// of hanging. On the "auto" engine with a Groq key, this throw triggers the
+// cloud fallback in SR_rewriteAuto; otherwise the user gets a clear error.
+const SR_DEVICE_MAX_CHARS = 4000;
+const SR_DEVICE_TIMEOUT_MS = 45000;
+
 async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
   const LM = SR_deviceModel();
   if (!LM) throw new Error('On-device AI is not available on this device.');
+
+  if ((text || '').length > SR_DEVICE_MAX_CHARS) {
+    throw new Error(
+      `That selection is too long for the on-device model (${text.length.toLocaleString()} characters, ` +
+      `limit ${SR_DEVICE_MAX_CHARS.toLocaleString()}). Switch to the Groq engine for long text, or select less.`
+    );
+  }
 
   const monitor = (m) => {
     if (m && typeof m.addEventListener === 'function') {
@@ -248,7 +262,33 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
   }
 
   try {
-    const out = await session.prompt(SR_buildPrompt(text, tone, targetLang));
+    // Race the prompt against a timeout, and try to abort the underlying work so
+    // a stalled model can't leave the UI spinning forever.
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        try { controller && controller.abort(); } catch (_) { /* ignore */ }
+        reject(new Error('device-timeout'));
+      }, SR_DEVICE_TIMEOUT_MS);
+    });
+
+    let out;
+    try {
+      const promptText = SR_buildPrompt(text, tone, targetLang);
+      const run = controller
+        ? session.prompt(promptText, { signal: controller.signal })
+        : session.prompt(promptText);
+      out = await Promise.race([run, timeout]);
+    } catch (err) {
+      if (err && err.message === 'device-timeout') {
+        throw new Error('The on-device model took too long and was stopped. Try a shorter selection, or switch to the Groq engine for long text.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+
     const trimmed = (out || '').trim();
     if (!trimmed) throw new Error('The on-device model returned nothing. Try again.');
     return trimmed;

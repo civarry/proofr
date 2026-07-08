@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Proofr – Private AI Proofreader & Rewriter",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Private AI that proofreads, rewrites in any tone, and translates. Works on your device, no account needed.",
   "permissions": [
     "contextMenus",
