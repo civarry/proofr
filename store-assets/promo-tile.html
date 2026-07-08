@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    --ink:#26251f; --muted:#57554e; --faint:#8a887f; --line:#e4e2db;
+    --paper:#faf9f7; --canvas:#f3f2ee; --white:#fff; --ok:#3f7d5b; --err:#b4443a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{margin:0;padding:0}
+  .tile{
+    width:440px;height:280px;position:relative;overflow:hidden;
+    background:linear-gradient(160deg,#faf9f7 0%, #f3f2ee 100%);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif;
+    color:var(--ink);padding:26px 28px;display:flex;flex-direction:column;
+  }
+  .brand{display:flex;align-items:center;gap:9px}
+  .logo{width:30px;height:30px;border-radius:9px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center}
+  .logo svg{width:19px;height:19px}
+  .brandname{font-size:17px;font-weight:700;letter-spacing:-.3px}
+  .headline{font-size:31px;font-weight:800;letter-spacing:-1.1px;line-height:1.06;margin-top:18px}
+  .tagline{font-size:13px;font-weight:600;color:var(--faint);margin-top:9px;letter-spacing:.2px}
+  .demo{
+    margin-top:auto;background:var(--white);border:1px solid var(--line);
+    border-radius:12px;padding:11px 14px;font-size:14.5px;line-height:1.5;
+    box-shadow:0 10px 24px -14px rgba(38,37,31,.28);
+  }
+  .demo .tag{font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+  s{color:var(--err);text-decoration-thickness:2px}
+  ins{color:var(--ok);text-decoration:none;font-weight:700}
+</style>
+</head>
+<body>
+<div class="tile">
+  <div class="brand">
+    <span class="logo" id="logo"></span>
+    <span class="brandname">Proofr</span>
+  </div>
+  <div class="headline">Fix your writing<br>in one click.</div>
+  <div class="tagline">Proofread · Rewrite · Translate — on your device</div>
+  <div class="demo">
+    <div class="tag">Proofread</div>
+    We <ins>were</ins> hoping to <ins>receive</ins> the report <ins>by</ins> Friday.
+  </div>
+</div>
+<script>
+  document.getElementById('logo').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4.5" y1="7.5" x2="13.5" y2="7.5"/><line x1="4.5" y1="11.5" x2="10.5" y2="11.5"/><line x1="4.5" y1="15.5" x2="8.5" y2="15.5"/><path d="M18.4 8 20 9.6l-5.3 5.3-2.1.5.5-2.1L18.4 8z"/></svg>';
+</script>
+</body>
+</html>
