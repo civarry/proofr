@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    --ink:#26251f; --muted:#57554e; --faint:#8a887f; --line:#e4e2db;
+    --paper:#faf9f7; --canvas:#f3f2ee; --white:#fff; --ok:#3f7d5b; --err:#b4443a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{margin:0;padding:0}
+  .marquee{
+    width:1400px;height:560px;position:relative;overflow:hidden;
+    background:linear-gradient(155deg,#faf9f7 0%, #f3f2ee 100%);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif;
+    color:var(--ink);
+  }
+  .brand{display:flex;align-items:center;gap:13px;position:absolute;top:56px;left:72px}
+  .logo{width:46px;height:46px;border-radius:13px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center}
+  .logo svg{width:28px;height:28px}
+  .brandname{font-size:24px;font-weight:700;letter-spacing:-.4px}
+  .left{position:absolute;left:72px;top:170px;max-width:600px}
+  .headline{font-size:66px;font-weight:800;letter-spacing:-2px;line-height:1.02}
+  .sub{font-size:23px;color:var(--muted);margin-top:22px;line-height:1.45;max-width:520px}
+  .pills{display:flex;gap:11px;margin-top:30px}
+  .pill{background:var(--white);border:1px solid var(--line);border-radius:999px;padding:9px 17px;font-size:15px;font-weight:600;color:var(--muted)}
+
+  .stage{position:absolute;right:72px;top:150px;width:600px;display:flex;flex-direction:column;gap:18px}
+  .doc{padding:22px 26px;border-radius:16px;font-size:20px;line-height:1.6}
+  .doc .tag{font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+  .before{background:var(--canvas);border:1px solid var(--line);color:var(--muted)}
+  .after{background:var(--white);border:1px solid var(--ink);box-shadow:0 20px 50px -24px rgba(38,37,31,.30)}
+  .after .tag{color:var(--ink)}
+  s{color:var(--err);text-decoration-thickness:2px}
+  ins{color:var(--ok);text-decoration:none;font-weight:600}
+  .arrow{align-self:center;color:var(--faint);font-size:30px}
+</style>
+</head>
+<body>
+<div class="marquee">
+  <div class="brand">
+    <span class="logo" id="logo"></span>
+    <span class="brandname">Proofr</span>
+  </div>
+  <div class="left">
+    <div class="headline">Fix your writing<br>in one click.</div>
+    <div class="sub">Proofread, rewrite in any tone, and translate any text. Runs on your device.</div>
+    <div class="pills">
+      <span class="pill">On-device</span>
+      <span class="pill">No account</span>
+      <span class="pill">Private</span>
+    </div>
+  </div>
+  <div class="stage">
+    <div class="doc before">
+      <div class="tag">Your text</div>
+      we was hoping to <s>recieve</s> the report <s>by</s> friday but it <s>dont</s> arrive yet
+    </div>
+    <div class="arrow">↓</div>
+    <div class="doc after">
+      <div class="tag">Proofread</div>
+      We <ins>were</ins> hoping to <ins>receive</ins> the report <ins>by</ins> Friday, but it <ins>hasn't</ins> arrived yet.
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById('logo').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4.5" y1="7.5" x2="13.5" y2="7.5"/><line x1="4.5" y1="11.5" x2="10.5" y2="11.5"/><line x1="4.5" y1="15.5" x2="8.5" y2="15.5"/><path d="M18.4 8 20 9.6l-5.3 5.3-2.1.5.5-2.1L18.4 8z"/></svg>';
+</script>
+</body>
+</html>
