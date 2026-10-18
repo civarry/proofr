@@ -487,12 +487,42 @@ async function saveKey() {
   }
 }
 
+// The custom endpoint's own origin is granted when its key is saved. Give it
+// back when that endpoint stops being used. While hover actions are on,
+// <all_urls> already covers it, so leave permissions alone then.
+async function releaseCustomEndpointAccess(baseURL) {
+  let origin;
+  try { origin = new URL(baseURL).origin + '/*'; } catch { return; }
+  const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
+  if (srHoverAssist) return;
+  await chrome.permissions.remove({ origins: [origin] }).catch(() => {});
+}
+
 async function clearKey() {
   const serviceId = await CloudProvider.getActiveService();
+  if (serviceId === 'custom') await releaseCustomEndpointAccess((await CloudProvider.getConfig('custom')).baseURL);
   await CloudProvider.clearKey(serviceId);
   keyEditing = false;
   await renderKeyField(serviceId);
   await refreshProviderPill();
+}
+
+// Providers retire models (Groq's old default in Aug 2026, OpenAI's in Jan
+// 2027). Once a day, when the panel opens, ask the provider which models it
+// still lists and move off a retired one the same way saving a key does.
+const MODEL_CHECK_MS = 24 * 60 * 60 * 1000;
+async function checkModelStillListed() {
+  try {
+    const { srModelCheckedAt } = await chrome.storage.local.get(['srModelCheckedAt']);
+    if (srModelCheckedAt && Date.now() - srModelCheckedAt < MODEL_CHECK_MS) return;
+    const cfg = await CloudProvider.getConfig();
+    if (!cfg.apiKey || !cfg.baseURL) return;
+    const ids = await SR_availableModels(cfg);
+    await chrome.storage.local.set({ srModelCheckedAt: Date.now() });
+    await healModel(cfg.id, ids);
+  } catch {
+    // Offline or provider hiccup: try again next time the panel opens.
+  }
 }
 
 // Downloads Chrome's on-device model from a click (the download needs user
@@ -693,7 +723,12 @@ async function runTurn(turn, opts = {}) {
   const start = performance.now();
   try {
     const provider = await CloudProvider.getConfig();
-    const { engine } = await Settings.get();
+    const settings = await Settings.get();
+    // Same rule as background.js rewriteNow: on Auto with a key, don't start a
+    // multi-GB model download mid-rewrite; use the key until the user sets
+    // on-device up from the card in Settings.
+    const engine = (settings.engine === 'auto' && provider.apiKey && (await SR_deviceAvailability()) !== 'available')
+      ? 'cloud' : settings.engine;
     const { text: rewritten, provider: providerId } = await SR_rewriteAuto(turn.inputText, turn.mode, {
       provider,
       engine,
@@ -883,7 +918,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
-    'welcomeCard', 'hoverToggle', 'engineSeg', 'engineHint',
+    'welcomeCard', 'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
     'keySection', 'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
     'btnBrowseModels', 'modelMenu', 'modelMenuSearch', 'modelMenuList',
@@ -900,6 +935,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateModeTag();
 
   const { hasKey } = await refreshProviderPill();
+  if (hasKey) checkModelStillListed();
 
   turns = await TurnLog.getAll();
   renderThread();
@@ -938,11 +974,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       chrome.permissions.request({ origins: ['<all_urls>'] }).then(async (granted) => {
         refs.hoverToggle.checked = granted;
         await Settings.set({ srHoverAssist: granted });
+        refs.hoverHint.textContent = granted ? '' : 'Hover actions stay off: Chrome needs your permission to show the icon on pages.';
         if (granted) showSavedToast();
       }, () => { refs.hoverToggle.checked = false; });
     } else {
-      Settings.set({ srHoverAssist: false }).then(() => {
-        chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
+      Settings.set({ srHoverAssist: false }).then(async () => {
+        await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
+        refs.hoverHint.textContent = '';
+        // A custom endpoint may have been relying on that broad access.
+        const cfg = await CloudProvider.getConfig();
+        if (cfg.id === 'custom' && cfg.apiKey && cfg.baseURL) {
+          let origin = null;
+          try { origin = new URL(cfg.baseURL).origin + '/*'; } catch { /* invalid URL */ }
+          if (origin && !(await chrome.permissions.contains({ origins: [origin] }))) {
+            refs.hoverHint.textContent = 'Your custom endpoint needs access again: open Cloud provider and press Save on its key.';
+          }
+        }
         showSavedToast();
       });
     }
@@ -969,6 +1016,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const item = e.target.closest('.cloud-select-item');
     if (!item) return;
     closeCloudMenu();
+    const previous = await CloudProvider.getConfig();
+    if (previous.id === 'custom' && item.dataset.value !== 'custom') await releaseCustomEndpointAccess(previous.baseURL);
     await CloudProvider.setActiveService(item.dataset.value);
     keyEditing = false;
     await refreshCloudSection();
@@ -986,6 +1035,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSavedToast();
   });
   refs.customBaseURLInput.addEventListener('change', async () => {
+    const previous = (await CloudProvider.getConfig('custom')).baseURL;
+    if (previous && previous !== refs.customBaseURLInput.value.trim()) await releaseCustomEndpointAccess(previous);
     await CloudProvider.setCustomBaseURL(refs.customBaseURLInput.value.trim());
     showSavedToast();
   });

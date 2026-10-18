@@ -222,7 +222,7 @@
         if (!footer || footer.querySelector('.sr-rate')) return;
         const line = document.createElement('div');
         line.className = 'sr-rate';
-        line.innerHTML = `Enjoying Proofr? <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" id="sr-rate-link">Rate it on the Chrome Web Store</a> <button type="button" class="sr-rate-dismiss" id="sr-rate-dismiss">Not now</button>`;
+        line.innerHTML = `Finding Proofr useful? A rating helps other people find it. <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" id="sr-rate-link">Rate it</a> <button type="button" class="sr-rate-dismiss" id="sr-rate-dismiss">Not now</button>`;
         footer.appendChild(line);
         const done = () => { chrome.storage.local.set({ srRateAsked: true }); line.remove(); };
         line.querySelector('#sr-rate-link').addEventListener('click', done);
@@ -261,6 +261,8 @@
       this.hideLoadingToast();
       const notification = document.createElement('div');
       notification.className = 'sr-success-notification';
+      notification.setAttribute('role', 'status');
+      notification.setAttribute('aria-live', 'polite');
       notification.innerHTML = `
         <div class="sr-success-content">
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
@@ -272,10 +274,11 @@
       
       setTimeout(() => notification.classList.add('sr-show'), 100);
       
+      // An undo hint needs time to read and act on.
       setTimeout(() => {
         notification.classList.remove('sr-show');
         setTimeout(() => notification.remove(), 300);
-      }, 3000);
+      }, /undo/i.test(message) ? 6000 : 3000);
     }
 
     show() {

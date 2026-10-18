@@ -52,8 +52,15 @@ const mock = http.createServer((req, res) => {
     }
     const parsed = JSON.parse(body || '{}');
     mockRequests.push(parsed);
-    res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ choices: [{ message: { content: 'MOCK RESULT: fixed text.' } }] }));
+    // Echo the text being rewritten, so a test can tell whose result landed
+    // where. Text containing SLOW is answered after 2.5s.
+    const prompt = parsed.messages?.[0]?.content || '';
+    const input = (prompt.match(/"""\n([\s\S]*?)\n"""/) || [, ''])[1].trim();
+    const reply = () => {
+      res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content: `R(${input})` }, finish_reason: 'stop' }] }));
+    };
+    if (/SLOW/.test(input)) setTimeout(reply, 2500); else reply();
   });
 });
 await new Promise(r => mock.listen(8766, r));
@@ -130,7 +137,7 @@ await panel.evaluate(() => document.getElementById('btnSettingsBack').click());
 await focusSel(panel, '#ta'); await panel.keyboard.type('we was going to the store yesterday');
 await clk(panel, '#sendBtn'); await sleep(2500);
 const card = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '');
-check('side panel rewrite succeeds end-to-end', /MOCK RESULT/.test(card), card.slice(0, 80));
+check('side panel rewrite succeeds end-to-end', /^R\(we was going/.test(card), card.slice(0, 80));
 check('rating line shown after 5th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
 await shot(panel, '2-panel-result.png');
 await clk(panel, '.rate-line [data-rate="later"]'); await sleep(300);
@@ -158,18 +165,49 @@ await demo.evaluate(() => {
 const tabId = await sw.evaluate(async () => (await chrome.tabs.query({ url: 'http://localhost:8765/*' }))[0].id);
 await sw.evaluate((id) => handleRewrite(id, 'we was', 'grammar', { ensure: true }), tabId); await sleep(1500);
 const after = await demo.evaluate(() => document.getElementById('probe').value);
-check('in-place replace in textarea', after === 'hello MOCK RESULT: fixed text. here ok', after);
+check('in-place replace in textarea', after === 'hello R(we was) here ok', after);
 await demo.evaluate(() => document.getElementById('probe').focus());
 // Synthetic Cmd+Z doesn't reach macOS editing commands; name the command, which is what the real keystroke maps to.
 await demo.keyboard.down('Meta'); await demo.keyboard.press('KeyZ', { commands: ['undo'] }); await demo.keyboard.up('Meta'); await sleep(300);
 const undone = await demo.evaluate(() => document.getElementById('probe').value);
 check('Cmd+Z restores original after replace', undone === 'hello we was here ok', undone);
+// Two rewrites in flight: each result must land on its own selection (board N1).
+await demo.evaluate(() => {
+  const mk = (id, top, v) => { const t = document.createElement('textarea'); t.id = id; t.value = v; t.style.cssText = `position:fixed;top:${top}px;left:10px;width:400px;height:40px;z-index:99999`; document.body.appendChild(t); return t; };
+  const a = mk('ta-a', 90, 'first SLOW alpha end'); mk('ta-b', 140, 'second beta end');
+  a.focus(); a.setSelectionRange(6, 16); // "SLOW alpha"
+});
+const pA = sw.evaluate((id) => handleRewrite(id, 'SLOW alpha', 'grammar', { ensure: true }), tabId);
+await sleep(600);
+await demo.evaluate(() => { const b = document.getElementById('ta-b'); b.focus(); b.setSelectionRange(7, 11); }); // "beta"
+await sw.evaluate((id) => handleRewrite(id, 'beta', 'grammar', { ensure: true }), tabId);
+await pA; await sleep(800);
+const [va, vb] = await demo.evaluate(() => [document.getElementById('ta-a').value, document.getElementById('ta-b').value]);
+check('overlapping rewrites: B gets only its own result', vb === 'second R(beta) end', vb);
+check('overlapping rewrites: A replaced in place, not B', va === 'first R(SLOW alpha) end', va);
+
 // Control: the old direct value assignment is NOT undoable. Proves the undo check can fail.
 await demo.evaluate(() => { const t = document.getElementById('probe'); t.value = 'hello we was here ok'; t.focus(); t.setSelectionRange(6, 12); t.value = 'hello XX here ok'; });
 await demo.keyboard.down('Meta'); await demo.keyboard.press('KeyZ', { commands: ['undo'] }); await demo.keyboard.up('Meta'); await sleep(300);
 check('control: direct value write is not undoable', (await demo.evaluate(() => document.getElementById('probe').value)) === 'hello XX here ok');
 
 console.log('STEP 7');
+// 6b. Side panel on Auto with a key while the on-device model still needs its
+// download: must use the key, not start the download mid-rewrite (board N5).
+await panel.bringToFront();
+await panel.evaluate(() => chrome.storage.sync.set({ srLastTone: 'grammar', srEngine: 'auto' }));
+await panel.reload(); await sleep(900);
+await panel.evaluate(() => {
+  window.__createCalls = 0;
+  SR_deviceAvailability = async () => 'downloadable';
+  SR_deviceModel = () => ({ availability: async () => 'downloadable', create: async () => { window.__createCalls++; return new Promise(() => {}); } });
+  if (!document.getElementById('settingsPanel').classList.contains('hidden')) document.getElementById('btnSettingsBack').click();
+});
+await focusSel(panel, '#ta'); await panel.keyboard.type('auto mode text');
+await clk(panel, '#sendBtn'); await sleep(2000);
+const n5 = await panel.evaluate(() => ({ calls: window.__createCalls, out: [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '' }));
+check('Auto + key + model not downloaded: uses the key, no download', n5.calls === 0 && /^R\(auto mode text\)/.test(n5.out), JSON.stringify(n5));
+
 // 7. Hover toggle: grants (pre-granted in test copy), registers scripts, applies on reload.
 await panel.bringToFront();
 await panel.evaluate(() => document.getElementById('btnSettings').click()); await sleep(400);

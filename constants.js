@@ -173,8 +173,12 @@ const SR_REVIEWS_URL = 'https://chromewebstore.google.com/detail/dfhooimjbdefdba
 const SR_CLOUD_SERVICES = [
   // llama-3.3-70b-versatile was shut down 2026-08-16; gpt-oss-120b is Groq's named replacement.
   { id: 'groq', name: 'Groq', baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'openai/gpt-oss-120b' },
+  // shortcut: gpt-4o-mini shuts down 2027-01-14; its named replacement (gpt-6-luna) is a reasoning
+  // model whose temperature/top_p/max_tokens support is undocumented. Switch once verified.
   { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini' },
-  { id: 'openrouter', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-4o-mini' },
+  // gpt-oss-120b on OpenRouter accepts temperature/top_p/max_tokens/reasoning_effort (model page);
+  // openai/gpt-4o-mini there routes to the same 2027-01-14 shutdown.
+  { id: 'openrouter', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-oss-120b' },
   { id: 'custom', name: 'Custom', baseURL: '', defaultModel: '' },
 ];
 
@@ -211,19 +215,25 @@ function SR_chatModels(ids) {
 
 // Fallbacks, in order, when the saved/default model isn't in a provider's
 // /models list (providers retire models; see the Groq default above).
+// Only models known to accept the request shape SR_callCloud sends.
 const SR_MODEL_PREFERENCES = {
   groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
   openai: ['gpt-4o-mini', 'gpt-4.1-mini'],
-  openrouter: ['openai/gpt-4o-mini', 'openai/gpt-oss-120b'],
+  openrouter: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'openai/gpt-4o-mini'],
 };
 
 // Picks a model from `ids` (a provider's /models list): the service default if
-// it's still listed, else the first listed preference, else the first chat
-// model. Returns null for an empty list, so the caller keeps what it had.
+// it's still listed, else the first listed preference. Returns null when none
+// is listed, so the caller keeps what it had and the user gets the honest
+// "model no longer available" error rather than an arbitrary model that may
+// reject our parameters. Custom endpoints have no list, so they take the first
+// chat model (often the only one, e.g. a local Ollama).
 function SR_pickAvailableModel(serviceId, ids) {
   const chat = SR_chatModels(ids || []);
   const prefs = [SR_cloudServiceMeta(serviceId).defaultModel, ...(SR_MODEL_PREFERENCES[serviceId] || [])];
-  return prefs.find((m) => m && chat.includes(m)) || chat[0] || null;
+  const preferred = prefs.find((m) => m && chat.includes(m));
+  if (preferred) return preferred;
+  return serviceId === 'custom' ? (chat[0] || null) : null;
 }
 
 // Lists the models a provider's {baseURL}/models actually advertises for the
@@ -348,6 +358,10 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
   const data = await response.json().catch(() => null); // body can time out mid-stream too
   if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
     throw new Error(`Got an unexpected response from ${provider.displayName}. Try again.`);
+  }
+  // Never return a cut-off answer: on an editable field it would replace the user's text.
+  if (data.choices[0].finish_reason === 'length') {
+    throw new Error('The answer was cut off before it finished. Try a shorter selection.');
   }
   // A reasoning model can spend the whole budget thinking and return no answer.
   const content = (data.choices[0].message.content || '').trim();

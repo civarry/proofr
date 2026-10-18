@@ -351,7 +351,7 @@
       font-size: 12px; line-height: 1.55; color: var(--ink-soft);
     }
     .setup-card.hidden { display: none; }
-    .setup-card > b { display: block; font-size: 13px; color: var(--ink); margin-bottom: 6px; }
+    .setup-card > b, .setup-card > .setup-title { display: block; font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
     .setup-card p { margin-bottom: 8px; }
     .setup-card ol { padding-left: 18px; }
     .setup-card li { margin-bottom: 3px; }
@@ -387,8 +387,8 @@
     }
     .rate-line span { flex: 1 1 180px; }
     .rate-line a { color: var(--ink); font-weight: 600; }
-    .rate-line button { background: none; border: none; padding: 0; font-size: 12px; color: var(--ink-faint); cursor: pointer; }
-    .rate-line button:hover { color: var(--ink-soft); }
+    .rate-line button { background: none; border: none; padding: 0; font-size: 12px; color: var(--ink-soft); text-decoration: underline; cursor: pointer; }
+    .rate-line button:hover { color: var(--ink); }
     .toggle-row .settings-hint { display: block; margin: 0; }
     .toggle-row input { flex: none; margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
 
@@ -715,7 +715,7 @@
       <div class="settings-body">
         <!-- First-install tab only (sidepanel.html?welcome=1). -->
         <div class="setup-card hidden" id="welcomeCard">
-          <b>Proofr is installed</b>
+          <h2 class="setup-title">Proofr is installed</h2>
           <p>Select text on any page, right-click, and choose <b>Proofr</b>. Or press <b>Alt+Shift+P</b> to proofread the selection. Click the Proofr icon in the toolbar to open this panel any time.</p>
           <p>Check the setup below, then close this tab.</p>
         </div>
@@ -805,6 +805,7 @@
           </span>
           <input type="checkbox" id="hoverToggle">
         </label>
+        <p class="settings-hint" id="hoverHint" role="status"></p>
 
         <div class="settings-section-label">About</div>
         <div class="settings-row" data-action="showPrivacyPolicy">
