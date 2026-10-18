@@ -113,6 +113,8 @@
     // "Translate → English" on a page that's already English is a no-op.
     const pageLang = (document.documentElement.lang || '').toLowerCase().split('-')[0];
     const tones = READING_TONES.filter((id) => !(id === 'translate' && pageLang && pageLang === targetLang.split('-')[0]));
+    // The Ask box always goes to the cloud provider, so it only appears once a key exists.
+    const { hasKey } = await sendMessageWithTimeout({ action: 'hasCloudKey' }, 3000);
 
     popover = document.createElement('div');
     popover.className = 'sr-hover-popover';
@@ -121,11 +123,11 @@
       const label = id === 'translate' ? `Translate → ${targetLangName}` : tone.name;
       return `<button type="button" class="sr-hover-action" data-tone="${id}">${label}</button>`;
     }).join('')
-      + `<div class="sr-hover-divider"></div>`
-      + `<form class="sr-hover-ask" id="srHoverAskForm">
+      + (hasKey ? `<div class="sr-hover-divider"></div>
+        <form class="sr-hover-ask" id="srHoverAskForm">
           <input type="text" class="sr-hover-ask-input" id="srHoverAskInput" placeholder="Ask about this…" />
           <button type="submit" class="sr-hover-ask-send" aria-label="Run">${ICON_SEND}</button>
-        </form>`;
+        </form>` : '');
     positionNear(popover, icon.getBoundingClientRect(), { below: true });
 
     popover.querySelectorAll('.sr-hover-action').forEach((btn) => {
@@ -136,12 +138,15 @@
       });
     });
 
-    popover.querySelector('#srHoverAskForm').addEventListener('submit', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const instruction = popover.querySelector('#srHoverAskInput').value.trim();
-      if (instruction) runHoverAsk(instruction);
-    });
+    const askForm = popover.querySelector('#srHoverAskForm');
+    if (askForm) {
+      askForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const instruction = popover.querySelector('#srHoverAskInput').value.trim();
+        if (instruction) runHoverAsk(instruction);
+      });
+    }
 
     document.body.appendChild(popover);
   }
@@ -223,7 +228,7 @@
     if (!response || response.error) {
       const message = (response && (response.message || response.error)) || 'Something went wrong.';
       console.warn('Proofr hoverAskAI failed:', message);
-      showFeedback('error', message);
+      showFeedback('error', message, response && response.title ? { title: response.title } : undefined);
       removeIcon();
       return;
     }
@@ -251,7 +256,7 @@
     if (!response || response.error) {
       const message = (response && (response.message || response.error)) || 'Something went wrong.';
       console.warn('Proofr hoverRewrite failed:', message);
-      showFeedback('error', message);
+      showFeedback('error', message, response && response.title ? { title: response.title } : undefined);
       removeIcon();
       return;
     }

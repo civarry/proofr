@@ -111,7 +111,7 @@ const SR_TONE_INSTRUCTIONS = {
 function SR_buildPrompt(text, tone, targetLang) {
   let baseInstruction;
   if (tone === 'translate') {
-    const lang = SR_langName(targetLang || 'en');
+    const lang = SR_fullLangName(targetLang || 'en');
     baseInstruction = `Translate the following text into ${lang}. Output only the translation, with no commentary or notes. Preserve the original meaning, tone, and nuance as closely as possible. If the text is already in ${lang}, refine it so it reads naturally.`;
   } else {
     baseInstruction = SR_TONE_INSTRUCTIONS[tone] || SR_TONE_INSTRUCTIONS.friendly;
@@ -161,6 +161,9 @@ function SR_getTemperature(tone, boost = 0) {
   return Math.min(1, (temperatures[tone] || 0.5) + boost);
 }
 
+// Listing reviews page, used by the one-time rate prompt (content.js, sidepanel.js).
+const SR_REVIEWS_URL = 'https://chromewebstore.google.com/detail/dfhooimjbdefdbabhppgloclhkjolhfg/reviews';
+
 // === Cloud providers ===
 // Groq, OpenAI, and OpenRouter (and any self-hosted/custom endpoint) all speak
 // the same OpenAI-compatible /chat/completions shape — only the base URL, key,
@@ -168,7 +171,8 @@ function SR_getTemperature(tone, boost = 0) {
 // different wire format (Anthropic) would need its own function, not a
 // preset here.
 const SR_CLOUD_SERVICES = [
-  { id: 'groq', name: 'Groq', baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile' },
+  // llama-3.3-70b-versatile was shut down 2026-08-16; gpt-oss-120b is Groq's named replacement.
+  { id: 'groq', name: 'Groq', baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'openai/gpt-oss-120b' },
   { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini' },
   { id: 'openrouter', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-4o-mini' },
   { id: 'custom', name: 'Custom', baseURL: '', defaultModel: '' },
@@ -203,6 +207,23 @@ function SR_chatModels(ids) {
     const lower = String(id).toLowerCase();
     return !exclude.some((x) => lower.includes(x));
   }).sort();
+}
+
+// Fallbacks, in order, when the saved/default model isn't in a provider's
+// /models list (providers retire models; see the Groq default above).
+const SR_MODEL_PREFERENCES = {
+  groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
+  openai: ['gpt-4o-mini', 'gpt-4.1-mini'],
+  openrouter: ['openai/gpt-4o-mini', 'openai/gpt-oss-120b'],
+};
+
+// Picks a model from `ids` (a provider's /models list): the service default if
+// it's still listed, else the first listed preference, else the first chat
+// model. Returns null for an empty list, so the caller keeps what it had.
+function SR_pickAvailableModel(serviceId, ids) {
+  const chat = SR_chatModels(ids || []);
+  const prefs = [SR_cloudServiceMeta(serviceId).defaultModel, ...(SR_MODEL_PREFERENCES[serviceId] || [])];
+  return prefs.find((m) => m && chat.includes(m)) || chat[0] || null;
 }
 
 // Lists the models a provider's {baseURL}/models actually advertises for the
@@ -272,8 +293,12 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
     throw new Error(`No model set for ${provider.displayName}. Add one in settings.`);
   }
 
+  // gpt-oss models reason before answering, and those tokens count against the
+  // output budget; other providers may reject an unknown reasoning_effort param.
+  const reasoning = /gpt-oss/i.test(provider.model);
+  if (reasoning) maxTokens += 1000;
   // Without a deadline a stalled provider hangs the modal forever. Scales with
-  // maxTokens so an 8000-token page-translate batch on a slow model isn't cut off.
+  // maxTokens so a long answer on a slow model isn't cut off.
   const timeoutMs = 20000 + maxTokens * 10;
   let response;
   try {
@@ -291,6 +316,7 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
         temperature,
         top_p: 0.9,
         stream: false,
+        ...(reasoning ? { reasoning_effort: 'low' } : {}),
       }),
     });
   } catch (err) {
@@ -302,6 +328,13 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
+    const err = errorData.error || {};
+    const modelGone = response.status === 404
+      || ['model_not_found', 'model_decommissioned'].includes(err.code)
+      || /decommission|model.*(not found|does not exist|not available)/i.test(err.message || '');
+    if (modelGone && (response.status === 400 || response.status === 404)) {
+      throw new Error(`Your model ${provider.model} is no longer available. Open Settings → Model and pick another (the search button lists current ones).`);
+    }
     if (response.status === 401) {
       throw new Error('Your API key was rejected. Check it in settings.');
     } else if (response.status === 429) {
@@ -316,7 +349,10 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
   if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
     throw new Error(`Got an unexpected response from ${provider.displayName}. Try again.`);
   }
-  return data.choices[0].message.content.trim();
+  // A reasoning model can spend the whole budget thinking and return no answer.
+  const content = (data.choices[0].message.content || '').trim();
+  if (!content) throw new Error(`${provider.displayName} returned an empty answer. Try again, or select less text.`);
+  return content;
 }
 
 // === On-device AI (Chrome built-in, Gemini Nano — no API key needed) ===
@@ -339,7 +375,13 @@ async function SR_deviceAvailability() {
   if (!LM) return 'unavailable';
   try {
     if (typeof LM.availability === 'function') {
-      return await LM.availability();
+      // English only: "can the model run at all". Checking every language would
+      // mark the whole engine unavailable on a build missing one of them;
+      // SR_rewriteOnDevice handles per-language support.
+      return await LM.availability({
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      });
     }
     // Legacy: ai.languageModel.capabilities() → { available: 'readily'|'after-download'|'no' }
     if (typeof LM.capabilities === 'function') {
@@ -386,7 +428,7 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
   // Recent Chrome requires the languages up front for safety attestation, and the
   // OUTPUT must be a single supported code (an array of several is rejected).
   // Input can be any of the supported set; output is the translate target, else English.
-  const inputLanguages = ['en', 'es', 'fr', 'de', 'ja'];
+  const inputLanguages = SR_LANGUAGES.map((l) => l.code);
   const outputLanguage = (tone === 'translate' && targetLang) ? targetLang : 'en';
   const baseOpts = {
     monitor,
@@ -394,12 +436,24 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
     expectedOutputs: [{ type: 'text', languages: [outputLanguage] }],
   };
 
+  // Some builds reject the temperature/topK pair; some ship fewer input
+  // languages than the docs list (CfT 155 accepts only en/es/ja). Fall back
+  // step by step, always keeping the output language.
+  const attempts = [
+    { ...baseOpts, temperature: SR_getTemperature(tone, temperatureBoost), topK: 8 },
+    baseOpts,
+    { ...baseOpts, expectedInputs: [{ type: 'text', languages: ['en'] }] },
+  ];
   let session;
-  try {
-    session = await LM.create({ ...baseOpts, temperature: SR_getTemperature(tone, temperatureBoost), topK: 8 });
-  } catch (_) {
-    // Some builds reject the temperature/topK pair — retry, but KEEP the language declaration.
-    session = await LM.create(baseOpts);
+  let lastError;
+  for (const opts of attempts) {
+    try { session = await LM.create(opts); break; } catch (err) { lastError = err; }
+  }
+  if (!session) {
+    if (lastError && lastError.name === 'NotSupportedError' && outputLanguage !== 'en') {
+      throw new Error(`${SR_fullLangName(outputLanguage)} isn't supported by Chrome's on-device model here. Add a cloud provider key to translate into it.`);
+    }
+    throw lastError || new Error('Could not start the on-device model.');
   }
 
   try {
@@ -445,7 +499,9 @@ async function SR_rewriteAuto(text, tone, opts = {}) {
   const engine = opts.engine || 'auto';
   const boost = opts.temperatureBoost || 0;
   const hasProvider = !!(opts.provider && opts.provider.apiKey);
-  const wantDevice = engine === 'device' || (engine === 'auto' && await SR_deviceReady());
+  // Nano can only output the five on-device languages; send other translate targets to the cloud.
+  const deviceLang = tone !== 'translate' || SR_isOnDeviceLanguage(opts.targetLang || 'en');
+  const wantDevice = engine === 'device' || (engine === 'auto' && deviceLang && await SR_deviceReady());
 
   if (wantDevice) {
     try {
@@ -467,63 +523,6 @@ function SR_providerDisplayLabel(providerId) {
   return SR_cloudServiceMeta(providerId).name;
 }
 
-// === Full-page translate: batch multiple blocks into one call ===
-// Numbering is assigned per-call (1..N) rather than reusing the caller's own
-// block ids, so the model only ever has to track a simple local sequence —
-// SR_parseBatchResponse maps that sequence back onto the caller's items[].
-function SR_buildBatchTranslatePrompt(items, targetLangName) {
-  const numbered = items.map((it, i) => `${i + 1}. ${it.text.replace(/\n+/g, ' ').trim()}`).join('\n');
-  return `Translate each numbered line below into ${targetLangName}. Output the same numbering, one translation per line, in the same order. No commentary, no extra blank lines, no explanations — only the numbered translations.
-
-${numbered}
-
-Translated:`;
-}
-
-// Returns an array of length `count`; entries that couldn't be parsed are null
-// so the caller can fall back to the original text rather than drop the block.
-function SR_parseBatchResponse(raw, count) {
-  const lines = (raw || '').split('\n').map(l => l.trim()).filter(Boolean);
-  const out = new Array(count).fill(null);
-  for (const line of lines) {
-    const m = line.match(/^(\d+)[.):]\s*(.+)$/);
-    if (!m) continue;
-    const idx = parseInt(m[1], 10) - 1;
-    if (idx >= 0 && idx < count) out[idx] = m[2].trim();
-  }
-  return out;
-}
-
-// One cloud call per batch. `items`: [{ id, text }]. Returns [{ id, text }] in
-// the same order, falling back to the original text for any line the model
-// dropped or mis-numbered (never silently loses a block).
-async function SR_translateBatchCloud(provider, items, targetLangName) {
-  const prompt = SR_buildBatchTranslatePrompt(items, targetLangName);
-  const estimatedTokens = items.reduce((n, it) => n + it.text.length, 0) * 2 + 200;
-  const maxTokens = Math.min(8000, Math.max(500, estimatedTokens));
-  const raw = await SR_callCloud(provider, prompt, 0.2, maxTokens);
-  const parsed = SR_parseBatchResponse(raw, items.length);
-  return items.map((it, i) => ({ id: it.id, text: parsed[i] || it.text }));
-}
-
-// On-device path: loops SR_rewriteOnDevice per block (simpler and more robust
-// than trying to batch inside Gemini Nano's small context window). A single
-// block failing (e.g. it happens to exceed SR_DEVICE_MAX_CHARS) falls back to
-// its original text instead of aborting the whole page.
-async function SR_translateBatchDevice(items, targetLangCode) {
-  const results = [];
-  for (const it of items) {
-    try {
-      const text = await SR_rewriteOnDevice(it.text, 'translate', null, targetLangCode);
-      results.push({ id: it.id, text });
-    } catch (_) {
-      results.push({ id: it.id, text: it.text });
-    }
-  }
-  return results;
-}
-
-// Expose for service-worker (importScripts) and content-script isolated world.
 if (typeof self !== 'undefined') {
   self.SR_TONES = SR_TONES;
   self.SR_getTone = SR_getTone;
@@ -540,6 +539,8 @@ if (typeof self !== 'undefined') {
   self.SR_isValidApiKey = SR_isValidApiKey;
   self.SR_CLOUD_SERVICES = SR_CLOUD_SERVICES;
   self.SR_cloudServiceMeta = SR_cloudServiceMeta;
+  self.SR_pickAvailableModel = SR_pickAvailableModel;
+  self.SR_REVIEWS_URL = SR_REVIEWS_URL;
   self.SR_chatCompletionsURL = SR_chatCompletionsURL;
   self.SR_modelsURL = SR_modelsURL;
   self.SR_chatModels = SR_chatModels;
@@ -553,8 +554,4 @@ if (typeof self !== 'undefined') {
   self.SR_deviceReady = SR_deviceReady;
   self.SR_rewriteOnDevice = SR_rewriteOnDevice;
   self.SR_rewriteAuto = SR_rewriteAuto;
-  self.SR_buildBatchTranslatePrompt = SR_buildBatchTranslatePrompt;
-  self.SR_parseBatchResponse = SR_parseBatchResponse;
-  self.SR_translateBatchCloud = SR_translateBatchCloud;
-  self.SR_translateBatchDevice = SR_translateBatchDevice;
 }

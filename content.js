@@ -209,9 +209,30 @@
       this.bindChips();
       this.bindLangRow();
       this.show();
+      this.maybeShowRatePrompt();
     }
 
-    showError(message) {
+    // One-time, neutral ask after a few successful results. Same for everyone,
+    // no reward, never on errors (CWS spam policy: no incentives, no gating).
+    async maybeShowRatePrompt() {
+      try {
+        const { rewriteStats, srRateAsked } = await chrome.storage.local.get(['rewriteStats', 'srRateAsked']);
+        if (srRateAsked || !rewriteStats || rewriteStats.totalRewrites < 5) return;
+        const footer = document.getElementById('sr-modal-footer');
+        if (!footer || footer.querySelector('.sr-rate')) return;
+        const line = document.createElement('div');
+        line.className = 'sr-rate';
+        line.innerHTML = `Enjoying Proofr? <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" id="sr-rate-link">Rate it on the Chrome Web Store</a> <button type="button" class="sr-rate-dismiss" id="sr-rate-dismiss">Not now</button>`;
+        footer.appendChild(line);
+        const done = () => { chrome.storage.local.set({ srRateAsked: true }); line.remove(); };
+        line.querySelector('#sr-rate-link').addEventListener('click', done);
+        line.querySelector('#sr-rate-dismiss').addEventListener('click', done);
+      } catch (_) {
+        // Storage unavailable (extension reloaded under the page): skip the ask.
+      }
+    }
+
+    showError(message, { title } = {}) {
       this.busy = false;
       this.hideLoadingToast();
       if (!this.modal) this.createModal();
@@ -219,7 +240,7 @@
       document.getElementById('sr-modal-content').innerHTML = `
         <div class="sr-error-content">
           <div class="sr-error-icon"><svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7.5" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg></div>
-          <h4>Something went wrong</h4>
+          <h4>${this.escapeHtml(title || 'Something went wrong')}</h4>
           <p class="sr-error-message">${this.escapeHtml(message)}</p>
         </div>
       `;
@@ -345,21 +366,4 @@
   }
 
   window.SmartRewriteModal = new SmartRewriteModal();
-
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'R') {
-      const selection = window.getSelection();
-      const selectedText = selection.toString().trim();
-      
-      if (selectedText) {
-        e.preventDefault();
-        chrome.runtime.sendMessage({
-          action: 'quickRewrite',
-          text: selectedText,
-          tone: 'professional'
-        });
-      }
-    }
-  });
-
 })();
