@@ -2,7 +2,7 @@
 
 Everything here is used to **generate Chrome Web Store listing images**. None of it
 ships in the extension — the loadable extension is the code at the repo root
-(`manifest.json`, `background.js`, `constants.js`, `content.js`, `popup.*`, `modal.css`, `icons/`).
+(`manifest.json`, the `.js`/`.css`/`.html` files next to it, and `icons/`).
 
 ## Contents
 

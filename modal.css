@@ -315,32 +315,6 @@
   line-height: 1.5;
 }
 
-.sr-error-tips {
-  background: var(--sr-gray-50);
-  border-radius: 12px;
-  padding: 16px;
-  text-align: left;
-}
-
-.sr-error-tips h5 {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--sr-gray-800);
-}
-
-.sr-error-tips ul {
-  margin: 0;
-  padding-left: 20px;
-  color: var(--sr-gray-600);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.sr-error-tips li {
-  margin-bottom: 4px;
-}
-
 .sr-modal-footer {
   padding: 12px 16px;
   background: var(--sr-gray-50);
@@ -529,6 +503,107 @@
 @media (prefers-reduced-motion: reduce) {
   .sr-toast-spin { animation: none; }
   .sr-loading-toast { transition: none; }
+}
+
+/* ── Hover-to-act icon + quick-action popover ──────────────────── */
+
+/* Frames exactly the block a hover action would target — devtools-inspector
+   style, so it's obvious what "scope" the icon/popover acts on. */
+.sr-hover-target {
+  outline: 2px dashed var(--sr-primary) !important;
+  outline-offset: 3px !important;
+  border-radius: 4px;
+}
+
+.sr-hover-icon {
+  position: absolute;
+  z-index: 2147483646;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--sr-gray-200);
+  background: var(--sr-white);
+  color: var(--sr-gray-700);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sr-shadow-lg);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+  color-scheme: light;
+}
+.sr-hover-icon:hover { transform: scale(1.08); border-color: var(--sr-gray-400); }
+.sr-hover-icon svg { width: 15px; height: 15px; display: block; }
+.sr-hover-icon.sr-hover-busy { opacity: 0.6; cursor: progress; animation: sr-hover-pulse 1s ease-in-out infinite; }
+@keyframes sr-hover-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+
+.sr-hover-popover {
+  position: absolute;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+  padding: 5px;
+  background: var(--sr-white);
+  border: 1px solid var(--sr-gray-200);
+  border-radius: 10px;
+  box-shadow: var(--sr-shadow-lg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color-scheme: light;
+}
+.sr-hover-action {
+  text-align: left;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--sr-gray-800);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sr-hover-action:hover { background: var(--sr-gray-50); }
+/* Ask row: freeform instruction on the hovered block (uses the cloud key). */
+.sr-hover-divider {
+  height: 1px;
+  background: var(--sr-gray-100);
+  margin: 4px 2px;
+}
+.sr-hover-ask {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+}
+.sr-hover-ask-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--sr-gray-200);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--sr-gray-900);
+  background: var(--sr-white);
+}
+.sr-hover-ask-input:focus { outline: none; border-color: var(--sr-gray-400); }
+.sr-hover-ask-input::placeholder { color: var(--sr-gray-400); }
+.sr-hover-ask-send {
+  flex: none;
+  width: 26px; height: 26px;
+  border: none; border-radius: 50%;
+  background: var(--sr-primary);
+  color: var(--sr-white);
+  padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.sr-hover-ask-send svg { width: 12px; height: 12px; display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sr-hover-icon { transition: none; animation: none; }
 }
 
 @media (max-width: 768px) {

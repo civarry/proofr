@@ -9,6 +9,7 @@ const SR_TONES = [
   { id: 'friendly',     name: 'Friendly',      desc: 'Warm and approachable' },
   { id: 'short',        name: 'Concise',       desc: 'Trimmed to the essentials' },
   { id: 'simple',       name: 'Plain English', desc: 'Simple words, short lines' },
+  { id: 'tldr',         name: 'Summarize',     desc: 'The key point, condensed' },
   { id: 'linkedin',     name: 'LinkedIn',      desc: 'Achievement-focused post' },
   { id: 'marketing',    name: 'Marketing',     desc: 'Persuasive, benefit-led' },
   { id: 'executive',    name: 'Executive',     desc: 'Brief for decision-makers' },
@@ -33,6 +34,7 @@ const SR_ICON_PATHS = {
   friendly: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01"/><path d="M15 9.5h.01"/>',
   short: '<path d="M13 2.5 5 13.5h6l-1 8 8-11h-6l1-8z"/>',
   simple: '<path d="M12 6.5C10.5 5.2 8 4.5 5 4.5V18c3 0 5.5.7 7 2 1.5-1.3 4-2 7-2V4.5c-3 0-5.5.7-7 2z"/><path d="M12 6.5V20"/>',
+  tldr: '<path d="M4 6.5h16"/><path d="M6.5 12h11"/><path d="M9 17.5h6"/>',
   linkedin: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="11" r="1.8"/><path d="M5.7 15.5c.4-1.3 1.4-2 2.8-2s2.4.7 2.8 2"/><path d="M14 10h4"/><path d="M14 13h3"/>',
   marketing: '<path d="M4 9.5v5a1 1 0 0 0 1 1h2.5L14 19.5V4.5L7.5 8.5H5a1 1 0 0 0-1 1z"/><path d="M17.5 8.5a4 4 0 0 1 0 7"/>',
   executive: '<path d="M4 20h16"/><rect x="6" y="11.5" width="2.8" height="6.5" rx="0.5"/><rect x="10.6" y="7.5" width="2.8" height="10.5" rx="0.5"/><rect x="15.2" y="4" width="2.8" height="14" rx="0.5"/>',
@@ -64,6 +66,34 @@ function SR_langName(code) {
   return lang ? lang.name : 'English';
 }
 
+// Translate isn't limited to the on-device set: a cloud provider can handle any
+// language. On-device covers SR_LANGUAGES only; everything else here needs a
+// cloud provider key (see SR_isOnDeviceLanguage).
+const SR_LANGUAGES_FULL = [
+  ...SR_LANGUAGES,
+  { code: 'tl', name: 'Filipino (Tagalog)' },
+  { code: 'zh', name: 'Chinese (Simplified)' },
+  { code: 'zh-TW', name: 'Chinese (Traditional)' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'it', name: 'Italian' },
+  { code: 'vi', name: 'Vietnamese' },
+  { code: 'id', name: 'Indonesian' },
+  { code: 'ar', name: 'Arabic' },
+  { code: 'hi', name: 'Hindi' },
+  { code: 'th', name: 'Thai' },
+];
+
+function SR_fullLangName(code) {
+  const lang = SR_LANGUAGES_FULL.find(l => l.code === code);
+  return lang ? lang.name : code;
+}
+
+const SR_ON_DEVICE_LANG_CODES = new Set(SR_LANGUAGES.map(l => l.code));
+function SR_isOnDeviceLanguage(code) {
+  return SR_ON_DEVICE_LANG_CODES.has(code);
+}
+
 const SR_TONE_INSTRUCTIONS = {
   grammar: `Correct only the grammar, spelling, and punctuation of the following text. Preserve the author's original wording, voice, tone, and writing style as closely as possible — do NOT rephrase, reword, simplify, or change the meaning. Make the smallest edits necessary for it to be correct. If the text is already correct, return it unchanged.`,
   friendly: `Rewrite the following text in a warm, approachable, and conversational tone. Use inclusive language, contractions, and positive phrasing. Keep the meaning intact while making it more engaging and personable.`,
@@ -73,6 +103,7 @@ const SR_TONE_INSTRUCTIONS = {
   academic: `Rewrite the following text in a scholarly, analytical academic style. Use formal language, precise terminology, and a logical flow. Ensure rigor and clarity for academic content.`,
   marketing: `Convert the following text into persuasive marketing copy. Use calls-to-action, emotional triggers, and customer benefits. Emphasize value and create urgency while maintaining professionalism.`,
   simple: `Simplify the following text using basic English and short sentences. Avoid jargon and complex words. Make it clear and accessible for everyone.`,
+  tldr: `Summarize the following text in 1-3 short sentences that capture only the essential point or key takeaway. Compress aggressively — this is not a light trim like a "concise" rewrite, it's a genuine summary. Drop supporting detail, examples, and preamble. Keep only what someone would need to know if this summary were the only part they read.`,
   executive: `Condense the following text into an executive summary. Focus on key points, business impact, and actionable insights. Structure for quick scanning by decision-makers.`,
   news: `Rewrite the following text as a fast, punchy news update. Use very short sentences. Get straight to the facts with no filler. Prioritize urgency and impact, like breaking news headlines. Each sentence should deliver one fact quickly.`,
 };
@@ -104,6 +135,7 @@ Output requirements:
 - Maintain the requested tone consistently
 - Keep the same general length unless tone requires otherwise
 - Ensure grammatical correctness and readability
+- If the text has line breaks between separate paragraphs or points, keep that same paragraph structure in the output (one blank line between paragraphs) unless the tone specifically calls for condensing them into fewer, denser paragraphs
 - Output ONLY the final rewritten text
 - Do NOT include markdown, code blocks, lists, headers, or explanations
 - Return plain text only, no extra formatting
@@ -111,7 +143,7 @@ Output requirements:
 Final rewritten text:`;
 }
 
-function SR_getTemperature(tone) {
+function SR_getTemperature(tone, boost = 0) {
   const temperatures = {
     grammar: 0.2,
     friendly: 0.7,
@@ -121,59 +153,168 @@ function SR_getTemperature(tone) {
     academic: 0.3,
     marketing: 0.8,
     simple: 0.4,
+    tldr: 0.3,
     executive: 0.5,
     news: 0.3,
     translate: 0.2,
   };
-  return temperatures[tone] || 0.5;
+  return Math.min(1, (temperatures[tone] || 0.5) + boost);
 }
 
-function SR_isValidApiKey(apiKey) {
-  return typeof apiKey === 'string' && apiKey.startsWith('gsk_') && apiKey.length >= 40;
+// === Cloud providers ===
+// Groq, OpenAI, and OpenRouter (and any self-hosted/custom endpoint) all speak
+// the same OpenAI-compatible /chat/completions shape — only the base URL, key,
+// and model name differ. One code path serves all of them; a genuinely
+// different wire format (Anthropic) would need its own function, not a
+// preset here.
+const SR_CLOUD_SERVICES = [
+  { id: 'groq', name: 'Groq', baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile' },
+  { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini' },
+  { id: 'openrouter', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-4o-mini' },
+  { id: 'custom', name: 'Custom', baseURL: '', defaultModel: '' },
+];
+
+function SR_cloudServiceMeta(id) {
+  return SR_CLOUD_SERVICES.find((s) => s.id === id) || SR_CLOUD_SERVICES[0];
 }
 
-// Calls Groq and returns the rewritten text, throwing a human-readable Error on failure.
-async function SR_rewrite(apiKey, text, tone, targetLang) {
-  if (!apiKey) {
-    throw new Error('No API key set. Add your Groq API key to get started.');
-  }
-  if (!SR_isValidApiKey(apiKey)) {
-    throw new Error('That API key looks off — it should start with "gsk_".');
-  }
+// Tolerates a base URL that already includes /chat/completions or a trailing slash.
+function SR_chatCompletionsURL(base) {
+  let s = (base || '').trim();
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  if (s.endsWith('/chat/completions')) s = s.slice(0, -'/chat/completions'.length);
+  return `${s}/chat/completions`;
+}
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: SR_buildPrompt(text, tone, targetLang) }],
-      max_tokens: 1000,
-      temperature: SR_getTemperature(tone),
-      top_p: 0.9,
-      frequency_penalty: 0.1,
-      presence_penalty: 0.1,
-      stream: false,
-    }),
+// Same tolerance, for the /models endpoint used to live-validate a saved key.
+function SR_modelsURL(base) {
+  let s = (base || '').trim();
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  if (s.endsWith('/chat/completions')) s = s.slice(0, -'/chat/completions'.length);
+  if (s.endsWith('/models')) return s;
+  return `${s}/models`;
+}
+
+// Drops non-chat models (embeddings, audio, image, moderation) so a browsed
+// list stays useful — same exclusion set as lasso's OpenAICompatibleProvider.
+function SR_chatModels(ids) {
+  const exclude = ['embed', 'whisper', 'tts', 'dall-e', 'dalle', 'moderation', 'audio', 'image', 'rerank', 'stable-diffusion', 'flux'];
+  return ids.filter((id) => {
+    const lower = String(id).toLowerCase();
+    return !exclude.some((x) => lower.includes(x));
+  }).sort();
+}
+
+// Lists the models a provider's {baseURL}/models actually advertises for the
+// saved key — lets Settings offer a real, current list instead of asking the
+// user to already know an exact model id. Throws a human-readable error
+// rather than silently returning empty, since a browse action should explain
+// why nothing showed up (no key yet, bad key, unreachable endpoint).
+async function SR_availableModels(provider) {
+  if (!provider || !provider.apiKey) throw new Error('Save an API key first.');
+  if (!provider.baseURL) throw new Error('Set a base URL first.');
+
+  const res = await fetch(SR_modelsURL(provider.baseURL), {
+    headers: { 'Authorization': `Bearer ${provider.apiKey}` },
   });
+  if (!res.ok) throw new Error(`${provider.displayName} rejected the request (${res.status}).`);
+
+  const data = await res.json();
+  const ids = (Array.isArray(data.data) ? data.data : []).map((m) => m && m.id).filter(Boolean);
+  return SR_chatModels(ids);
+}
+
+// Soft pre-check only — the real validation is the live call each provider's
+// Settings save already makes against {baseURL}/models. Groq/OpenAI keys have
+// a recognizable prefix; OpenRouter/Custom don't, so just a length sanity check.
+function SR_isValidApiKey(apiKey, serviceId) {
+  if (typeof apiKey !== 'string' || !apiKey.trim()) return false;
+  if (serviceId === 'groq') return apiKey.startsWith('gsk_') && apiKey.length >= 40;
+  if (serviceId === 'openai') return apiKey.startsWith('sk-') && apiKey.length >= 20;
+  return apiKey.length >= 10;
+}
+
+// === Ask AI: freeform instruction on a specific block (hover popover) ===
+// Cloud key only, by design: a freeform instruction benefits from a bigger
+// model. Skips the on-device path entirely rather than
+// solving output-language declaration for an arbitrary, unstructured instruction.
+function SR_buildAskPrompt(text, instruction) {
+  return `You are an expert writing assistant. Apply this instruction to the text: ${instruction}
+
+Text:
+"""
+${text}
+"""
+
+Output ONLY the result. No commentary, no markdown, no explanations.
+
+Result:`;
+}
+
+// `provider`: { baseURL, apiKey, model, displayName }
+async function SR_askCloud(provider, text, instruction, temperatureBoost = 0) {
+  return SR_callCloud(provider, SR_buildAskPrompt(text, instruction), Math.min(1, 0.5 + temperatureBoost), 1200);
+}
+
+// Calls the configured cloud provider and returns the rewritten text, throwing
+// a human-readable Error on failure.
+async function SR_rewrite(provider, text, tone, targetLang, temperatureBoost = 0) {
+  return SR_callCloud(provider, SR_buildPrompt(text, tone, targetLang), SR_getTemperature(tone, temperatureBoost), 1000);
+}
+
+// Shared request path for SR_rewrite / SR_askCloud — same wire shape, only the
+// prompt/temperature/max_tokens differ per caller.
+async function SR_callCloud(provider, prompt, temperature, maxTokens) {
+  if (!provider || !provider.apiKey) {
+    throw new Error(`No API key set. Add your ${provider?.displayName || 'cloud'} API key to get started.`);
+  }
+  if (!provider.model) {
+    throw new Error(`No model set for ${provider.displayName}. Add one in settings.`);
+  }
+
+  // Without a deadline a stalled provider hangs the modal forever. Scales with
+  // maxTokens so an 8000-token page-translate batch on a slow model isn't cut off.
+  const timeoutMs = 20000 + maxTokens * 10;
+  let response;
+  try {
+    response = await fetch(SR_chatCompletionsURL(provider.baseURL), {
+      method: 'POST',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        'Authorization': `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature,
+        top_p: 0.9,
+        stream: false,
+      }),
+    });
+  } catch (err) {
+    if (err && err.name === 'TimeoutError') {
+      throw new Error(`${provider.displayName} didn't respond in ${Math.round(timeoutMs / 1000)}s. Try again, or select less text.`);
+    }
+    throw new Error(`Couldn't reach ${provider.displayName}. Check your connection and try again.`);
+  }
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     if (response.status === 401) {
       throw new Error('Your API key was rejected. Check it in settings.');
     } else if (response.status === 429) {
-      throw new Error('Groq is rate-limiting you. Give it a moment and try again.');
+      throw new Error(`${provider.displayName} is rate-limiting you. Give it a moment and try again.`);
     } else if (response.status === 400) {
-      throw new Error(errorData.error?.message || 'Groq could not process that request.');
+      throw new Error(errorData.error?.message || `${provider.displayName} could not process that request.`);
     }
-    throw new Error(`Groq request failed (${response.status}). Try again shortly.`);
+    throw new Error(`${provider.displayName} request failed (${response.status}). Try again shortly.`);
   }
 
-  const data = await response.json();
-  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-    throw new Error('Got an unexpected response from Groq. Try again.');
+  const data = await response.json().catch(() => null); // body can time out mid-stream too
+  if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
+    throw new Error(`Got an unexpected response from ${provider.displayName}. Try again.`);
   }
   return data.choices[0].message.content.trim();
 }
@@ -222,14 +363,14 @@ async function SR_deviceReady() {
 const SR_DEVICE_MAX_CHARS = 4000;
 const SR_DEVICE_TIMEOUT_MS = 45000;
 
-async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
+async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureBoost = 0) {
   const LM = SR_deviceModel();
   if (!LM) throw new Error('On-device AI is not available on this device.');
 
   if ((text || '').length > SR_DEVICE_MAX_CHARS) {
     throw new Error(
       `That selection is too long for the on-device model (${text.length.toLocaleString()} characters, ` +
-      `limit ${SR_DEVICE_MAX_CHARS.toLocaleString()}). Add a Groq key for long text, or select less.`
+      `limit ${SR_DEVICE_MAX_CHARS.toLocaleString()}). Add a cloud provider key for long text, or select less.`
     );
   }
 
@@ -255,7 +396,7 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
 
   let session;
   try {
-    session = await LM.create({ ...baseOpts, temperature: SR_getTemperature(tone), topK: 8 });
+    session = await LM.create({ ...baseOpts, temperature: SR_getTemperature(tone, temperatureBoost), topK: 8 });
   } catch (_) {
     // Some builds reject the temperature/topK pair — retry, but KEEP the language declaration.
     session = await LM.create(baseOpts);
@@ -282,7 +423,7 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
       out = await Promise.race([run, timeout]);
     } catch (err) {
       if (err && err.message === 'device-timeout') {
-        throw new Error('The on-device model took too long and was stopped. Try a shorter selection, or add a Groq key for long text.');
+        throw new Error('The on-device model took too long and was stopped. Try a shorter selection, or add a cloud provider key for long text.');
       }
       throw err;
     } finally {
@@ -298,23 +439,88 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang) {
 }
 
 // Rewrite via the chosen engine.
-// opts: { apiKey, engine: 'auto'|'device'|'groq', targetLang, onStatus }
+// opts: { provider: {baseURL,apiKey,model,displayName}, engine: 'auto'|'device'|'cloud', targetLang, onStatus, temperatureBoost }
 // Returns { text, provider }.
 async function SR_rewriteAuto(text, tone, opts = {}) {
   const engine = opts.engine || 'auto';
+  const boost = opts.temperatureBoost || 0;
+  const hasProvider = !!(opts.provider && opts.provider.apiKey);
   const wantDevice = engine === 'device' || (engine === 'auto' && await SR_deviceReady());
 
   if (wantDevice) {
     try {
-      const out = await SR_rewriteOnDevice(text, tone, opts.onStatus, opts.targetLang);
+      const out = await SR_rewriteOnDevice(text, tone, opts.onStatus, opts.targetLang, boost);
       return { text: out, provider: 'device' };
     } catch (err) {
       // Forced on-device, or nothing to fall back to → surface the error.
-      if (engine === 'device' || !opts.apiKey) throw err;
-      // Auto with a key available → fall through to Groq.
+      if (engine === 'device' || !hasProvider) throw err;
+      // Auto with a cloud provider configured → fall through to it.
     }
   }
-  return { text: await SR_rewrite(opts.apiKey, text, tone, opts.targetLang), provider: 'groq' };
+  return { text: await SR_rewrite(opts.provider, text, tone, opts.targetLang, boost), provider: opts.provider.id };
+}
+
+// 'device' → "On-device"; any cloud service id → its friendly name (falls
+// back to Custom's generic label for an unrecognized id).
+function SR_providerDisplayLabel(providerId) {
+  if (providerId === 'device') return 'On-device';
+  return SR_cloudServiceMeta(providerId).name;
+}
+
+// === Full-page translate: batch multiple blocks into one call ===
+// Numbering is assigned per-call (1..N) rather than reusing the caller's own
+// block ids, so the model only ever has to track a simple local sequence —
+// SR_parseBatchResponse maps that sequence back onto the caller's items[].
+function SR_buildBatchTranslatePrompt(items, targetLangName) {
+  const numbered = items.map((it, i) => `${i + 1}. ${it.text.replace(/\n+/g, ' ').trim()}`).join('\n');
+  return `Translate each numbered line below into ${targetLangName}. Output the same numbering, one translation per line, in the same order. No commentary, no extra blank lines, no explanations — only the numbered translations.
+
+${numbered}
+
+Translated:`;
+}
+
+// Returns an array of length `count`; entries that couldn't be parsed are null
+// so the caller can fall back to the original text rather than drop the block.
+function SR_parseBatchResponse(raw, count) {
+  const lines = (raw || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const out = new Array(count).fill(null);
+  for (const line of lines) {
+    const m = line.match(/^(\d+)[.):]\s*(.+)$/);
+    if (!m) continue;
+    const idx = parseInt(m[1], 10) - 1;
+    if (idx >= 0 && idx < count) out[idx] = m[2].trim();
+  }
+  return out;
+}
+
+// One cloud call per batch. `items`: [{ id, text }]. Returns [{ id, text }] in
+// the same order, falling back to the original text for any line the model
+// dropped or mis-numbered (never silently loses a block).
+async function SR_translateBatchCloud(provider, items, targetLangName) {
+  const prompt = SR_buildBatchTranslatePrompt(items, targetLangName);
+  const estimatedTokens = items.reduce((n, it) => n + it.text.length, 0) * 2 + 200;
+  const maxTokens = Math.min(8000, Math.max(500, estimatedTokens));
+  const raw = await SR_callCloud(provider, prompt, 0.2, maxTokens);
+  const parsed = SR_parseBatchResponse(raw, items.length);
+  return items.map((it, i) => ({ id: it.id, text: parsed[i] || it.text }));
+}
+
+// On-device path: loops SR_rewriteOnDevice per block (simpler and more robust
+// than trying to batch inside Gemini Nano's small context window). A single
+// block failing (e.g. it happens to exceed SR_DEVICE_MAX_CHARS) falls back to
+// its original text instead of aborting the whole page.
+async function SR_translateBatchDevice(items, targetLangCode) {
+  const results = [];
+  for (const it of items) {
+    try {
+      const text = await SR_rewriteOnDevice(it.text, 'translate', null, targetLangCode);
+      results.push({ id: it.id, text });
+    } catch (_) {
+      results.push({ id: it.id, text: it.text });
+    }
+  }
+  return results;
 }
 
 // Expose for service-worker (importScripts) and content-script isolated world.
@@ -326,12 +532,29 @@ if (typeof self !== 'undefined') {
   self.SR_LOGO_SVG = SR_LOGO_SVG;
   self.SR_LANGUAGES = SR_LANGUAGES;
   self.SR_langName = SR_langName;
+  self.SR_LANGUAGES_FULL = SR_LANGUAGES_FULL;
+  self.SR_fullLangName = SR_fullLangName;
+  self.SR_isOnDeviceLanguage = SR_isOnDeviceLanguage;
   self.SR_buildPrompt = SR_buildPrompt;
   self.SR_getTemperature = SR_getTemperature;
   self.SR_isValidApiKey = SR_isValidApiKey;
+  self.SR_CLOUD_SERVICES = SR_CLOUD_SERVICES;
+  self.SR_cloudServiceMeta = SR_cloudServiceMeta;
+  self.SR_chatCompletionsURL = SR_chatCompletionsURL;
+  self.SR_modelsURL = SR_modelsURL;
+  self.SR_chatModels = SR_chatModels;
+  self.SR_availableModels = SR_availableModels;
+  self.SR_providerDisplayLabel = SR_providerDisplayLabel;
+  self.SR_buildAskPrompt = SR_buildAskPrompt;
+  self.SR_askCloud = SR_askCloud;
   self.SR_rewrite = SR_rewrite;
+  self.SR_callCloud = SR_callCloud;
   self.SR_deviceAvailability = SR_deviceAvailability;
   self.SR_deviceReady = SR_deviceReady;
   self.SR_rewriteOnDevice = SR_rewriteOnDevice;
   self.SR_rewriteAuto = SR_rewriteAuto;
+  self.SR_buildBatchTranslatePrompt = SR_buildBatchTranslatePrompt;
+  self.SR_parseBatchResponse = SR_parseBatchResponse;
+  self.SR_translateBatchCloud = SR_translateBatchCloud;
+  self.SR_translateBatchDevice = SR_translateBatchDevice;
 }
