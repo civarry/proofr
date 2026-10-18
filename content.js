@@ -106,9 +106,8 @@
     }
 
     providerLabel(provider) {
-      if (provider === 'device') return 'On-device';
-      if (provider === 'groq') return 'Groq';
-      return '';
+      if (!provider) return '';
+      return (typeof SR_providerDisplayLabel === 'function') ? SR_providerDisplayLabel(provider) : provider;
     }
 
     // True when the focused element is a field we can replace text in.
@@ -222,26 +221,17 @@
           <div class="sr-error-icon"><svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7.5" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg></div>
           <h4>Something went wrong</h4>
           <p class="sr-error-message">${this.escapeHtml(message)}</p>
-          <div class="sr-error-tips">
-            <h5>Common solutions:</h5>
-            <ul>
-              <li>Check your internet connection</li>
-              <li>Verify your API key is correct</li>
-              <li>Try selecting less text</li>
-              <li>Wait a moment and try again</li>
-            </ul>
-          </div>
         </div>
       `;
-      
+
       document.getElementById('sr-modal-footer').innerHTML = `
         <div class="sr-action-buttons">
-          <button class="sr-btn sr-btn-secondary" onclick="window.SmartRewriteModal.hide()">
-            Close
-          </button>
+          <button class="sr-btn sr-btn-secondary" id="sr-error-close">Close</button>
         </div>
       `;
-      
+      // Not an inline onclick: that runs in the page's world, where SmartRewriteModal doesn't exist.
+      document.getElementById('sr-error-close').addEventListener('click', () => this.hide());
+
       this.show();
     }
 

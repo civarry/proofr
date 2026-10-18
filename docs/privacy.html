@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Proofr — Privacy Policy</title>
+  <title>Proofr Privacy Policy</title>
   <style>
     :root {
       --ink: #26251f; --muted: #57554e; --faint: #8a887f;
@@ -44,9 +44,9 @@
   <div class="wrap">
     <header>
       <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4.5" y1="7.5" x2="13.5" y2="7.5"/><line x1="4.5" y1="11.5" x2="10.5" y2="11.5"/><line x1="4.5" y1="15.5" x2="8.5" y2="15.5"/><path d="M18.4 8 20 9.6l-5.3 5.3-2.1.5.5-2.1L18.4 8z"/></svg></span>
-      <h1>Proofr — Privacy Policy</h1>
+      <h1>Proofr Privacy Policy</h1>
     </header>
-    <p class="sub">Last updated: July 4, 2026</p>
+    <p class="sub">Last updated: October 19, 2026</p>
 
     <div class="card tldr">
       <strong>The short version</strong>
@@ -57,19 +57,20 @@
     <p>Proofr is a Chrome extension that proofreads, rewrites, and translates text. It is developed by an independent developer (“we”, “us”). Contact: <a href="mailto:cjcarito15@gmail.com">cjcarito15@gmail.com</a>.</p>
 
     <h2>What data Proofr handles</h2>
-    <p>Everything Proofr stores lives <strong>locally in your own browser</strong> (via Chrome storage). None of it is transmitted to us — we have no servers to send it to.</p>
+    <p>Everything Proofr stores lives <strong>locally in your own browser</strong> (via Chrome storage). None of it is transmitted to us. We have no servers to send it to.</p>
     <ul>
-      <li><strong>The text you select</strong> — used only to produce a rewrite. On the on-device engine it is processed locally and never sent anywhere. It is not saved or logged by Proofr.</li>
-      <li><strong>Your settings</strong> — chosen engine and translation language, stored in your browser.</li>
-      <li><strong>An optional Groq API key</strong> — if you choose to add one, it is stored in your browser and sent only to Groq to authenticate your own requests. We never see it.</li>
-      <li><strong>Usage counts</strong> — a local tally of how many rewrites you've done and which styles, stored on your device to show you stats. This never leaves your machine.</li>
+      <li><strong>The text you select</strong>: used only to produce a rewrite. On the on-device engine it is processed locally and never sent anywhere. Text you select on a page is not saved.</li>
+      <li><strong>Side panel history</strong>: text you paste into the Proofr side panel, and its result, is kept as a history list (the last 50 entries) in your browser so you can copy it again. It never leaves your device, and the trash icon in the panel deletes it.</li>
+      <li><strong>Your settings</strong>: chosen engine, translation language, and whether hover actions are on, stored in your browser.</li>
+      <li><strong>An optional cloud provider API key</strong>: Groq, OpenAI, OpenRouter, or a custom OpenAI-compatible endpoint you choose to add. It is stored in your browser and sent only to that provider to authenticate your own requests. We never see it.</li>
+      <li><strong>Usage counts</strong>: a local tally of how many rewrites you've done and which styles. It is stored on your device and never leaves your machine.</li>
     </ul>
 
     <h2>On-device processing (default)</h2>
     <p>By default, Proofr uses <strong>Chrome's Built-in AI (Gemini Nano)</strong>, which runs entirely on your computer. Your selected text is processed locally and is <strong>never transmitted off your device</strong>.</p>
 
-    <h2>Optional cloud processing (Groq)</h2>
-    <p>If you add a Groq API key and use the Groq engine, the text you choose to rewrite is sent <strong>directly from your browser to Groq</strong> (<code>api.groq.com</code>) over HTTPS to be processed, and the result is returned to you. This happens only for requests you initiate, and only when the Groq engine is selected. Proofr is not an intermediary — the request goes straight to Groq. Groq's handling of that data is governed by <a href="https://groq.com/privacy-policy/" target="_blank" rel="noopener">Groq's Privacy Policy</a>. We recommend not selecting text that contains sensitive information when using the Groq engine.</p>
+    <h2>Optional cloud processing (your chosen provider)</h2>
+    <p>If you add an API key for a cloud provider (Groq, OpenAI, OpenRouter, or a custom endpoint), the text you choose to rewrite is sent <strong>directly from your browser to that provider</strong> over HTTPS to be processed, and the result is returned to you. This happens only for requests you initiate, and only when a key is saved: always on the Cloud engine, and on the Auto engine whenever on-device AI isn't available or can't handle the request (for example, a language it doesn't support). Proofr is not an intermediary: the request goes straight from your browser to the provider you chose. That provider's handling of the data is governed by its own privacy policy (for example, <a href="https://groq.com/privacy-policy/" target="_blank" rel="noopener">Groq's</a> or <a href="https://openai.com/policies/privacy-policy/" target="_blank" rel="noopener">OpenAI's</a>). We recommend not selecting text that contains sensitive information when using a cloud engine.</p>
 
     <h2>What we do NOT do</h2>
     <ul>
@@ -81,9 +82,10 @@
 
     <h2>Permissions, and why they're needed</h2>
     <ul>
-      <li><strong>Context menus &amp; scripting / host access</strong> — to add the right-click "Proofr" option and show the result panel on the page you're using.</li>
-      <li><strong>Storage</strong> — to remember your settings and optional API key in your browser.</li>
-      <li><strong>Clipboard</strong> — to copy a rewrite when you click "Copy".</li>
+      <li><strong>Context menus &amp; scripting / host access</strong>: to add the right-click "Proofr" option, show results on the page you're using, and reach the cloud provider you choose.</li>
+      <li><strong>Storage</strong>: to remember your settings and optional API key in your browser.</li>
+      <li><strong>Clipboard</strong>: to copy a rewrite when you click "Copy".</li>
+      <li><strong>Side panel</strong>: to show the Proofr panel when you click the toolbar icon.</li>
     </ul>
 
     <h2>Children</h2>
@@ -95,7 +97,7 @@
     <h2>Contact</h2>
     <p>Questions? Email <a href="mailto:cjcarito15@gmail.com">cjcarito15@gmail.com</a> or open an issue at <a href="https://github.com/civarry" target="_blank" rel="noopener">github.com/civarry</a>.</p>
 
-    <footer>Proofr — private, on-device AI writing help. This policy describes the extension's data practices in plain language.</footer>
+    <footer>Proofr: private, on-device AI writing help. This policy describes the extension's data practices in plain language.</footer>
   </div>
 </body>
 </html>

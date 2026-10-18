@@ -12,3 +12,6 @@ STORE_LISTING.md
 # Python
 __pycache__/
 *.pyc
+
+# Internal market research (strategy notes, not public)
+/market-research/

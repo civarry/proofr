@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Proofr</title>
+  <style>
+    :root {
+      --paper:        #FAFAF9;
+      --card:         #FFFFFF;
+      --ink:          #17181C;
+      --ink-soft:     #6B6D76;
+      --ink-faint:    #A6A8B0;
+      --line:         #E7E6E2;
+      --line-soft:    #F0EFEC;
+      --line-focus:   #C7C6C1;
+      --user-bubble:  #EFEEEA;
+      --accent:       #16171B;
+      --accent-hover: #000000;
+      --accent-fg:    #FFFFFF;
+      --live:         #3DA35D;
+      --live-bg:      #EAF6EE;
+      --live-border:  #CDEBD7;
+      --live-ink:     #276B41;
+      --select-bg:    #EEF1FF;
+      --error:        #B4443A;
+      --error-bg:     #F6ECE9;
+      --radius:       12px;
+      --radius-lg:    16px;
+      --shadow-lg:    0 10px 28px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06);
+      --mono: "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+
+    body {
+      font-family: var(--sans);
+      color: var(--ink);
+      background: var(--paper);
+      -webkit-font-smoothing: antialiased;
+      min-width: 300px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    button { font-family: inherit; cursor: pointer; }
+    button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* ── Header ─────────────────────────────── */
+    .app-header {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--paper);
+    }
+    .mark {
+      width: 24px; height: 24px;
+      border-radius: 7px;
+      background: var(--accent);
+      color: var(--accent-fg);
+      display: flex; align-items: center; justify-content: center;
+      flex: none;
+    }
+    .mark svg { width: 13px; height: 13px; display: block; }
+    .app-header h1 { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+
+    .provider-pill {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 5px;
+      font-family: var(--mono); font-size: 10px; font-weight: 600;
+      padding: 3px 7px 3px 6px;
+      border-radius: 100px;
+      white-space: nowrap;
+      border: 1px solid var(--line);
+      background: var(--line-soft);
+      color: var(--ink-soft);
+    }
+    .provider-pill .pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--ink-faint); }
+    .provider-pill.connected { color: var(--live-ink); background: var(--live-bg); border-color: var(--live-border); }
+    .provider-pill.connected .pulse { background: var(--live); animation: sr-pulse 2.2s infinite; }
+    @keyframes sr-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(61,163,93,.45); }
+      70% { box-shadow: 0 0 0 5px rgba(61,163,93,0); }
+      100% { box-shadow: 0 0 0 0 rgba(61,163,93,0); }
+    }
+
+    .icon-btn {
+      flex: none; width: 26px; height: 26px;
+      border-radius: 7px; border: none; background: transparent;
+      color: var(--ink-soft);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .icon-btn:hover { background: var(--line-soft); color: var(--ink); }
+    .icon-btn svg { width: 15px; height: 15px; display: block; }
+
+    /* ── Disclosure banner ──────────────────── */
+    .disclosure {
+      flex: none;
+      display: flex; align-items: flex-start; gap: 7px;
+      margin: 10px 14px 0;
+      padding: 8px 10px;
+      background: var(--line-soft);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      font-size: 11px; line-height: 1.45;
+      color: var(--ink-soft);
+    }
+    .disclosure svg { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--ink-faint); }
+    .disclosure b { color: var(--ink); }
+
+    /* ── Thread ─────────────────────────────── */
+    .thread {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 14px 14px 10px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .thread::-webkit-scrollbar { width: 8px; }
+    .thread::-webkit-scrollbar-thumb { background: #DEDDD8; border-radius: 8px; }
+
+    .thread-empty {
+      flex: 1 1 auto;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center;
+      font-size: 12.5px;
+      color: var(--ink-faint);
+      padding: 40px 20px;
+    }
+
+    .turn { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; }
+    .turn + .turn { border-top: 1px solid var(--line-soft); }
+
+    .turn-meta {
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--mono); font-size: 9.5px; color: var(--ink-faint);
+    }
+    .turn-meta .sep { opacity: .5; }
+
+    .msg-user {
+      align-self: flex-end; max-width: 86%;
+      background: var(--user-bubble); color: var(--ink);
+      font-size: 13px; line-height: 1.5; padding: 9px 12px;
+      border-radius: 14px 14px 3px 14px;
+      white-space: pre-wrap; word-wrap: break-word;
+    }
+    .msg-assistant { align-self: flex-start; width: 100%; }
+    .assistant-card { background: var(--card); border: 1px solid var(--line); border-radius: 4px 14px 14px 14px; overflow: hidden; }
+    .assistant-card.error { border-color: #E3C6C1; }
+    .assistant-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 11px;
+      border-bottom: 1px solid var(--line-soft);
+      font-family: var(--mono); font-size: 10px; color: var(--ink-soft);
+    }
+    .assistant-head .tag { color: var(--ink); font-weight: 700; }
+    .assistant-body {
+      padding: 10px 12px;
+      font-size: 13px; line-height: 1.55; color: var(--ink);
+      white-space: pre-wrap; word-wrap: break-word;
+    }
+    .assistant-body.error-text { color: var(--error); }
+    .assistant-actions { display: flex; gap: 6px; padding: 0 11px 10px; }
+
+    .chip-btn {
+      border: 1px solid var(--line); background: var(--paper); color: var(--ink-soft);
+      font-family: inherit; font-size: 11px; font-weight: 600;
+      padding: 5px 9px; border-radius: 100px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .chip-btn:hover { background: var(--line-soft); color: var(--ink); }
+    .chip-btn svg { width: 11px; height: 11px; display: block; }
+    .chip-btn.copied { color: var(--live-ink); border-color: var(--live-border); background: var(--live-bg); }
+
+    /* Skeleton shown while a turn is pending */
+    .sr-skel-line {
+      height: 10px; border-radius: 6px; margin-bottom: 8px;
+      background: linear-gradient(100deg, var(--line-soft) 30%, #f7f7f5 50%, var(--line-soft) 70%);
+      background-size: 200% 100%;
+      animation: sr-shimmer 1.2s ease-in-out infinite;
+    }
+    .sr-skel-line.short { width: 55%; margin-bottom: 0; }
+    @keyframes sr-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+    /* Composer: 3-row stack (toolbar / textarea / actions).
+       Nothing repositions when text wraps to multiple lines; only the
+       middle row (the textarea) grows, up to a cap, then scrolls internally.
+       An earlier single-row flex layout let the mode tag drift and the send
+       button float at odd heights once pasted text wrapped. */
+    .composer-wrap { position: relative; flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: var(--paper); }
+
+    .composer {
+      display: flex; flex-direction: column; gap: 2px;
+      background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-lg);
+      padding: 8px 8px 6px;
+    }
+    .composer:focus-within { border-color: var(--line-focus); }
+
+    .composer-toolbar {
+      flex: none;
+      height: 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
+    .char-count {
+      font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+      opacity: 0;
+      transition: opacity .12s ease;
+    }
+    .char-count.visible { opacity: 1; }
+
+    .mode-tag {
+      flex: none; display: flex; align-items: center; gap: 4px;
+      height: 24px;
+      padding: 0 9px 0 8px;
+      border-radius: 100px;
+      background: var(--line-soft);
+      border: 1px solid var(--line);
+      font-family: var(--mono); font-size: 11px; font-weight: 700;
+      color: var(--ink); white-space: nowrap;
+    }
+    .mode-tag:hover { background: var(--line); }
+    .mode-tag svg { width: 10px; height: 10px; color: var(--ink-faint); }
+    .mode-tag .slash { color: var(--ink-faint); }
+
+    .composer textarea {
+      flex: none;
+      width: 100%;
+      border: none; outline: none; resize: none; background: transparent;
+      font-family: var(--sans); font-size: 13.5px; line-height: 1.45; color: var(--ink);
+      padding: 4px 2px;
+      min-height: 22px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .composer textarea::placeholder { color: var(--ink-faint); }
+    .composer textarea::-webkit-scrollbar { width: 5px; }
+    .composer textarea::-webkit-scrollbar-track { background: transparent; }
+    .composer textarea::-webkit-scrollbar-thumb { background: #DEDDD8; border-radius: 8px; }
+    .composer textarea::-webkit-scrollbar-thumb:hover { background: #C7C6C1; }
+
+    .composer-actions {
+      flex: none;
+      display: flex; justify-content: flex-end;
+    }
+
+    .send-btn {
+      flex: none; width: 32px; height: 32px; border-radius: 50%; border: none;
+      background: var(--accent); color: var(--accent-fg);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
+    .send-btn:disabled { background: #DEDDD8; color: var(--ink-faint); cursor: default; }
+    .send-btn svg { width: 14px; height: 14px; display: block; }
+
+    /* ── Slash-command / language palette ──────── */
+    .palette {
+      position: absolute; left: 12px; right: 12px; bottom: 64px;
+      background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      max-height: 258px; overflow-y: auto;
+      padding: 6px;
+      display: none;
+    }
+    .palette.open { display: block; }
+    .palette-hint {
+      display: flex; justify-content: space-between;
+      padding: 5px 8px 7px;
+      font-family: var(--mono); font-size: 9.5px; color: var(--ink-faint);
+      border-bottom: 1px solid var(--line-soft); margin-bottom: 4px;
+    }
+    .palette-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 9px; border-radius: 7px;
+      font-size: 12.5px; color: var(--ink);
+    }
+    .palette-item .desc { font-size: 10.5px; color: var(--ink-faint); font-weight: 400; }
+    .palette-item b { font-weight: 600; }
+    .palette-item.active { background: var(--select-bg); }
+    .palette-item.current .name::after { content: "✓"; margin-left: 6px; color: var(--live-ink); font-weight: 700; }
+    .key-badge {
+      font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .03em;
+      color: var(--ink-soft);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    .palette-empty { padding: 14px 9px; text-align: center; font-size: 12px; color: var(--ink-faint); }
+
+    /* Everything below the header fills the remaining height; Settings is an
+       absolutely-positioned full-bleed overlay inside it, not an accordion
+       that leaves the thread visible/scrollable underneath. */
+    .panel-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Settings panel (own header, engine, API key, Privacy/Help) ─── */
+    .settings-panel {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      background: var(--paper);
+      display: flex;
+      flex-direction: column;
+    }
+    .settings-panel.hidden { display: none; }
+    .settings-header {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--paper);
+    }
+    .settings-header h2 { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+    .settings-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      position: relative;
+      padding: 14px;
+      background: var(--line-soft);
+    }
+    .settings-body label {
+      display: block;
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--ink-soft);
+      margin-bottom: 9px;
+    }
+
+    /* No-AI first run: explains why nothing works yet and the fastest fix. */
+    .setup-card {
+      padding: 12px 14px;
+      margin-bottom: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 12px; line-height: 1.55; color: var(--ink-soft);
+    }
+    .setup-card.hidden { display: none; }
+    .setup-card > b { display: block; font-size: 13px; color: var(--ink); margin-bottom: 6px; }
+    .setup-card p { margin-bottom: 8px; }
+    .setup-card ol { padding-left: 18px; }
+    .setup-card li { margin-bottom: 3px; }
+    .setup-card a { color: var(--ink); font-weight: 600; }
+
+    /* On/off setting row. Overrides the uppercase field-label style that
+       .settings-body label applies to every other label. */
+    .settings-body label.toggle-row {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+      padding: 11px 12px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none;
+      color: var(--ink);
+      cursor: pointer;
+      margin-bottom: 6px;
+    }
+    .toggle-row b { display: block; font-weight: 600; margin-bottom: 2px; }
+    .toggle-row .settings-hint { display: block; margin: 0; }
+    .toggle-row input { flex: none; margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
+
+    /* "Saved" confirmation toast for the instant-apply engine control */
+    .saved-toast {
+      position: absolute;
+      top: 10px; right: 14px;
+      display: flex; align-items: center; gap: 5px;
+      padding: 5px 10px;
+      border-radius: 100px;
+      background: var(--live-bg);
+      border: 1px solid var(--live-border);
+      color: var(--live-ink);
+      font-size: 11px; font-weight: 700;
+      opacity: 0;
+      transform: translateY(-4px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .saved-toast.show { opacity: 1; transform: translateY(0); }
+
+    /* Segmented control: atomic single-value settings commit instantly, no
+       Save button, matching native OS settings (macOS System Settings, iOS). */
+    .seg-control {
+      display: flex; gap: 2px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 2px;
+    }
+    .seg-btn {
+      flex: 1;
+      min-width: 0;
+      border: none; background: transparent;
+      color: var(--ink-soft);
+      font-size: 12px; font-weight: 600;
+      padding: 7px 6px;
+      border-radius: 7px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .seg-btn:hover:not(.active):not(:disabled) { color: var(--ink); background: var(--line-soft); }
+    .seg-btn.active { background: var(--accent); color: var(--accent-fg); }
+    .seg-btn:disabled { color: var(--ink-faint); cursor: not-allowed; }
+    .seg-btn:disabled:hover { background: transparent; }
+
+    .settings-hint { margin-top: 9px; font-size: 11px; color: var(--ink-soft); line-height: 1.5; }
+    .settings-hint a { color: var(--ink); text-decoration: none; font-weight: 600; }
+    .settings-hint a:hover { text-decoration: underline; }
+
+    #keySection { margin-top: 18px; }
+    #keySection.hidden { display: none; }
+
+    .cloud-field {
+      width: 100%;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .cloud-field::placeholder { color: var(--ink-faint); }
+    .cloud-field:focus { outline: none; border-color: var(--line-focus); }
+    #customBaseURLRow.hidden { display: none; }
+
+    /* Custom-built provider dropdown — a native <select>'s open listbox is
+       OS chrome that CSS can't restyle (dark on this Mac, clashing with the
+       light theme), so this is built the same way as the mode/language
+       palette instead of relying on the browser's own popup. */
+    .cloud-select-wrap { position: relative; }
+    .cloud-select-btn {
+      width: 100%;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 13px;
+      text-align: left;
+    }
+    .cloud-select-btn:hover { border-color: var(--line-focus); }
+    .cloud-select-btn svg { width: 12px; height: 12px; color: var(--ink-faint); flex: none; }
+    .cloud-select-menu {
+      position: absolute;
+      left: 0; right: 0; top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      box-shadow: var(--shadow-lg);
+      padding: 4px;
+      z-index: 5;
+    }
+    .cloud-select-menu.hidden { display: none; }
+    .cloud-select-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 9px;
+      border-radius: 7px;
+      font-size: 13px;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .cloud-select-item:hover { background: var(--line-soft); }
+    .cloud-select-item.current { font-weight: 600; }
+    .cloud-select-item.current::after { content: "✓"; color: var(--live-ink); font-weight: 700; margin-left: 8px; }
+
+    /* Browse-models: fetches {baseURL}/models for the saved key (mirrors
+       lasso's OpenAICompatibleProvider.availableModels) and lets you search
+       instead of having to already know an exact model id. */
+    .model-field-wrap { display: flex; gap: 6px; }
+    .model-field-wrap .cloud-field { flex: 1; min-width: 0; }
+    .model-browse-btn {
+      flex: none;
+      width: 36px; height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      color: var(--ink-soft);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .model-browse-btn:hover { background: var(--line-soft); color: var(--ink); }
+    .model-browse-btn svg { width: 15px; height: 15px; display: block; }
+
+    .model-menu {
+      margin-top: 6px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .model-menu.hidden { display: none; }
+    .model-menu-search-row { padding: 6px; border-bottom: 1px solid var(--line-soft); }
+    .model-menu-search-row input {
+      width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-family: inherit;
+      font-size: 12.5px;
+      background: var(--paper);
+      color: var(--ink);
+    }
+    .model-menu-search-row input::placeholder { color: var(--ink-faint); }
+    .model-menu-search-row input:focus { outline: none; border-color: var(--line-focus); }
+    .model-menu-list { max-height: 200px; overflow-y: auto; padding: 4px; }
+    .model-menu-item {
+      padding: 7px 9px;
+      border-radius: 7px;
+      font-size: 12.5px;
+      font-family: var(--mono);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .model-menu-item:hover { background: var(--line-soft); }
+    .model-menu-empty { padding: 12px 9px; text-align: center; font-size: 12px; color: var(--ink-faint); }
+
+    .key-row { display: flex; gap: 8px; }
+    .key-input-wrap { position: relative; flex: 1; min-width: 0; }
+    .key-input-wrap input {
+      width: 100%;
+      padding: 9px 34px 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      color: var(--ink);
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .key-input-wrap input.editing { border-color: var(--line-focus); }
+    .key-input-wrap input::placeholder { color: var(--ink-faint); }
+    .key-input-wrap input:focus { outline: none; border-color: var(--line-focus); }
+    .eye-btn {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      width: 24px; height: 24px; border: none; background: none;
+      color: var(--ink-faint);
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+    }
+    .eye-btn:hover { background: var(--line-soft); color: var(--ink-soft); }
+    .eye-btn svg { width: 15px; height: 15px; display: block; }
+
+    .btn-solid {
+      flex: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 9px 14px; border: none; border-radius: 9px;
+      background: var(--accent); color: var(--accent-fg);
+      font-size: 12.5px; font-weight: 600; white-space: nowrap;
+    }
+    .btn-solid:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-solid:disabled { opacity: .55; cursor: not-allowed; }
+
+    .btn-outline {
+      flex: none;
+      padding: 9px 14px; border: 1px solid var(--line); border-radius: 9px;
+      background: var(--card); color: var(--ink);
+      font-size: 12.5px; font-weight: 600; white-space: nowrap;
+    }
+    .btn-outline:hover { background: var(--line-soft); }
+
+    .settings-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+    .saved-line { transition: opacity .15s ease; }
+    .saved-line.ok { color: var(--live-ink); }
+    .saved-line svg { width: 12px; height: 12px; display: inline-block; vertical-align: -2px; margin-right: 4px; }
+    .saved-line.hidden-fade { opacity: 0; pointer-events: none; }
+    .link-danger { background: none; border: none; color: var(--error); font-size: 11px; font-weight: 600; padding: 0; }
+    .link-danger:hover { text-decoration: underline; }
+    .link-danger.hidden { visibility: hidden; }
+
+    .settings-section-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--ink-soft);
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+    .settings-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 11px 12px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      font-size: 13px;
+      color: var(--ink);
+      cursor: pointer;
+      margin-bottom: 6px;
+    }
+    .settings-row:hover { background: var(--line-soft); }
+    .settings-row .chevron { width: 14px; height: 14px; color: var(--ink-faint); flex: none; }
+
+    /* ── Info overlay (Privacy / Help) ──── */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(15,15,17,.45);
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px; z-index: 100;
+    }
+    .overlay-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow-lg);
+      max-width: 340px; max-height: 80vh; overflow-y: auto;
+      padding: 20px;
+    }
+    .overlay-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.2px; }
+    .overlay-card p { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin-bottom: 10px; }
+    .overlay-card strong { color: var(--ink); }
+    .overlay-card ul { margin: 0 0 12px; padding-left: 18px; }
+    .overlay-card li { font-size: 12.5px; color: var(--ink-soft); line-height: 1.6; margin-bottom: 4px; }
+    .overlay-card a { color: var(--ink); text-decoration: none; font-weight: 600; }
+    .overlay-card a:hover { text-decoration: underline; }
+    .overlay-card > .btn-solid { width: 100%; margin-top: 4px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .provider-pill.connected .pulse { animation: none; }
+      .sr-skel-line { animation: none; }
+      .send-btn, .icon-btn, .chip-btn, .saved-toast, .saved-line { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-header">
+    <div class="mark" id="mark"></div>
+    <h1>Proofr</h1>
+    <div class="provider-pill" id="providerPill"><span class="pulse"></span><span id="providerPillText">Checking…</span></div>
+    <button class="icon-btn" id="btnClearHistory" type="button" title="Clear history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+    </button>
+    <button class="icon-btn" id="btnSettings" type="button" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+
+  <!-- Everything below the header lives in .panel-body, which fills the
+       remaining height. Settings is a full-panel overlay inside it (own
+       header + back button) rather than an inline accordion — an accordion
+       left the thread visible/scrollable underneath, which read as broken. -->
+  <div class="panel-body">
+    <div class="disclosure">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+      <div><b>Each entry below is independent.</b> Proofr rewrites the text you give it. It doesn't read earlier entries. This list is just your history to revisit or copy from.</div>
+    </div>
+
+    <div class="thread" id="thread"></div>
+
+    <div class="composer-wrap">
+      <div class="palette" id="palette">
+        <div class="palette-hint"><span id="paletteHintLeft">MODE</span><span>↑↓ select · ↵ choose</span></div>
+        <div id="paletteList"></div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-toolbar">
+          <button class="mode-tag" id="modeTag" type="button">
+            <span class="slash">/</span><span id="modeTagLabel">Proofread</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <span class="char-count" id="charCount">0 / 4000</span>
+        </div>
+        <textarea id="ta" rows="1" placeholder="Paste text to rewrite…"></textarea>
+        <div class="composer-actions">
+          <button class="send-btn" id="sendBtn" type="button" disabled title="Send (Ctrl/Cmd+Enter)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-7 14-2-5-5-2Z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings: full-panel view, not an accordion. Covers the disclosure/
+         thread/composer above while open. -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <div class="settings-header">
+        <button class="icon-btn" id="btnSettingsBack" type="button" aria-label="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <h2>Settings</h2>
+      </div>
+
+      <div class="saved-toast" id="savedToast">✓ Saved</div>
+
+      <div class="settings-body">
+        <!-- Shown only when nothing can run yet (no on-device AI, no key).
+             Answers "why isn't this working" before asking for anything. -->
+        <div class="setup-card hidden" id="setupCard">
+          <b>On-device AI isn't available in this Chrome</b>
+          <p>Proofr's built-in mode uses Chrome's own AI model, which only runs on some desktop computers. <a href="https://developer.chrome.com/docs/ai/get-started#hardware" target="_blank" rel="noopener">See Chrome's requirements</a>.</p>
+          <p>No problem: connect a free Groq key instead. It takes about a minute.</p>
+          <ol>
+            <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> and sign in.</li>
+            <li>Click <b>Create API Key</b> and copy it.</li>
+            <li>Paste it in the <b>API key</b> field below and press Save.</li>
+          </ol>
+        </div>
+
+        <label>AI engine</label>
+        <div class="seg-control" id="engineSeg" role="group" aria-label="AI engine">
+          <button type="button" class="seg-btn" data-value="auto">Auto</button>
+          <button type="button" class="seg-btn" data-value="device">On-device</button>
+          <button type="button" class="seg-btn" data-value="cloud">Cloud</button>
+        </div>
+        <p class="settings-hint" id="engineHint"></p>
+
+        <div id="keySection">
+          <label>Cloud provider</label>
+          <div class="cloud-select-wrap">
+            <button type="button" class="cloud-select-btn" id="cloudServiceBtn">
+              <span id="cloudServiceBtnLabel">Groq</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cloud-select-menu hidden" id="cloudServiceMenu">
+              <div class="cloud-select-item" data-value="groq"><span>Groq</span></div>
+              <div class="cloud-select-item" data-value="openai"><span>OpenAI</span></div>
+              <div class="cloud-select-item" data-value="openrouter"><span>OpenRouter</span></div>
+              <div class="cloud-select-item" data-value="custom"><span>Custom (OpenAI-compatible)</span></div>
+            </div>
+          </div>
+
+          <div id="customBaseURLRow" class="hidden" style="margin-top:10px;">
+            <label for="customBaseURLInput">Base URL</label>
+            <input type="text" id="customBaseURLInput" class="cloud-field" placeholder="https://your-endpoint.example.com/v1" autocomplete="off" spellcheck="false">
+          </div>
+
+          <label for="cloudModelInput" style="margin-top:10px;">Model</label>
+          <div class="model-field-wrap">
+            <input type="text" id="cloudModelInput" class="cloud-field" placeholder="model name" autocomplete="off" spellcheck="false">
+            <button type="button" class="model-browse-btn" id="btnBrowseModels" aria-label="Browse available models" title="Browse available models">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+          </div>
+          <div class="model-menu hidden" id="modelMenu">
+            <div class="model-menu-search-row">
+              <input type="text" id="modelMenuSearch" placeholder="Search models…" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="model-menu-list" id="modelMenuList"></div>
+          </div>
+
+          <label for="apiKeyInput" style="margin-top:14px;">API key</label>
+          <div class="key-row">
+            <div class="key-input-wrap">
+              <input type="password" id="apiKeyInput" autocomplete="off" spellcheck="false">
+              <button type="button" class="eye-btn" id="btnToggleKeyEye" aria-label="Show key" tabindex="-1"></button>
+            </div>
+            <button id="btnSaveKey" class="btn-outline" type="button">Change</button>
+          </div>
+          <div class="settings-actions">
+            <p class="settings-hint saved-line" id="keyHint"></p>
+            <button id="btnClearKey" class="link-danger hidden" type="button">Remove</button>
+          </div>
+        </div>
+
+        <div class="settings-section-label">On web pages</div>
+        <label class="toggle-row" for="hoverToggle">
+          <span>
+            <b>Hover actions</b>
+            <span class="settings-hint">Show a small Proofr icon when you rest the mouse on a paragraph, to summarize, simplify, or translate text you're reading.</span>
+          </span>
+          <input type="checkbox" id="hoverToggle">
+        </label>
+
+        <div class="settings-section-label">About</div>
+        <div class="settings-row" data-action="showPrivacyPolicy">
+          <span>Privacy</span>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </div>
+        <div class="settings-row" data-action="showSupport">
+          <span>Help &amp; support</span>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="constants.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
