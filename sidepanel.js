@@ -32,9 +32,13 @@ class CloudProvider {
       const meta = SR_cloudServiceMeta(id);
       const keyField = `${SR_CLOUD_KEY_PREFIX}${id}`;
       const modelField = `${SR_CLOUD_MODEL_PREFIX}${id}`;
-      const r = await chrome.storage.sync.get([keyField, modelField, 'srCloudCustomBaseURL', 'groqAPIKey']);
+      // Keys are device-only (storage.local); background.js migrates any older synced key.
+      const [r, keys] = await Promise.all([
+        chrome.storage.sync.get([modelField, 'srCloudCustomBaseURL']),
+        chrome.storage.local.get([keyField, 'groqAPIKey']),
+      ]);
       // Legacy single-key storage (pre-multi-provider) — carries an already-saved Groq key forward.
-      const apiKey = r[keyField] || (id === 'groq' ? (r.groqAPIKey || '') : '');
+      const apiKey = keys[keyField] || (id === 'groq' ? (keys.groqAPIKey || '') : '');
       const baseURL = id === 'custom' ? (r.srCloudCustomBaseURL || '') : meta.baseURL;
       const model = r[modelField] || meta.defaultModel;
       return { id, displayName: meta.name, baseURL, model, apiKey };
@@ -51,10 +55,10 @@ class CloudProvider {
 
   static async setKey(serviceId, apiKey) {
     try {
-      await chrome.storage.sync.set({ [`${SR_CLOUD_KEY_PREFIX}${serviceId}`]: apiKey });
+      await chrome.storage.local.set({ [`${SR_CLOUD_KEY_PREFIX}${serviceId}`]: apiKey });
       // Once Groq gets its own key under the new scheme, retire the legacy
       // single-key fallback — otherwise "Remove" on Groq wouldn't fully clear it.
-      if (serviceId === 'groq') await chrome.storage.sync.remove(['groqAPIKey']);
+      if (serviceId === 'groq') await chrome.storage.local.remove(['groqAPIKey']);
     } catch { /* ignore */ }
   }
 
@@ -62,7 +66,7 @@ class CloudProvider {
     try {
       const keys = [`${SR_CLOUD_KEY_PREFIX}${serviceId}`];
       if (serviceId === 'groq') keys.push('groqAPIKey');
-      await chrome.storage.sync.remove(keys);
+      await chrome.storage.local.remove(keys);
     } catch { /* ignore */ }
   }
 
@@ -157,6 +161,8 @@ const refs = {};
 
 // === State ===
 let deviceReady = false;
+let deviceNeedsSetup = false;
+let deviceSetupRunning = false;
 let keyEditing = false;
 let turns = [];
 let currentMode = 'grammar';
@@ -190,6 +196,7 @@ const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 async function refreshProviderPill() {
   const availability = await SR_deviceAvailability();
   deviceReady = availability === 'available' || availability === 'downloadable' || availability === 'downloading';
+  deviceNeedsSetup = availability === 'downloadable' || availability === 'downloading';
   const provider = await CloudProvider.getConfig();
   const hasKey = !!provider.apiKey;
   const { engine } = await Settings.get();
@@ -202,13 +209,16 @@ async function refreshProviderPill() {
     label = deviceReady ? 'On-device · local' : 'Unavailable';
     runnable = deviceReady;
   } else {
-    label = deviceReady ? 'On-device · local' : (hasKey ? `${provider.displayName} · connected` : 'Add key');
+    label = deviceReady && !deviceNeedsSetup ? 'On-device · local'
+      : hasKey ? `${provider.displayName} · connected`
+      : deviceNeedsSetup ? 'Set up on-device AI' : 'Add key';
     runnable = deviceReady || hasKey;
   }
 
   refs.providerPill.classList.toggle('connected', runnable);
   refs.providerPillText.textContent = label;
   refs.setupCard.classList.toggle('hidden', deviceReady || hasKey);
+  refs.deviceSetupCard.classList.toggle('hidden', !(deviceNeedsSetup || deviceSetupRunning));
   return { deviceReady, hasKey, runnable };
 }
 
@@ -383,13 +393,44 @@ async function renderKeyField(serviceId) {
 }
 
 function onSaveClick() {
-  if (keyEditing) {
+  // A saved key shows "Change" first; with no key yet the field is already
+  // editable, so Save must save rather than switch modes (which would clear
+  // the key the user just pasted).
+  const hasSavedKey = refs.apiKeyInput.readOnly;
+  if (keyEditing || !hasSavedKey) {
+    // Custom endpoints rarely send CORS headers, so they need host access.
+    // Requested here, synchronously inside the click, while it still counts
+    // as a user gesture.
+    if (refs.cloudServiceBtnLabel.textContent === SR_cloudServiceMeta('custom').name) {
+      requestCustomEndpointAccess(refs.customBaseURLInput.value.trim()).finally(saveKey);
+      return;
+    }
     saveKey();
     return;
   }
   keyEditing = true;
   renderKeyField();
   refs.apiKeyInput.focus();
+}
+
+function requestCustomEndpointAccess(baseURL) {
+  let origin;
+  try { origin = new URL(baseURL).origin + '/*'; } catch { return Promise.resolve(false); }
+  return chrome.permissions.request({ origins: [origin] }).catch(() => false);
+}
+
+// Default models get retired by providers (Groq retired llama-3.3-70b in
+// Aug 2026). After a key is verified, keep the user's model if the provider
+// still lists it, else switch to the best available one.
+async function healModel(serviceId, availableIds) {
+  if (!availableIds.length || typeof SR_pickAvailableModel !== 'function') return;
+  const cfg = await CloudProvider.getConfig(serviceId);
+  if (availableIds.includes(cfg.model)) return;
+  const picked = SR_pickAvailableModel(serviceId, availableIds);
+  if (picked) {
+    await CloudProvider.setModel(serviceId, picked);
+    refs.cloudModelInput.value = picked;
+  }
 }
 
 async function saveKey() {
@@ -428,7 +469,10 @@ async function saveKey() {
       refs.keyHint.classList.remove('hidden-fade');
       return;
     }
+    const listed = await res.json().catch(() => null);
+    const ids = (listed && Array.isArray(listed.data) ? listed.data : []).map((m) => m && m.id).filter(Boolean);
     await CloudProvider.setKey(serviceId, key);
+    await healModel(serviceId, SR_chatModels(ids));
     keyEditing = false;
     await renderKeyField(serviceId);
     await refreshProviderPill();
@@ -449,6 +493,37 @@ async function clearKey() {
   keyEditing = false;
   await renderKeyField(serviceId);
   await refreshProviderPill();
+}
+
+// Downloads Chrome's on-device model from a click (the download needs user
+// activation, which the service worker never has). Declares English only,
+// like SR_deviceAvailability: some Chrome builds support fewer languages, and
+// the model downloaded is the same either way.
+async function setUpOnDevice() {
+  const LM = SR_deviceModel();
+  if (!LM) return;
+  deviceSetupRunning = true;
+  refs.btnDeviceSetup.disabled = true;
+  refs.deviceSetupStatus.textContent = 'Starting download…';
+  try {
+    const session = await LM.create({
+      monitor(m) {
+        m.addEventListener('downloadprogress', (e) => {
+          refs.deviceSetupStatus.textContent = `Downloading Chrome's on-device model… ${Math.round((e.loaded || 0) * 100)}%`;
+        });
+      },
+      expectedInputs: [{ type: 'text', languages: ['en'] }],
+      expectedOutputs: [{ type: 'text', languages: ['en'] }],
+    });
+    try { session.destroy && session.destroy(); } catch { /* ignore */ }
+    refs.deviceSetupStatus.textContent = 'On-device AI is ready.';
+  } catch (error) {
+    refs.deviceSetupStatus.textContent = `Couldn't set up on-device AI: ${error.message || error}. You can connect a free Groq key below instead.`;
+  } finally {
+    deviceSetupRunning = false;
+    refs.btnDeviceSetup.disabled = false;
+    await refreshProviderPill();
+  }
 }
 
 function toggleSettingsPanel(forceOpen) {
@@ -624,12 +699,14 @@ async function runTurn(turn, opts = {}) {
       engine,
       targetLang: turn.targetLang,
       temperatureBoost: opts.boost ? 0.15 : 0,
+      onStatus: (msg) => { turn.statusText = msg; renderThread(); },
     });
     turn.outputText = rewritten;
     turn.provider = providerId;
     turn.latencyMs = Math.round(performance.now() - start);
     turn.status = 'done';
     delete turn.errorMessage;
+    delete turn.statusText;
     await StatsManager.updateStats(turn.mode);
   } catch (error) {
     turn.status = 'error';
@@ -674,6 +751,7 @@ function renderAssistantCard(turn) {
     return `<div class="assistant-card">
       <div class="assistant-head"><span><span class="tag">${modeName}</span> · …</span><span></span></div>
       <div class="assistant-body">
+        ${turn.statusText ? `<div class="status-text">${escapeHtml(turn.statusText)}</div>` : ''}
         <div class="sr-skel-line"></div><div class="sr-skel-line"></div><div class="sr-skel-line short"></div>
       </div>
     </div>`;
@@ -723,7 +801,34 @@ function renderThread() {
   const frag = document.createDocumentFragment();
   turns.forEach((t) => frag.appendChild(renderTurn(t)));
   refs.thread.appendChild(frag);
+  maybeShowRatePrompt();
   refs.thread.scrollTop = refs.thread.scrollHeight;
+}
+
+// === One-time rating ask ===
+// Shown once, under a successful result, after 5 successful rewrites (the
+// same rewriteStats counter every surface increments). Same ask for everyone,
+// no reward, never blocks anything; either choice retires it for good.
+const RATE_AFTER = 5;
+
+async function maybeShowRatePrompt() {
+  const last = turns[turns.length - 1];
+  if (!last || last.status !== 'done') return;
+  const { rewriteStats, srRateAsked } = await chrome.storage.local.get(['rewriteStats', 'srRateAsked']);
+  if (srRateAsked || !rewriteStats || rewriteStats.totalRewrites < RATE_AFTER) return;
+  if (refs.thread.querySelector('.rate-line')) return;
+  const line = document.createElement('div');
+  line.className = 'rate-line';
+  line.innerHTML = `<span>Finding Proofr useful? A rating helps other people find it.</span>
+    <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" data-rate="go">Rate it</a>
+    <button type="button" data-rate="later">Not now</button>`;
+  line.addEventListener('click', async (e) => {
+    const choice = e.target.closest('[data-rate]');
+    if (!choice) return;
+    await chrome.storage.local.set({ srRateAsked: true });
+    line.remove();
+  });
+  refs.thread.appendChild(line);
 }
 
 // Delegated: one listener handles copy/redo/retry for every turn, present or future.
@@ -764,7 +869,7 @@ const InfoOverlays = {
   showSupport() {
     openOverlay(`
       <h3>Help</h3>
-      <p><strong>On any page:</strong> select text → right-click → Proofr, or press <strong>Ctrl+Shift+R</strong> for a quick Professional rewrite. Turn on <strong>Hover actions</strong> in Settings to summarize, simplify, or translate any paragraph you're reading. Right-click anywhere → "Translate this page" for a full bilingual translation.</p>
+      <p><strong>On any page:</strong> select text → right-click → Proofr, or press <strong>Alt+Shift+P</strong> to proofread it (change the shortcut at chrome://extensions/shortcuts). In a text box the selection is replaced in place; press Ctrl+Z (⌘Z on Mac) to undo. Turn on <strong>Hover actions</strong> in Settings to summarize, simplify, or translate any paragraph you're reading.</p>
       <p><strong>In this panel:</strong> type or paste text, click the <strong>/Mode</strong> tag (or type <strong>/</strong>) to pick a mode, then <strong>Ctrl/Cmd+Enter</strong> or the send button. Each entry in the list is independent. Proofr doesn't read earlier entries when rewriting a new one.</p>
       <p><strong>How it rewrites:</strong> if your Chrome has built-in AI, rewrites in English, Spanish, French, German, and Japanese run on-device with no key. Other languages, the hover "Ask" box, and Chrome without built-in AI use your cloud provider key. The pill up top shows which is active.</p>
       <p>Questions? <a href="mailto:cjcarito15@gmail.com">cjcarito15@gmail.com</a> · <a href="https://github.com/civarry" target="_blank" rel="noopener">github.com/civarry</a></p>
@@ -777,7 +882,8 @@ const InfoOverlays = {
 document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
-    'settingsPanel', 'savedToast', 'setupCard', 'hoverToggle', 'engineSeg', 'engineHint',
+    'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
+    'welcomeCard', 'hoverToggle', 'engineSeg', 'engineHint',
     'keySection', 'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
     'btnBrowseModels', 'modelMenu', 'modelMenuSearch', 'modelMenuList',
@@ -824,9 +930,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Settings panel: hover actions on page text (off by default; hover-assist.js
   // watches this key live, so open tabs pick it up without a reload)
-  refs.hoverToggle.addEventListener('change', async () => {
-    await Settings.set({ srHoverAssist: refs.hoverToggle.checked });
-    showSavedToast();
+  // Turning it on asks Chrome for access to page text first; that request has
+  // to happen synchronously inside this click. background.js registers or
+  // removes the page scripts when srHoverAssist changes.
+  refs.hoverToggle.addEventListener('change', () => {
+    if (refs.hoverToggle.checked) {
+      chrome.permissions.request({ origins: ['<all_urls>'] }).then(async (granted) => {
+        refs.hoverToggle.checked = granted;
+        await Settings.set({ srHoverAssist: granted });
+        if (granted) showSavedToast();
+      }, () => { refs.hoverToggle.checked = false; });
+    } else {
+      Settings.set({ srHoverAssist: false }).then(() => {
+        chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
+        showSavedToast();
+      });
+    }
+  });
+
+  // On-device model download needs a click in a page, so it starts here.
+  refs.btnDeviceSetup.addEventListener('click', setUpOnDevice);
+
+  // Settings rows are divs; make them reachable and usable from the keyboard.
+  refs.settingsPanel.querySelectorAll('.settings-row[data-action]').forEach((row) => {
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+    });
   });
 
   // Settings panel: cloud provider picker (custom dropdown, not a native <select>)
@@ -940,7 +1071,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Escape') { closePalette(); }
   });
 
-  if (!deviceReady && !hasKey) {
+  // Opened as a tab right after install (background.js onInstalled).
+  const welcome = new URLSearchParams(location.search).has('welcome');
+  if (welcome) {
+    document.title = 'Welcome to Proofr';
+    refs.welcomeCard.classList.remove('hidden');
+  }
+
+  if (welcome || (!deviceReady && !hasKey) || deviceNeedsSetup) {
     toggleSettingsPanel(true);
   } else {
     setTimeout(() => refs.ta.focus(), 100);

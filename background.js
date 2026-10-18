@@ -1,6 +1,22 @@
 // Shared tone metadata + cloud provider calls (SR_TONES, SR_rewrite, SR_getToneName, …)
 importScripts('constants.js');
 
+// API keys live in chrome.storage.local (this device only). Earlier versions
+// kept them in storage.sync, which copies them to the user's Google account
+// and other devices; migrateKeysToLocal moves any such key over once.
+const SR_KEY_FIELDS = ['srCloudKey_groq', 'srCloudKey_openai', 'srCloudKey_openrouter', 'srCloudKey_custom', 'groqAPIKey'];
+
+async function migrateKeysToLocal() {
+  const synced = await chrome.storage.sync.get(SR_KEY_FIELDS);
+  const found = Object.keys(synced).filter((k) => synced[k]);
+  if (found.length === 0) return;
+  const local = await chrome.storage.local.get(found);
+  const toCopy = {};
+  for (const k of found) if (!local[k]) toCopy[k] = synced[k];
+  if (Object.keys(toCopy).length) await chrome.storage.local.set(toCopy);
+  await chrome.storage.sync.remove(found);
+}
+
 // Resolves the active cloud provider's full config (Groq/OpenAI/OpenRouter/
 // Custom — any OpenAI-compatible endpoint). Read-only here; saving keys/model
 // is a settings-panel concern, handled in sidepanel.js.
@@ -15,9 +31,12 @@ class CloudProvider {
     const meta = SR_cloudServiceMeta(id);
     const keyField = `srCloudKey_${id}`;
     const modelField = `srCloudModel_${id}`;
-    const r = await chrome.storage.sync.get([keyField, modelField, 'srCloudCustomBaseURL', 'groqAPIKey']);
+    const [r, keys] = await Promise.all([
+      chrome.storage.sync.get([modelField, 'srCloudCustomBaseURL']),
+      chrome.storage.local.get([keyField, 'groqAPIKey']),
+    ]);
     // Legacy single-key storage (pre-multi-provider) — carries an already-saved Groq key forward.
-    const apiKey = r[keyField] || (id === 'groq' ? (r.groqAPIKey || '') : '');
+    const apiKey = keys[keyField] || (id === 'groq' ? (keys.groqAPIKey || '') : '');
     const baseURL = id === 'custom' ? (r.srCloudCustomBaseURL || '') : meta.baseURL;
     const model = r[modelField] || meta.defaultModel;
     return { id, displayName: meta.name, baseURL, model, apiKey };
@@ -50,6 +69,49 @@ class StatsManager {
   }
 }
 
+// Which AI can run right now, from a service worker. On-device only counts
+// when the model is already downloaded: downloading needs a user click in a
+// page, which the side panel's "Set up on-device AI" button provides.
+async function aiStatus() {
+  const [settings, provider, availability] = await Promise.all([
+    getSettings(), CloudProvider.getConfig(), SR_deviceAvailability(),
+  ]);
+  return {
+    settings,
+    provider,
+    hasKey: !!provider.apiKey,
+    deviceNow: availability === 'available',
+    deviceNeedsSetup: availability === 'downloadable' || availability === 'downloading',
+  };
+}
+
+// Returns null when something can run, else { title, message } explaining
+// the one thing the user needs to do.
+function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup }) {
+  const title = 'Set up Proofr';
+  if (settings.engine === 'cloud' && !hasKey) {
+    return { title, message: `The engine is set to "Cloud only", but no ${provider.displayName} key is saved. Add one in the Proofr side panel, or switch the engine to Auto.` };
+  }
+  if (settings.engine === 'device' && !deviceNow) {
+    return deviceNeedsSetup
+      ? { title, message: 'On-device AI needs a one-time setup. Click the Proofr toolbar icon and choose "Set up on-device AI".' }
+      : { title, message: 'The engine is set to "On-device only", but Chrome’s built-in AI isn’t available here. Switch it to Auto or Cloud in the Proofr side panel.' };
+  }
+  if (!deviceNow && !hasKey) {
+    return deviceNeedsSetup
+      ? { title, message: 'On-device AI needs a one-time setup. Click the Proofr toolbar icon and choose "Set up on-device AI", or connect a free Groq key there instead.' }
+      : { title, message: 'No AI is set up yet. Click the Proofr toolbar icon to connect a free Groq key, since Chrome’s built-in AI isn’t available here.' };
+  }
+  return null;
+}
+
+// Rewrite with whatever is ready: on-device only when already downloaded,
+// otherwise the cloud key.
+function rewriteNow(text, tone, status, targetLang) {
+  const engine = (status.settings.engine === 'auto' && !status.deviceNow) ? 'cloud' : status.settings.engine;
+  return SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang });
+}
+
 // Clicking the toolbar icon opens the side panel directly (replaces the old popup).
 if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
@@ -57,42 +119,87 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   });
 }
 
-// === Context menu ===
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'smartRewrite',
-    title: 'Proofr',
-    contexts: ['selection'],
-  });
+// === Hover actions: page scripts registered only while the user has them on ===
+// No content script runs on any page by default. Turning on "Hover actions"
+// in the side panel requests host access (a user gesture there); this keeps
+// the registered scripts in step with that setting and that permission.
+const HOVER_SCRIPT_ID = 'proofr-hover';
 
-  SR_TONES.forEach(tone => {
+async function syncHoverScripts() {
+  const [{ srHoverAssist }, granted, registered] = await Promise.all([
+    chrome.storage.sync.get(['srHoverAssist']),
+    chrome.permissions.contains({ origins: ['<all_urls>'] }),
+    chrome.scripting.getRegisteredContentScripts({ ids: [HOVER_SCRIPT_ID] }),
+  ]);
+  const want = !!srHoverAssist && granted;
+  if (want && registered.length === 0) {
+    await chrome.scripting.registerContentScripts([{
+      id: HOVER_SCRIPT_ID,
+      matches: ['<all_urls>'],
+      js: ['constants.js', 'dom-scan.js', 'hover-assist.js', 'content.js'],
+      css: ['modal.css'],
+      runAt: 'document_end',
+    }]);
+  } else if (!want && registered.length > 0) {
+    await chrome.scripting.unregisterContentScripts({ ids: [HOVER_SCRIPT_ID] });
+  }
+  // Access revoked from Chrome's own UI: reflect it in the toggle.
+  if (srHoverAssist && !granted) await chrome.storage.sync.set({ srHoverAssist: false });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.srHoverAssist) syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
+});
+chrome.permissions.onRemoved.addListener(() => { syncHoverScripts().catch(() => {}); });
+chrome.permissions.onAdded.addListener(() => { syncHoverScripts().catch(() => {}); });
+
+// === Install / update ===
+chrome.runtime.onInstalled.addListener(async (details) => {
+  chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: `sr:${tone.id}`,
+      id: 'smartRewrite',
+      title: 'Proofr',
+      contexts: ['selection'],
+    });
+
+    SR_TONES.forEach(tone => {
+      chrome.contextMenus.create({
+        id: `sr:${tone.id}`,
+        parentId: 'smartRewrite',
+        title: tone.name,
+        contexts: ['selection'],
+      });
+    });
+
+    chrome.contextMenus.create({
+      id: 'separator1',
       parentId: 'smartRewrite',
-      title: tone.name,
+      type: 'separator',
+      contexts: ['selection'],
+    });
+
+    chrome.contextMenus.create({
+      id: 'openSettings',
+      parentId: 'smartRewrite',
+      title: 'Settings…',
       contexts: ['selection'],
     });
   });
 
-  chrome.contextMenus.create({
-    id: 'separator1',
-    parentId: 'smartRewrite',
-    type: 'separator',
-    contexts: ['selection'],
-  });
+  await migrateKeysToLocal().catch((e) => console.warn('Key migration:', e?.message || e));
+  await syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
 
-  chrome.contextMenus.create({
-    id: 'openSettings',
-    parentId: 'smartRewrite',
-    title: 'Settings…',
-    contexts: ['selection'],
-  });
+  // First install: the side panel can't open without a click, so show the
+  // same setup screen in a tab. It tells the user whether on-device AI works
+  // here and, if not, how to connect a free key, before their first attempt.
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: 'sidepanel.html?welcome=1' });
+  }
+});
 
-  chrome.contextMenus.create({
-    id: 'translatePage',
-    title: 'Translate this page (Proofr)',
-    contexts: ['page'],
-  });
+chrome.runtime.onStartup.addListener(() => {
+  migrateKeysToLocal().catch(() => {});
+  syncHoverScripts().catch(() => {});
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -100,13 +207,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     try {
       await chrome.sidePanel.open({ tabId: tab.id });
     } catch (error) {
+      await ensureContentAssets(tab.id);
       inject(tab.id, showErrorMessage, ['Click the Proofr toolbar icon to open settings.']);
     }
-    return;
-  }
-
-  if (info.menuItemId === 'translatePage') {
-    await ensurePageTranslateAssets(tab.id);
     return;
   }
 
@@ -116,15 +219,27 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// === Messages from content scripts ===
-// Two shapes here: the original fire-and-forget flow (keyboard shortcut, "try
-// another tone", hover icon's "More…") which drives the on-page modal
-// directly via handleRewrite, and the newer request/response flow (hover
-// quick-actions, page-translate batches) which needs a result handed back to
-// the content script itself because it — not background.js — holds the
-// reference to which DOM node to update.
+// === Keyboard shortcut (manifest "commands", rebindable at chrome://extensions/shortcuts) ===
+chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (command !== 'proofread-selection' || !tab || tab.id == null) return;
+  try {
+    const [{ result: text } = {}] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: readSelectionText,
+    });
+    await handleRewrite(tab.id, text, 'grammar', { ensure: true });
+  } catch (error) {
+    console.warn('Proofr shortcut could not run on this page:', error?.message || error);
+  }
+});
+
+// === Messages from page scripts ===
+// Two shapes here: the fire-and-forget flow ("try another tone" in the
+// modal) which drives the on-page modal directly via handleRewrite, and the
+// request/response flow (hover reading actions) which hands the result back
+// to the hover script so it can open it in the modal itself.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'quickRewrite' || message.action === 'rewriteWithTone') {
+  if (message.action === 'rewriteWithTone') {
     handleRewrite(sender.tab.id, message.text, message.tone, { targetLang: message.targetLang });
     return false;
   }
@@ -132,206 +247,144 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleHoverRewrite(message, sendResponse);
     return true; // async sendResponse
   }
-  if (message.action === 'translatePageBatch') {
-    handleTranslateBatch(message, sendResponse);
-    return true; // async sendResponse
-  }
   if (message.action === 'hoverAskAI') {
     handleHoverAskAI(message, sendResponse);
+    return true; // async sendResponse
+  }
+  if (message.action === 'hasCloudKey') {
+    CloudProvider.hasKey().then((hasKey) => sendResponse({ hasKey }), () => sendResponse({ hasKey: false }));
     return true; // async sendResponse
   }
   return false;
 });
 
-// === Hover-to-act: rewrite/proofread a single hovered block ===
+// === Hover reading actions on a single hovered block ===
 async function handleHoverRewrite(message, sendResponse) {
   try {
-    const settings = await getSettings();
-    const provider = await CloudProvider.getConfig();
-    const deviceReady = await SR_deviceReady();
-    if (settings.engine === 'cloud' && !provider.apiKey) {
-      sendResponse({ error: 'no_key', message: `The engine is set to "Cloud only", but no ${provider.displayName} key is saved. Add one in the Proofr side panel, or switch the engine to Auto.` });
+    const status = await aiStatus();
+    const problem = setupProblem(status);
+    if (problem) {
+      sendResponse({ error: 'setup', title: problem.title, message: problem.message });
       return;
     }
-    if (!provider.apiKey && !deviceReady) {
-      sendResponse({ error: 'no_ai', message: 'No AI is set up yet. Open the Proofr side panel to connect a free Groq key, since Chrome’s built-in AI isn’t available here.' });
-      return;
-    }
-    const { text, provider: providerId } = await SR_rewriteAuto(message.text, message.tone, {
-      provider,
-      engine: settings.engine,
-      targetLang: message.targetLang,
-    });
+    const { text, provider: providerId } = await rewriteNow(message.text, message.tone, status, message.targetLang);
     await StatsManager.updateStats(message.tone);
     sendResponse({ text, provider: providerId });
   } catch (error) {
-    sendResponse({ error: error.message || 'Something went wrong.' });
+    sendResponse({ error: 'failed', message: error.message || 'Something went wrong.' });
   }
 }
 
-// === Hover Ask AI: freeform instruction on a hovered block (cloud key) ===
+// === Hover Ask: freeform instruction on a hovered block (cloud key) ===
 async function handleHoverAskAI(message, sendResponse) {
   try {
     const provider = await CloudProvider.getConfig();
     if (!provider.apiKey) {
-      sendResponse({ error: 'no_key', message: `Add a ${provider.displayName} API key in Proofr settings to use custom instructions.` });
+      sendResponse({ error: 'setup', title: 'Set up Proofr', message: `Add a ${provider.displayName} API key in the Proofr side panel to ask about text.` });
       return;
     }
     const text = await SR_askCloud(provider, message.text, message.instruction);
     await StatsManager.updateStats('ask');
     sendResponse({ text, provider: provider.id });
   } catch (error) {
-    sendResponse({ error: error.message || 'Something went wrong.' });
+    sendResponse({ error: 'failed', message: error.message || 'Something went wrong.' });
   }
 }
 
-// === Full-page translate: one batch of numbered blocks at a time ===
-// On-device languages (SR_isOnDeviceLanguage) run locally when available;
-// anything else goes to the user's own cloud provider key.
-async function handleTranslateBatch(message, sendResponse) {
-  try {
-    const onDeviceLang = SR_isOnDeviceLanguage(message.targetLang);
-
-    const settings = await getSettings();
-    const provider = await CloudProvider.getConfig();
-    const deviceReady = onDeviceLang && settings.engine !== 'cloud' && await SR_deviceReady();
-
-    if (deviceReady) {
-      const results = await SR_translateBatchDevice(message.items, message.targetLang);
-      sendResponse({ results, provider: 'device' });
-      return;
-    }
-
-    if (!provider.apiKey) {
-      sendResponse({ error: 'no_key', message: `Add a ${provider.displayName} API key in the Proofr side panel to translate into this language.` });
-      return;
-    }
-    const targetLangName = SR_fullLangName(message.targetLang);
-    const results = await SR_translateBatchCloud(provider, message.items, targetLangName);
-    sendResponse({ results, provider: provider.id });
-  } catch (error) {
-    sendResponse({ error: error.message || 'Translation failed.' });
-  }
-}
-
-// === Core flow: validate → loading modal → rewrite → show result ===
+// === Core flow: validate → capture target → loading → rewrite → result ===
 async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } = {}) {
   try {
+    // No content script runs by default, so the modal is injected on demand
+    // (under the activeTab grant from the menu click or shortcut).
+    if (ensure) await ensureContentAssets(tabId);
+
     if (!text || text.trim().length === 0) {
       inject(tabId, showErrorMessage, ['Select some text first, then choose a tone.']);
       return;
     }
 
-    // On tabs opened before the extension loaded/reloaded, the content script
-    // (which draws the modal) isn't present yet. Inject it before we show anything,
-    // otherwise showRewriteResult falls back to a raw alert().
-    if (ensure) await ensureContentAssets(tabId);
-
-    const settings = await getSettings();
-    const engine = settings.engine;
+    const status = await aiStatus();
     // Prefer the language the caller passed (avoids racing storage), else the saved default.
-    const lang = targetLang || settings.targetLang;
-    const deviceReady = await SR_deviceReady();
-    const provider = await CloudProvider.getConfig();
-    const hasKey = !!provider.apiKey;
-
-    if (engine === 'device' && !deviceReady) {
-      inject(tabId, showErrorMessage, [
-        'The engine is set to "On-device only", but Chrome’s built-in AI isn’t available here. Switch it to Auto or Cloud in the Proofr side panel.',
-      ]);
-      return;
-    }
-    if (engine === 'cloud' && !hasKey) {
-      inject(tabId, showErrorMessage, [
-        `The engine is set to "Cloud only", but no ${provider.displayName} key is saved. Add one in the Proofr side panel, or switch the engine to Auto.`,
-      ]);
-      return;
-    }
-    if (!deviceReady && !hasKey) {
-      inject(tabId, showErrorMessage, [
-        'No AI is set up yet. Open the Proofr side panel to use Chrome’s built-in AI, or add a cloud provider API key.',
-      ]);
+    const lang = targetLang || status.settings.targetLang;
+    const problem = setupProblem(status);
+    if (problem) {
+      inject(tabId, showErrorMessage, [problem.message, problem.title]);
       return;
     }
 
+    // Remember exactly where the selection was now, not when the result
+    // arrives: the user may click elsewhere during a slow rewrite.
+    await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text] });
     inject(tabId, showLoadingModal, [text, tone, lang]);
 
-    const { text: rewritten, provider: providerId } = await SR_rewriteAuto(text, tone, { provider, engine, targetLang: lang });
+    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang);
     await StatsManager.updateStats(tone);
 
     inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang]);
   } catch (error) {
-    console.error('Rewrite failed:', error);
-    // If we reached the rewrite with no key, on-device was the engine used — the
-    // most common failure is an unsupported language. Point at the real fix.
-    const hasKey = await CloudProvider.hasKey();
-    if (!hasKey) {
-      inject(tabId, showErrorMessage, [
-        'On-device AI couldn’t rewrite this. It only supports EN, ES, FR, DE, JA. Open the Proofr side panel and add a cloud provider key to handle other languages.',
-      ]);
-      return;
+    console.warn('Rewrite failed:', error?.message || error);
+    let message = error.message || 'Something went wrong.';
+    // On-device failures (too long, unsupported language, timeout) have a
+    // cloud fallback the user may not know about.
+    if (!(await CloudProvider.hasKey()) && !/key/i.test(message)) {
+      message += ' A free cloud key (set up in the Proofr side panel) handles longer text and more languages.';
     }
-    inject(tabId, showErrorMessage, [error.message]);
+    inject(tabId, showErrorMessage, [message]);
   }
 }
 
 function inject(tabId, func, args) {
-  chrome.scripting.executeScript({ target: { tabId }, func, args });
+  chrome.scripting.executeScript({ target: { tabId }, func, args }).catch((error) => {
+    console.warn('Could not show Proofr on this page:', error?.message || error);
+  });
 }
 
-// Make sure the modal + hover-assist assets are on the page. Each content
-// script self-guards against double-init, so calling this repeatedly is safe.
-// Silently ignores pages that block injection (e.g. chrome:// pages, the Web
-// Store) — only matters for tabs opened before install/reload; on a normal
-// page load the manifest's content_scripts already cover this.
+// Make sure the modal is on the page. Pages with hover actions on already
+// have it from the registered scripts; constants.js can't be injected twice
+// into the same world, so check first. Silently ignores pages that block
+// injection (chrome:// pages, the Web Store).
 async function ensureContentAssets(tabId) {
   try {
     const [{ result: alreadyLoaded } = {}] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => !!window.SmartRewriteModal && !!window.__srHoverAssistLoaded,
+      func: () => !!window.SmartRewriteModal,
     });
     if (alreadyLoaded) return;
 
     await chrome.scripting.insertCSS({ target: { tabId }, files: ['modal.css'] });
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['constants.js', 'dom-scan.js', 'hover-assist.js', 'content.js'],
-    });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['constants.js', 'content.js'] });
   } catch (error) {
     console.warn('Could not inject Proofr into this page:', error?.message || error);
   }
 }
 
-// Full-page translate is heavier (walks the whole DOM) and rarely used, so it's
-// never in the always-on content_scripts bundle — only injected when the user
-// explicitly asks for it. Re-triggering the menu item on a page that's already
-// translating toggles it off instead of double-injecting.
-async function ensurePageTranslateAssets(tabId) {
-  try {
-    const [{ result: alreadyRunning } = {}] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => !!window.__srPageTranslateLoaded,
-    });
-    if (alreadyRunning) {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => { window.SRPageTranslate && window.SRPageTranslate.toggle(); },
-      });
-      return;
-    }
+// === Functions injected into the page ===
+// Text fields keep their selection in selectionStart/End, which
+// window.getSelection() doesn't report.
+function readSelectionText() {
+  const el = document.activeElement;
+  if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|)$/i.test(el.type)))) {
+    return el.value.slice(el.selectionStart, el.selectionEnd);
+  }
+  return String(window.getSelection() || '');
+}
 
-    await ensureContentAssets(tabId); // constants/dom-scan must exist first
-    await chrome.scripting.insertCSS({ target: { tabId }, files: ['page-translate.css'] });
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['page-translate.js'] });
-  } catch (error) {
-    console.warn('Could not start page translate on this tab:', error?.message || error);
+function captureReplaceTarget(originalText) {
+  const el = document.activeElement;
+  window.__srTarget = null;
+  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.selectionStart !== el.selectionEnd) {
+    window.__srTarget = { kind: 'field', el, start: el.selectionStart, end: el.selectionEnd, original: originalText };
+    return;
+  }
+  const sel = window.getSelection();
+  if (el && el.isContentEditable && sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+    window.__srTarget = { kind: 'editable', el, range: sel.getRangeAt(0).cloneRange(), original: originalText };
   }
 }
 
-// === Functions injected into the page (talk to window.SmartRewriteModal) ===
-function showErrorMessage(message) {
+function showErrorMessage(message, title) {
   if (window.SmartRewriteModal) {
-    window.SmartRewriteModal.showError(message);
+    window.SmartRewriteModal.showError(message, title ? { title } : undefined);
   } else {
     alert('Proofr: ' + message);
   }
@@ -343,41 +396,53 @@ function showLoadingModal(originalText, tone, targetLang) {
   }
 }
 
+// Replaces the captured selection through the browser's own editing command,
+// so the page's editor (React, Lexical, ProseMirror…) sees a normal input
+// event and Ctrl+Z restores the original. Only replaces when the captured
+// text is still there; otherwise the result opens in the modal instead.
 function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang) {
-  const selection = window.getSelection();
-  const activeElement = document.activeElement;
+  const target = window.__srTarget;
+  window.__srTarget = null;
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  let replaced = false;
 
-  const canReplace = activeElement &&
-    (activeElement.tagName === 'TEXTAREA' ||
-     activeElement.tagName === 'INPUT' ||
-     activeElement.contentEditable === 'true') &&
-    selection.rangeCount > 0;
-
-  if (canReplace) {
-    if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
-      const start = activeElement.selectionStart;
-      const end = activeElement.selectionEnd;
-      const value = activeElement.value;
-      activeElement.value = value.substring(0, start) + rewrittenText + value.substring(end);
-      activeElement.setSelectionRange(start, start + rewrittenText.length);
-      activeElement.focus();
-    } else if (activeElement.contentEditable === 'true') {
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(document.createTextNode(rewrittenText));
+  try {
+    if (target && target.kind === 'field' && target.el.isConnected
+        && norm(target.el.value.slice(target.start, target.end)) === norm(target.original)) {
+      target.el.focus();
+      target.el.setSelectionRange(target.start, target.end);
+      replaced = document.execCommand('insertText', false, rewrittenText);
+      if (!replaced) {
+        target.el.setRangeText(rewrittenText, target.start, target.end, 'end');
+        target.el.dispatchEvent(new Event('input', { bubbles: true }));
+        replaced = true;
+      }
+    } else if (target && target.kind === 'editable' && target.el.isConnected
+        && target.range.startContainer.isConnected
+        && norm(target.range.toString()) === norm(target.original)) {
+      target.el.focus();
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(target.range);
+      replaced = document.execCommand('insertText', false, rewrittenText);
     }
+  } catch (_) {
+    replaced = false;
+  }
 
+  if (replaced) {
     if (window.SmartRewriteModal) {
-      window.SmartRewriteModal.showSuccess('Text replaced.');
-      setTimeout(() => window.SmartRewriteModal.hide(), 750);
+      const undoKey = /Mac/i.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
+      window.SmartRewriteModal.showSuccess(`Text replaced. ${undoKey} to undo.`);
     }
+    return;
+  }
+
+  if (window.SmartRewriteModal) {
+    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang);
   } else {
-    if (window.SmartRewriteModal) {
-      window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang);
-    } else {
-      navigator.clipboard.writeText(rewrittenText)
-        .then(() => alert('Rewritten text copied to clipboard:\n\n' + rewrittenText))
-        .catch(() => alert('Rewritten text:\n\n' + rewrittenText));
-    }
+    navigator.clipboard.writeText(rewrittenText)
+      .then(() => alert('Rewritten text copied to clipboard:\n\n' + rewrittenText))
+      .catch(() => alert('Rewritten text:\n\n' + rewrittenText));
   }
 }

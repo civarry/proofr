@@ -60,9 +60,10 @@
     <p>Everything Proofr stores lives <strong>locally in your own browser</strong> (via Chrome storage). None of it is transmitted to us. We have no servers to send it to.</p>
     <ul>
       <li><strong>The text you select</strong>: used only to produce a rewrite. On the on-device engine it is processed locally and never sent anywhere. Text you select on a page is not saved.</li>
+      <li><strong>Paragraphs you act on with hover actions</strong> (off unless you turn them on): when you click Summarize, Plain English, Translate, or Ask on a paragraph, that paragraph's text (up to about 6,000 characters for messages split across lines) is processed the same way as selected text. Nothing is read or sent until you click an action.</li>
       <li><strong>Side panel history</strong>: text you paste into the Proofr side panel, and its result, is kept as a history list (the last 50 entries) in your browser so you can copy it again. It never leaves your device, and the trash icon in the panel deletes it.</li>
       <li><strong>Your settings</strong>: chosen engine, translation language, and whether hover actions are on, stored in your browser.</li>
-      <li><strong>An optional cloud provider API key</strong>: Groq, OpenAI, OpenRouter, or a custom OpenAI-compatible endpoint you choose to add. It is stored in your browser and sent only to that provider to authenticate your own requests. We never see it.</li>
+      <li><strong>An optional cloud provider API key</strong>: Groq, OpenAI, OpenRouter, or a custom OpenAI-compatible endpoint you choose to add. It is stored only on this device (it is not synced to your Google account) and sent only to that provider to authenticate your own requests. We never see it.</li>
       <li><strong>Usage counts</strong>: a local tally of how many rewrites you've done and which styles. It is stored on your device and never leaves your machine.</li>
     </ul>
 
@@ -77,12 +78,14 @@
       <li>No accounts, sign-ups, or logins.</li>
       <li>No analytics, telemetry, tracking pixels, or advertising.</li>
       <li>No selling or sharing of data with third parties.</li>
-      <li>No collection of browsing history or page content beyond the specific text you choose to rewrite.</li>
+      <li>No collection of browsing history or page content beyond the specific text you choose to act on.</li>
+      <li>No requests to any other server: Proofr loads no fonts, scripts, or images from the web. The only network requests it makes are to the cloud provider you set up, when you ask for a rewrite.</li>
     </ul>
 
     <h2>Permissions, and why they're needed</h2>
     <ul>
-      <li><strong>Context menus &amp; scripting / host access</strong>: to add the right-click "Proofr" option, show results on the page you're using, and reach the cloud provider you choose.</li>
+      <li><strong>Context menus, active tab &amp; scripting</strong>: to add the right-click "Proofr" option and keyboard shortcut, and show the result on the page you're using. Proofr only gets access to a page when you use it there.</li>
+      <li><strong>Access to websites (optional, off by default)</strong>: requested only if you turn on hover actions (so the hover icon can appear on pages), or if you set up a custom endpoint (access to that one address only). You can turn either off and Proofr removes the access.</li>
       <li><strong>Storage</strong>: to remember your settings and optional API key in your browser.</li>
       <li><strong>Clipboard</strong>: to copy a rewrite when you click "Copy".</li>
       <li><strong>Side panel</strong>: to show the Proofr panel when you click the toolbar icon.</li>

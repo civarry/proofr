@@ -1,7 +1,7 @@
 // dom-scan.js — shared "find a sensible text block" logic.
-// Used by hover-assist.js (single block under the cursor) and page-translate.js
-// (every translatable block on the page). Loaded in every page's isolated world
-// via manifest content_scripts, before hover-assist.js.
+// Used by hover-assist.js to find the block under the cursor. Loaded only on
+// pages where hover actions are on (registered by background.js), before
+// hover-assist.js.
 (function () {
   if (typeof self === 'undefined' || self.SR_DOM) return;
 
@@ -15,7 +15,7 @@
     'SVG', 'CANVAS', 'IFRAME', 'VIDEO', 'AUDIO', 'CODE', 'PRE',
   ]);
   const UNSAFE_TO_REPLACE_TAGS = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'IMG', 'SVG', 'IFRAME', 'VIDEO', 'AUDIO']);
-  const OWN_UI_SELECTOR = '#smart-rewrite-modal, .sr-hover-icon, .sr-hover-popover, .sr-page-translate-block, .sr-page-translate-pill, .sr-loading-toast, .sr-success-notification';
+  const OWN_UI_SELECTOR = '#smart-rewrite-modal, .sr-hover-icon, .sr-hover-popover, .sr-loading-toast, .sr-success-notification';
   const MIN_TEXT_LENGTH = 12; // skip nav crumbs, single words, icon labels
 
   function isOwnUI(el) {
@@ -159,28 +159,5 @@
     return null;
   }
 
-  // Enumerate every eligible block under root (default: whole page) for full-page translate.
-  // Known v1 tradeoff: hasBlockDescendant() re-walks children per candidate, which is
-  // fine for typical article/page sizes but not optimized for very large DOMs.
-  function collectAllBlocks(root) {
-    root = root || document.body;
-    const blocks = [];
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
-      acceptNode(el) {
-        if (SKIP_TAGS.has(el.tagName) || isOwnUI(el) || isEditableContext(el)) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    let el = walker.currentNode;
-    while (el) {
-      if (isEligibleContainer(el)) {
-        const block = toBlock(el);
-        if (block) blocks.push(block);
-      }
-      el = walker.nextNode();
-    }
-    return blocks;
-  }
-
-  self.SR_DOM = { resolveBlock, collectAllBlocks, isSimpleBlock, isVisible, textToFragment };
+  self.SR_DOM = { resolveBlock, isSimpleBlock, isVisible, textToFragment };
 })();

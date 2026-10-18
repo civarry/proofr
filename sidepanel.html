@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Proofr</title>
@@ -371,6 +371,24 @@
       margin-bottom: 6px;
     }
     .toggle-row b { display: block; font-weight: 600; margin-bottom: 2px; }
+
+    /* Download progress for a first on-device run, inside a pending card. */
+    .status-text { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 8px; }
+
+    /* One-time rating ask under the newest result. */
+    .rate-line {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+      margin: 4px 0 12px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      font-size: 12px; color: var(--ink-soft);
+    }
+    .rate-line span { flex: 1 1 180px; }
+    .rate-line a { color: var(--ink); font-weight: 600; }
+    .rate-line button { background: none; border: none; padding: 0; font-size: 12px; color: var(--ink-faint); cursor: pointer; }
+    .rate-line button:hover { color: var(--ink-soft); }
     .toggle-row .settings-hint { display: block; margin: 0; }
     .toggle-row input { flex: none; margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
 
@@ -695,6 +713,21 @@
       <div class="saved-toast" id="savedToast">✓ Saved</div>
 
       <div class="settings-body">
+        <!-- First-install tab only (sidepanel.html?welcome=1). -->
+        <div class="setup-card hidden" id="welcomeCard">
+          <b>Proofr is installed</b>
+          <p>Select text on any page, right-click, and choose <b>Proofr</b>. Or press <b>Alt+Shift+P</b> to proofread the selection. Click the Proofr icon in the toolbar to open this panel any time.</p>
+          <p>Check the setup below, then close this tab.</p>
+        </div>
+
+        <!-- The device can run on-device AI but hasn't downloaded the model yet. -->
+        <div class="setup-card hidden" id="deviceSetupCard">
+          <b>On-device AI needs a one-time setup</b>
+          <p>Your Chrome can run Proofr privately on this computer. It first downloads Chrome's AI model, which is large and may take a while on a slow connection.</p>
+          <button type="button" class="btn-solid" id="btnDeviceSetup">Set up on-device AI</button>
+          <p class="settings-hint" id="deviceSetupStatus" role="status"></p>
+        </div>
+
         <!-- Shown only when nothing can run yet (no on-device AI, no key).
              Answers "why isn't this working" before asking for anything. -->
         <div class="setup-card hidden" id="setupCard">
@@ -768,7 +801,7 @@
         <label class="toggle-row" for="hoverToggle">
           <span>
             <b>Hover actions</b>
-            <span class="settings-hint">Show a small Proofr icon when you rest the mouse on a paragraph, to summarize, simplify, or translate text you're reading.</span>
+            <span class="settings-hint">Show a small Proofr icon when you rest the mouse on a paragraph, to summarize, simplify, or translate text you're reading. Chrome will ask to let Proofr read pages. Applies to pages you open or reload after turning it on.</span>
           </span>
           <input type="checkbox" id="hoverToggle">
         </label>
