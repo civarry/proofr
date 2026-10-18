@@ -215,7 +215,8 @@ async function refreshProviderPill() {
     runnable = deviceReady || hasKey;
   }
 
-  refs.providerPill.classList.toggle('connected', runnable);
+  // Green means ready now; a model still waiting for its download isn't.
+  refs.providerPill.classList.toggle('connected', runnable && !(deviceNeedsSetup && !hasKey && engine !== 'cloud'));
   refs.providerPillText.textContent = label;
   refs.setupCard.classList.toggle('hidden', deviceReady || hasKey);
   refs.deviceSetupCard.classList.toggle('hidden', !(deviceNeedsSetup || deviceSetupRunning));
@@ -864,6 +865,7 @@ async function maybeShowRatePrompt() {
     line.remove();
   });
   refs.thread.appendChild(line);
+  refs.thread.scrollTop = refs.thread.scrollHeight;
 }
 
 // Delegated: one listener handles copy/redo/retry for every turn, present or future.
