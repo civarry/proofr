@@ -5,6 +5,8 @@
 *.zip
 /screenshots/
 /store-screenshots/
+/store/captures/
+/store/frames/
 
 # Internal store-listing notes (keep local, not public)
 STORE_LISTING.md

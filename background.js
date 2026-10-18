@@ -147,6 +147,15 @@ async function syncHoverScripts() {
   if (srHoverAssist && !granted) await chrome.storage.sync.set({ srHoverAssist: false });
 }
 
+async function dropLegacyHostAccess() {
+  const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
+  if (srHoverAssist) return;
+  const { origins = [] } = await chrome.permissions.getAll();
+  // Only origins in optional_host_permissions can be removed; the old
+  // api.groq.com grant isn't declared anymore, so it's left to Chrome.
+  if (origins.includes('<all_urls>')) await chrome.permissions.remove({ origins: ['<all_urls>'] });
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'sync' && changes.srHoverAssist) syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
 });
@@ -187,6 +196,13 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   });
 
   await migrateKeysToLocal().catch((e) => console.warn('Key migration:', e?.message || e));
+
+  // Versions up to 1.2.4 required access to every site; Chrome keeps that
+  // grant across the update even though it's now optional. Give it back
+  // unless the user has hover actions on (the only feature that uses it).
+  if (details.reason === 'update') {
+    await dropLegacyHostAccess().catch((e) => console.warn('Host access cleanup:', e?.message || e));
+  }
   await syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
 
   // First install: the side panel can't open without a click, so show the
@@ -313,14 +329,16 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } =
     }
 
     // Remember exactly where the selection was now, not when the result
-    // arrives: the user may click elsewhere during a slow rewrite.
-    await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text] });
+    // arrives: the user may click elsewhere, or start another rewrite, during
+    // a slow one. Each request keeps its own target, keyed by id.
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
     inject(tabId, showLoadingModal, [text, tone, lang]);
 
     const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang);
     await StatsManager.updateStats(tone);
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId]);
   } catch (error) {
     console.warn('Rewrite failed:', error?.message || error);
     let message = error.message || 'Something went wrong.';
@@ -369,16 +387,16 @@ function readSelectionText() {
   return String(window.getSelection() || '');
 }
 
-function captureReplaceTarget(originalText) {
+function captureReplaceTarget(originalText, requestId) {
   const el = document.activeElement;
-  window.__srTarget = null;
+  const targets = window.__srTargets || (window.__srTargets = new Map());
   if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.selectionStart !== el.selectionEnd) {
-    window.__srTarget = { kind: 'field', el, start: el.selectionStart, end: el.selectionEnd, original: originalText };
+    targets.set(requestId, { kind: 'field', el, start: el.selectionStart, end: el.selectionEnd, original: originalText });
     return;
   }
   const sel = window.getSelection();
   if (el && el.isContentEditable && sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-    window.__srTarget = { kind: 'editable', el, range: sel.getRangeAt(0).cloneRange(), original: originalText };
+    targets.set(requestId, { kind: 'editable', el, range: sel.getRangeAt(0).cloneRange(), original: originalText });
   }
 }
 
@@ -400,19 +418,22 @@ function showLoadingModal(originalText, tone, targetLang) {
 // so the page's editor (React, Lexical, ProseMirror…) sees a normal input
 // event and Ctrl+Z restores the original. Only replaces when the captured
 // text is still there; otherwise the result opens in the modal instead.
-function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang) {
-  const target = window.__srTarget;
-  window.__srTarget = null;
+function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId) {
+  const targets = window.__srTargets;
+  const target = targets && targets.get(requestId);
+  if (targets) targets.delete(requestId);
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   let replaced = false;
+  let undoable = false;
 
   try {
     if (target && target.kind === 'field' && target.el.isConnected
         && norm(target.el.value.slice(target.start, target.end)) === norm(target.original)) {
       target.el.focus();
       target.el.setSelectionRange(target.start, target.end);
-      replaced = document.execCommand('insertText', false, rewrittenText);
+      undoable = replaced = document.execCommand('insertText', false, rewrittenText);
       if (!replaced) {
+        // Not undoable, so the toast below doesn't promise undo for this path.
         target.el.setRangeText(rewrittenText, target.start, target.end, 'end');
         target.el.dispatchEvent(new Event('input', { bubbles: true }));
         replaced = true;
@@ -424,7 +445,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(target.range);
-      replaced = document.execCommand('insertText', false, rewrittenText);
+      undoable = replaced = document.execCommand('insertText', false, rewrittenText);
     }
   } catch (_) {
     replaced = false;
@@ -433,7 +454,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   if (replaced) {
     if (window.SmartRewriteModal) {
       const undoKey = /Mac/i.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
-      window.SmartRewriteModal.showSuccess(`Text replaced. ${undoKey} to undo.`);
+      window.SmartRewriteModal.showSuccess(undoable ? `Text replaced. ${undoKey} to undo.` : 'Text replaced.');
     }
     return;
   }
