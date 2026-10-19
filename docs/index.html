@@ -7,7 +7,7 @@
   <meta name="description" content="A free Chrome extension that proofreads, rephrases in 10 tones, summarizes, and translates text you select. Uses Chrome's built-in AI on your device when your computer supports it. No account.">
   <style>
     :root {
-      --ink: #26251f; --muted: #57554e; --faint: #8a887f;
+      --ink: #26251f; --brand: #1D64D8; --brand-dark: #154EAD; --muted: #57554e; --faint: #8a887f;
       --line: #e4e2db; --paper: #faf9f7; --canvas: #f3f2ee; --accent: #2a2926;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,7 +19,7 @@
     }
     .wrap { max-width: 560px; padding: 48px 24px; text-align: center; }
     .logo {
-      width: 56px; height: 56px; border-radius: 15px; background: var(--ink);
+      width: 56px; height: 56px; border-radius: 15px; background: var(--brand);
       color: var(--paper); display: inline-flex; align-items: center; justify-content: center;
       margin-bottom: 20px;
     }
@@ -32,7 +32,8 @@
       padding: 11px 20px; border-radius: 10px; border: 1px solid var(--line);
       color: var(--ink); background: var(--canvas);
     }
-    a.btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    a.btn.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+    a.btn.primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
     .why { margin-top: 48px; text-align: left; }
     .why h2 { font-size: 18px; margin-bottom: 10px; }
     .why p, .why li { font-size: 14px; line-height: 1.6; color: var(--muted, #57554e); }

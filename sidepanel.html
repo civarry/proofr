@@ -13,15 +13,20 @@
       --line:         #E6E3DC;
       --line-soft:    #F1EFEA;
       --line-focus:   #C9C5BB;
-      --user-bubble:  #F0EDE6;
-      --accent:       #23221E;
-      --accent-hover: #000000;
+      --user-bubble:  #E6EEFB;
+      /* Brand accent: Ocean blue. Primary actions, the active mode, the logo,
+         and a light tint for the user's own messages. Green stays "fixed". */
+      --accent:       #1D64D8;
+      --accent-hover: #154EAD;
       --accent-fg:    #FFFFFF;
+      --accent-tint:  #E6EEFB;
+      --accent-tint-line: #C9D9F5;
+      --accent-ink:   #154EAD;
       --live:         #3DA35D;
       --live-bg:      #E7F3EA;
       --live-border:  #CBE5D3;
       --live-ink:     #276B41;
-      --select-bg:    #F1EFEA;
+      --select-bg:    #E6EEFB;
       --error:        #B4443A;
       --error-bg:     #F7ECE8;
       --radius:       12px;
@@ -47,15 +52,18 @@
         --line:         #34322C;
         --line-soft:    #2A2925;
         --line-focus:   #4A473F;
-        --user-bubble:  #2E2C27;
-        --accent:       #EDEBE5;
-        --accent-hover: #FFFFFF;
-        --accent-fg:    #1B1A17;
+        --user-bubble:  #1C2A44;
+        --accent:       #7EA8F8;
+        --accent-hover: #A9C5FA;
+        --accent-fg:    #0F1B33;
+        --accent-tint:  #1C2A44;
+        --accent-tint-line: #2C4170;
+        --accent-ink:   #A9C5FA;
         --live:         #4CC173;
         --live-bg:      #1F3326;
         --live-border:  #2E4A37;
         --live-ink:     #8FD3A6;
-        --select-bg:    #2E2C27;
+        --select-bg:    #1C2A44;
         --error:        #E58A80;
         --error-bg:     #3A2320;
         --shadow-lg:    0 10px 28px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
@@ -228,7 +236,7 @@
       border-bottom: 1px solid var(--line-soft);
       font-family: var(--sans); font-size: 12px; color: var(--ink-soft);
     }
-    .assistant-head .tag { color: var(--ink); font-weight: 600; font-size: 13px; }
+    .assistant-head .tag { color: var(--accent-ink); font-weight: 600; font-size: 13px; }
     .assistant-body {
       padding: 10px 12px;
       font-size: 13px; line-height: 1.55; color: var(--ink);
@@ -289,10 +297,10 @@
       height: 24px;
       padding: 0 9px 0 8px;
       border-radius: 999px;
-      background: var(--line-soft);
-      border: 1px solid var(--line);
+      background: var(--accent-tint);
+      border: 1px solid var(--accent-tint-line);
       font-family: var(--sans); font-size: 12px; font-weight: 600;
-      color: var(--ink); white-space: nowrap;
+      color: var(--accent-ink); white-space: nowrap;
     }
     .mode-tag:hover { background: var(--line); }
 
@@ -300,8 +308,12 @@
     .retone { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
     .retone-label { font-size: 11px; color: var(--ink-faint); }
     .retone .chip-btn { padding: 4px 8px; }
-    .mode-tag svg { width: 10px; height: 10px; color: var(--ink-faint); }
-    .mode-tag .slash { color: var(--ink-faint); }
+    .retone .chip-btn:hover { border-color: var(--accent-tint-line); color: var(--accent-ink); background: var(--accent-tint); }
+    /* Copy is the main action on a result. */
+    .chip-btn[data-action="copy"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+    .chip-btn[data-action="copy"]:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+    .mode-tag svg { width: 10px; height: 10px; color: var(--accent); }
+    .mode-tag .slash { color: var(--accent); }
 
     .composer textarea {
       flex: none;
@@ -759,7 +771,7 @@
     }
 
     /* Keyboard focus: visible, in the product's ink instead of the browser's blue. */
-    :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </style>
 </head>
 <body>

@@ -8,7 +8,7 @@
     /* Same tokens as sidepanel.html, so the first page a user sees matches the panel. */
     :root {
       --paper: #FAF9F7; --card: #FFFFFF; --ink: #23221E; --ink-soft: #5E5B53; --ink-faint: #6C695F;
-      --line: #E6E3DC; --line-soft: #F1EFEA; --accent: #23221E; --accent-fg: #FFFFFF;
+      --line: #E6E3DC; --line-soft: #F1EFEA; --accent: #1D64D8; --accent-fg: #FFFFFF;
       --live: #3DA35D; --live-bg: #E7F3EA; --live-ink: #276B41; --error: #B4443A;
       --radius: 12px;
       --mono: "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace;
@@ -17,7 +17,7 @@
     @media (prefers-color-scheme: dark) {
       :root {
         --paper: #1B1A17; --card: #24231F; --ink: #EDEBE5; --ink-soft: #C2BEB3; --ink-faint: #A8A498;
-        --line: #34322C; --line-soft: #2A2925; --accent: #EDEBE5; --accent-fg: #1B1A17;
+        --line: #34322C; --line-soft: #2A2925; --accent: #7EA8F8; --accent-fg: #0F1B33;
         --live: #4CC173; --live-bg: #1F3326; --live-ink: #8FD3A6; --error: #E58A80;
         color-scheme: dark;
       }
@@ -60,7 +60,7 @@
     footer a { color: var(--ink-soft); }
 
     /* Keyboard focus: visible, in the product's ink instead of the browser's blue. */
-    :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </style>
 </head>
 <body>
