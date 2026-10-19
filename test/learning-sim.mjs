@@ -60,10 +60,10 @@ const PROFILES = {
     must: ['letters'], may: ['order', 'ie-ei'], focus: ['spelling'],
     sentences: [
       'I will send [teh|the] slides to Priya after lunch.',
-      'Did you [recieve|receive] the invoice for order 5521?',
+      'Did you [recieve|receive] the invoice for order {5521|5512}?',
       'Let us meet [tomorow|tomorrow] at the usual place.',
       'This is a good [ocasion|occasion] to review the plan.',
-      'Please check [adn|and] confirm by 5pm.',
+      'Please check [adn|and] confirm on {exampel.com|example.com} by 5pm.',
       'I [beleive|believe] the numbers on page 4 are off.',
       'We [definately|definitely] need more time.',
       'The [adress|address] is on {Jhon|John}\'s card.',
@@ -79,6 +79,7 @@ const PROFILES = {
       '[the|The] new build is up at build.example.com/v2 now.',
       'ok, [we|We] will talk on [monday|Monday].',
       'Do you think [i|I] should reply to Sofia?',
+      '[please|Please] send it before [june|June].',
     ],
   },
   careful: {
@@ -102,7 +103,7 @@ const PROFILES = {
       'Thanks for [you\'re|your] patience with this.',
       'This one is cheaper [then|than] the last quote.',
       'see [u|you] at the standup.',
-      '[their|They\'re] moving the deadline to the 20th.',
+      'I hear [their|they\'re] moving the deadline to the 20th.',
     ],
   },
 };
@@ -115,6 +116,13 @@ const NOISE_KEYS = ['than→then', 'affect→effect'];
 const SR_DAYS_MONTHS_TEST = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']);
 const NAMES = ['maria', 'kenji', 'priya', 'jhon', 'john', 'ahmed', 'sofia', 'elena', 'omar', 'lisbon'];
 
+// Every word Practice puts around the user's mistakes, checked by hand for spelling.
+// A new phrase in constants.js fails here until its words are reviewed and added.
+const FILLER = new Set(`quick update just so you know for tomorrow i wrote in the email please check again note says
+think old version works we make call today file open on my laptop room booked yet link work me update go out time
+package arrived going to rain later dog wagged tail running a bit late sent draft plan now sending it team shared slides
+notes are over welcome join thanks help this is easier than looks eat first and then talk takes hour need new were
+hoping more meeting was short hope can see starts`.split(/\s+/));
 const fill = (s, wrong, pick) => s.replace(/\[([^|\]]*)\|([^\]]*)\]/g, (_, a, b) => (wrong() ? (pick.push(`${a}|${b}`), a) : b))
   .replace(/\{([^|}]*)\|([^}]*)\}/g, (_, a, b) => (wrong() ? a : b));
 const words = (t) => String(t).match(/[\p{L}\p{N}]+/gu) || [];
@@ -218,6 +226,8 @@ for (const run of runs) {
 
     // (d) practice: the prompt fails, the answer passes, and its only errors are the user's own.
     for (const it of practice) {
+      const own = new Set(it.targets.flatMap((t) => [...words(fold(t.from)), ...words(fold(t.to))]));
+      for (const w of words(fold(it.answer))) assert.ok(own.has(w) || FILLER.has(w), `${tag}: unreviewed word "${w}" in "${it.answer}"`);
       const onPrompt = SR_checkPractice(it, it.prompt);
       assert.ok(onPrompt.right.length === 0 && onPrompt.missed.length === it.targets.length, `${tag}: prompt passes: ${it.prompt}`);
       assert.deepEqual(SR_checkPractice(it, it.answer).missed, [], `${tag}: answer fails: ${it.answer}`);
@@ -243,7 +253,8 @@ for (const run of runs) {
   const first = rate(end.weeks.slice(0, 2)), last = rate(end.weeks.slice(6));
   const improving = profile.chance(7) < profile.chance(0);
   if (improving) assert.ok(last < first * 0.5, `${name}: per100 ${first.toFixed(1)} → ${last.toFixed(1)} should fall`);
-  else assert.ok(last > first * 0.7, `${name}: per100 ${first.toFixed(1)} → ${last.toFixed(1)} should stay flat`);
+  else if (profile.chance(0) >= 0.1) assert.ok(last > first * 0.7, `${name}: per100 ${first.toFixed(1)} → ${last.toFixed(1)} should stay flat`);
+  else assert.ok(first < 1 && last < 1, `${name}: a careful writer stays under 1 per 100 words`);
   if (name === 'apostrophe') {
     assert.ok(end.mastered.length > 0, 'apostrophe: words are mastered after clean weeks');
   }

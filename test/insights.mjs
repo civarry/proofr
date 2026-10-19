@@ -15,7 +15,7 @@ const NOW = new Date(2026, 9, 19, 12).getTime(); // local noon, so day keys don'
 const before = 'hi team, wanted to give a fast update. the launch is basically on track but we hit a small snag with the payment thing, its being looked at rn and should be fixed by eod. will keep u posted.';
 const after = "Hi team, wanted to give a fast update. The launch is basically on track, but we hit a small snag with the payment thing. It's being looked at right now and should be fixed by EOD. Will keep you posted.";
 assert.deepEqual(SR_extractCorrections(before, after), [
-  { from: 'hi', to: 'Hi' }, { from: 'the', to: 'The' }, { from: '', to: ',' }, { from: ',', to: '.' },
+  { from: 'hi', to: 'Hi' }, { from: 'the', to: 'The' }, { from: '', to: ',' }, { from: ',', to: '.' }, { from: 'its', to: "It's" },
   { from: 'rn', to: 'right now' }, { from: 'will', to: 'Will' }, { from: 'u', to: 'you' },
 ]);
 // Changed punctuation at the end is its own pair, not glued to the word.
@@ -34,6 +34,10 @@ assert.deepEqual(pairs('Please ask john about it.', 'Please ask John about it.')
 assert.deepEqual(pairs('Jhon said hi.', 'John said hi.'), [], 'a name at a sentence start');
 assert.deepEqual(pairs('see you on friday.', 'see you on Friday.'), ['friday→Friday'], 'a weekday is not a name');
 assert.deepEqual(pairs('i think so.', 'I think so.'), ['i→I'], '"I" is not a name');
+assert.deepEqual(pairs("their late. ok", "They're late. ok"), ["their→They're"], 'a capitalized contraction is not a name');
+assert.deepEqual(pairs('youre right.', "You're right."), ["youre→You're"]);
+assert.deepEqual(pairs("ok. were late", "ok. We're late"), ["were→We're"]);
+assert.equal(SR_buildPractice({ working: [{ from: "we're", to: "We're", n: 3, kind: 'capitalization' }] }).length, 0, 'a sentence-start capital is not practiced mid-sentence');
 assert.deepEqual(pairs('meet at 3pm today.', 'meet at 4pm today.'), [], 'a number');
 assert.deepEqual(pairs('the code is 12 34 ok', 'the code is 12 35 ok'), [], 'digits on one side');
 assert.deepEqual(pairs('mail jonh.smith@gmial.com now', 'mail john.smith@gmail.com now'), [], 'an email address');
@@ -152,6 +156,7 @@ assert.equal(rule('a', 'an', 'grammar'), 'Use "an" before a vowel sound: an hour
 assert.equal(rule('friday', 'Friday', 'capitalization'), 'Days and months start with a capital: Friday, March.');
 assert.equal(rule('i', 'I', 'capitalization'), '"I" is always a capital.');
 assert.equal(rule('the', 'The', 'capitalization'), 'A sentence starts with a capital letter.');
+assert.equal(rule('please', 'Please', 'capitalization'), 'A sentence starts with a capital letter.', 'not the days rule');
 assert.equal(rule('recieve', 'receive', 'spelling'), 'Spelled r-e-c-e-i-v-e.');
 assert.equal(rule('rn', 'right now', 'other'), null);
 assert.equal(rule('', ',', 'punctuation'), null);
@@ -224,6 +229,7 @@ assert.deepEqual(SR_checkPractice(item, "it's its, they're, friday").right, ["th
   assert.deepEqual(habits([w('friday', 'Friday', 2), w('march', 'March', 2), w('the', 'The', 2), w('we', 'We', 2)]).map((h) => h.id), ['days', 'sentence-start']);
   assert.deepEqual(habits([w('we was', 'we were', 2), w('was', 'were', 2), w('he have', 'he has', 1), w('is', 'are', 2)]).map((h) => h.id), ['agreement']);
   assert.deepEqual(habits([w('then', 'than', 1), w('your', "you're", 1), w('a', 'an', 1)]), [], 'one-off fixes (the model may be wrong) never count');
+  assert.deepEqual(habits([w('dont', "don't", 1), w('cant', "can't", 1)]), [], 'two one-off fixes are not 2 pairs');
   assert.deepEqual(habits([w('rn', 'right now', 5), w('', ',', 9)]), [], 'nothing qualifies: nothing generic');
   const many = habits([w('dont', "don't", 4), w('im', "I'm", 2), w('i', 'I', 3), w('their', 'there', 3), w('then', 'than', 3), w('your', "you're", 3)]);
   assert.equal(many.length, 3, 'at most 3');

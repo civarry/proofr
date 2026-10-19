@@ -1270,7 +1270,7 @@ async function renderProgress() {
   refs.progAxis.hidden = !spark;
   const rated = view.weeks.filter((w) => w.per100 != null);
   refs.progSpark.setAttribute('aria-label', rated.length ? `Mistakes per 100 words by week: ${rated.map((w) => w.per100).join(', ')}` : '');
-  refs.progBasis.textContent = `Based on ${fmt(view.total.proofreads)} proofread${view.total.proofreads === 1 ? '' : 's'}, ${fmt(view.total.words)} words. The rate also moves when you switch AI, since each one catches different things.`;
+  refs.progBasis.textContent = `Based on ${fmt(view.total.proofreads)} proofread${view.total.proofreads === 1 ? '' : 's'}, ${fmt(view.total.words)} words. Switching AI can move it too.`;
 
   // Focus
   const focus = pickFocus(view);
@@ -1283,6 +1283,16 @@ async function renderProgress() {
       : `Most of your recent fixes are like ${list}. Watch for these the next time you write.`;
     refs.btnPractice.hidden = !focus.canPractice;
   }
+
+  // Your patterns: habits read from this person's own repeated fixes
+  // (SR_habits), so two people's Progress tabs read differently.
+  const habits = typeof SR_habits === 'function' ? SR_habits(view) : [];
+  refs.progHabitsCard.hidden = !habits.length;
+  refs.progHabits.innerHTML = habits.map((h) => {
+    // Examples the label already names ('You write "i" for "I"') add nothing.
+    const eg = h.examples.slice(0, 3).filter((w) => !h.label.includes(`"${w}"`));
+    return `<div class="prog-row"><div><span class="word">${escapeHtml(h.label)}</span>${eg.length ? `<span class="eg">${eg.map(escapeHtml).join(', ')}</span>` : ''}</div></div>`;
+  }).join('');
 
   // Mastered / Still working on
   const mastered = wordPairs(view.mastered), working = wordPairs(view.working);
@@ -1501,7 +1511,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'progBody',
     'progRate', 'progTrend', 'progSpark', 'progAxis', 'progBasis', 'progFocus', 'progFocusTitle', 'progFocusText', 'btnPractice',
-    'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
+    'progHabitsCard', 'progHabits', 'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
     'btnTips', 'insTipsStatus', 'insTips', 'btnClearInsights', 'insightsToggle', 'coachToggle',
     'practicePanel', 'btnPracticeBack', 'practiceTitle', 'practiceCard', 'practicePrompt', 'practiceInput',
     'btnPracticeCheck', 'btnPracticeSkip', 'practiceResult', 'practiceScore', 'practiceList',
