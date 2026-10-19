@@ -47,6 +47,7 @@
   .f1 .stage img{width:600px}
   .panel{position:absolute;right:120px;top:20px;width:400px}
   .page{position:absolute;right:40px;top:120px;width:720px}
+  .dialog{position:absolute;right:56px;top:150px;width:660px}
   /* Chrome's native context menu can't be captured; this replica uses the real menu titles from constants.js. */
   .ctx{position:absolute;background:#fff;border:1px solid #d6d4cc;border-radius:8px;box-shadow:0 12px 32px -8px rgba(38,37,31,.35);padding:6px 0;font-size:13px;color:#202124;min-width:210px}
   .ctx div{padding:6px 18px;display:flex;justify-content:space-between;gap:24px;white-space:nowrap}
@@ -65,16 +66,16 @@
 <div class="frame f1">
   <div class="brand"><span class="logo"></span><span class="brandname">Proofr</span></div>
   <div class="top">
-    <div class="headline">Fix your writing<br>in one click.</div>
-    <div class="sub">Proofread, rewrite, and translate text in any text box. Runs on-device when your Chrome supports it, or with your own free Groq key.</div>
-    <div class="pillrow"><span class="pill">No account</span><span class="pill">Free</span></div>
+    <div class="headline">Fix it where<br>you wrote it.</div>
+    <div class="sub">Select text in any box and press Alt+Shift+P. Proofr corrects it in place, tells you how many things it fixed, and Ctrl+Z puts it back.</div>
+    <div class="pillrow"><span class="pill">No account</span><span class="pill">Shows what changed</span></div>
   </div>
   <div class="stage">
     <img class="shot" src="captures/field-before.png" alt="">
     <div class="arrow">↓</div>
     <img class="shot" src="captures/field-after.png" alt="">
   </div>
-  <div class="caption">Proofread keeps your wording and voice. Ctrl/Cmd+Z puts the original back.</div>
+  <div class="caption">Proofread makes the smallest change it can, so your words stay yours.</div>
 </div>
 
 <!-- ============ FRAME 2: right-click menu ============ -->
@@ -99,7 +100,7 @@
   <div class="brand"><span class="logo"></span><span class="brandname">Proofr</span></div>
   <div class="copy">
     <div class="headline" style="font-size:44px">Paste it, pick<br>a mode, done.</div>
-    <div class="sub">The side panel keeps a local history of your rewrites, one independent request each.</div>
+    <div class="sub">For text that isn't in a text box, the side panel takes anything you paste. History stays on this computer.</div>
   </div>
   <img class="shot panel" src="captures/panel-result.png" alt="">
 </div>
@@ -109,27 +110,28 @@
   <div class="brand"><span class="logo"></span><span class="brandname">Proofr</span></div>
   <div class="copy">
     <div class="headline" style="font-size:44px">Honest about<br>what runs where.</div>
-    <div class="sub">If your computer can't run Chrome's on-device AI, Proofr says so and walks you through a free Groq key in about a minute.</div>
+    <div class="sub">On computers that can run Chrome's built-in AI, your text stays on your device. If yours can't, Proofr says so and helps you connect a provider you choose, or a local model.</div>
   </div>
   <img class="shot panel" src="captures/panel-setup.png" alt="">
 </div>
 
-<!-- ============ FRAME 5: hover Summarize ============ -->
+<!-- ============ FRAME 5: what changed ============ -->
 <div class="frame">
   <div class="brand"><span class="logo"></span><span class="brandname">Proofr</span></div>
   <div class="copy" style="max-width:380px">
-    <div class="headline" style="font-size:44px">Summarize what<br>you're reading.</div>
-    <div class="sub">Optional hover actions: Summarize, Plain English, and Translate on any paragraph. Off until you turn them on.</div>
+    <div class="headline" style="font-size:44px">See exactly<br>what changed.</div>
+    <div class="sub">Removed words are struck through and added words highlighted. A Proofread that changes too much isn't pasted in until you check it.</div>
   </div>
-  <img class="shot page" src="captures/hover-result.png" alt="">
+  <img class="shot dialog" src="captures/review-diff.png" alt="">
 </div>
 
 <script src="../constants.js"></script>
 <script>
   document.querySelectorAll('.logo').forEach((el) => { el.innerHTML = SR_LOGO_SVG; });
-  // The real context-menu titles (background.js builds the menu from SR_TONES).
+  // Same structure and titles as buildContextMenus() in background.js.
   document.getElementById('tones').innerHTML =
-    SR_TONES.map((t, i) => `<div${i === 0 ? ' class="on"' : ''}>${t.name}</div>`).join('') + '<hr><div>Settings…</div>';
+    SR_MENU_TOP.map((id, i) => `<div${i === 0 ? ' class="on"' : ''}>${SR_getToneName(id)}${i === 0 ? '  (Alt+Shift+P)' : ''}</div>`).join('')
+    + '<div>More <span>▸</span></div><hr><div>Open in Proofr panel</div><div>Settings…</div>';
 </script>
 </body>
 </html>

@@ -186,7 +186,8 @@ chrome.permissions.onAdded.addListener(() => { syncHoverScripts().catch(() => {}
 // The six modes people reach for most sit at the top; the rest are one level
 // down under "More" so the menu scans quickly. The first item shows the real
 // shortcut (blank if Chrome couldn't assign Alt+Shift+P on this machine).
-const MENU_TOP = ['grammar', 'professional', 'friendly', 'short', 'simple', 'translate'];
+// Shared with the store screenshot replica (store/screenshots.html) so the two can't drift.
+const MENU_TOP = SR_MENU_TOP;
 
 async function shortcutLabel() {
   const commands = await chrome.commands.getAll().catch(() => []);
@@ -373,7 +374,7 @@ async function handleHoverRewrite(message, sendResponse) {
     }
     const { text, provider: providerId } = await rewriteNow(message.text, message.tone, status, message.targetLang);
     await StatsManager.updateStats(message.tone);
-    sendResponse({ text, provider: providerId });
+    sendResponse({ text, provider: providerId, where: whereLabel(providerId, status.provider) });
   } catch (error) {
     sendResponse({ error: 'failed', message: error.message || 'Something went wrong.' });
   }
@@ -389,7 +390,7 @@ async function handleHoverAskAI(message, sendResponse) {
     }
     const text = await SR_askCloud(provider, message.text, message.instruction);
     await StatsManager.updateStats('ask');
-    sendResponse({ text, provider: provider.id });
+    sendResponse({ text, provider: provider.id, where: whereLabel(provider.id, provider) });
   } catch (error) {
     sendResponse({ error: 'failed', message: error.message || 'Something went wrong.' });
   }

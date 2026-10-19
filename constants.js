@@ -162,6 +162,10 @@ function SR_getTemperature(tone, boost = 0) {
 }
 
 // Listing reviews page, used by the one-time rate prompt (content.js, sidepanel.js).
+// The modes shown at the top of the right-click menu; the rest go under "More".
+// Shared so the store screenshot's menu replica can't drift from background.js.
+const SR_MENU_TOP = ['grammar', 'professional', 'friendly', 'short', 'simple', 'translate'];
+
 const SR_REVIEWS_URL = 'https://chromewebstore.google.com/detail/dfhooimjbdefdbabhppgloclhkjolhfg/reviews';
 
 // === Cloud providers ===
@@ -728,6 +732,7 @@ if (typeof self !== 'undefined') {
   self.SR_needsHostAccess = SR_needsHostAccess;
   self.SR_pickAvailableModel = SR_pickAvailableModel;
   self.SR_REVIEWS_URL = SR_REVIEWS_URL;
+  self.SR_MENU_TOP = SR_MENU_TOP;
   self.SR_chatCompletionsURL = SR_chatCompletionsURL;
   self.SR_modelsURL = SR_modelsURL;
   self.SR_chatModels = SR_chatModels;
