@@ -526,9 +526,11 @@
 
 /* Frames exactly the block a hover action would target — devtools-inspector
    style, so it's obvious what "scope" the icon/popover acts on. */
+/* Marks the paragraph the hover icon will act on. Thin and quiet: it shows
+   up on every paragraph the mouse rests on, so it mustn't shout. */
 .sr-hover-target {
-  outline: 2px dashed var(--sr-primary) !important;
-  outline-offset: 3px !important;
+  outline: 1px solid var(--sr-gray-300) !important;
+  outline-offset: 4px !important;
   border-radius: 4px;
 }
 

@@ -102,21 +102,6 @@
     .icon-btn:hover { background: var(--line-soft); color: var(--ink); }
     .icon-btn svg { width: 15px; height: 15px; display: block; }
 
-    /* ── Disclosure banner ──────────────────── */
-    .disclosure {
-      flex: none;
-      display: flex; align-items: flex-start; gap: 7px;
-      margin: 10px 14px 0;
-      padding: 8px 10px;
-      background: var(--line-soft);
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      font-size: 11px; line-height: 1.45;
-      color: var(--ink-soft);
-    }
-    .disclosure svg { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--ink-faint); }
-    .disclosure b { color: var(--ink); }
-
     /* ── Thread ─────────────────────────────── */
     .thread {
       flex: 1 1 auto;
@@ -130,12 +115,32 @@
 
     .thread-empty {
       flex: 1 1 auto;
-      display: flex; align-items: center; justify-content: center;
-      text-align: center;
-      font-size: 12.5px;
-      color: var(--ink-faint);
-      padding: 40px 20px;
+      display: flex; flex-direction: column; justify-content: center; gap: 14px;
+      font-size: 12.5px; line-height: 1.55;
+      color: var(--ink-soft);
+      padding: 24px 6px;
     }
+    .thread-empty h2 { font-size: 14px; font-weight: 650; color: var(--ink); }
+    .thread-empty ol { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+    .thread-empty kbd {
+      font-family: var(--mono); font-size: 11px;
+      padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--card);
+    }
+    .thread-empty .fine { font-size: 11.5px; color: var(--ink-faint); }
+
+    /* Settings a first-time user doesn't need, collapsed by default. */
+    .advanced { margin-top: 20px; }
+    .advanced > summary {
+      cursor: pointer; list-style: none;
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--ink-soft);
+      padding: 4px 0;
+    }
+    .advanced > summary::-webkit-details-marker { display: none; }
+    .advanced > summary::before { content: "▸"; display: inline-block; width: 12px; transition: transform .15s ease; }
+    .advanced[open] > summary::before { transform: rotate(90deg); }
+    .advanced-body { padding-top: 12px; }
+    .advanced-body #cloudSection { margin-top: 16px; }
 
     .turn { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; }
     .turn + .turn { border-top: 1px solid var(--line-soft); }
@@ -371,6 +376,12 @@
       margin-bottom: 6px;
     }
     .toggle-row b { display: block; font-weight: 600; margin-bottom: 2px; }
+
+    /* Local servers need no key: hide the key input, keep the Connect button. */
+    #keySection.keyless .key-input-wrap { display: none; }
+    #keySection.keyless .key-row { justify-content: flex-start; }
+    .cloud-select-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .cloud-select-tag { font-size: 10.5px; color: var(--ink-soft); }
 
     /* Download progress for a first on-device run, inside a pending card. */
     .status-text { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 8px; }
@@ -670,10 +681,6 @@
        header + back button) rather than an inline accordion — an accordion
        left the thread visible/scrollable underneath, which read as broken. -->
   <div class="panel-body">
-    <div class="disclosure">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-      <div><b>Each entry below is independent.</b> Proofr rewrites the text you give it. It doesn't read earlier entries. This list is just your history to revisit or copy from.</div>
-    </div>
 
     <div class="thread" id="thread"></div>
 
@@ -700,8 +707,8 @@
       </div>
     </div>
 
-    <!-- Settings: full-panel view, not an accordion. Covers the disclosure/
-         thread/composer above while open. -->
+    <!-- Settings: full-panel view, not an accordion. Covers the thread and
+         composer while open. -->
     <div id="settingsPanel" class="settings-panel hidden">
       <div class="settings-header">
         <button class="icon-btn" id="btnSettingsBack" type="button" aria-label="Back">
@@ -733,43 +740,48 @@
         <div class="setup-card hidden" id="setupCard">
           <b>On-device AI isn't available in this Chrome</b>
           <p>Proofr's built-in mode uses Chrome's own AI model, which only runs on some desktop computers. <a href="https://developer.chrome.com/docs/ai/get-started#hardware" target="_blank" rel="noopener">See Chrome's requirements</a>.</p>
-          <p>No problem: connect a free Groq key instead. It takes about a minute.</p>
+          <p>Connect any OpenAI-compatible AI provider below instead. Groq has a free tier and takes about a minute:</p>
           <ol>
             <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> and sign in.</li>
             <li>Click <b>Create API Key</b> and copy it.</li>
             <li>Paste it in the <b>API key</b> field below and press Save.</li>
           </ol>
+          <p>Running Ollama or LM Studio on this computer? Pick it under <b>AI provider</b>; no key needed.</p>
         </div>
 
-        <label>AI engine</label>
-        <div class="seg-control" id="engineSeg" role="group" aria-label="AI engine">
-          <button type="button" class="seg-btn" data-value="auto">Auto</button>
-          <button type="button" class="seg-btn" data-value="device">On-device</button>
-          <button type="button" class="seg-btn" data-value="cloud">Cloud</button>
-        </div>
-        <p class="settings-hint" id="engineHint"></p>
-
-        <div id="keySection">
-          <label>Cloud provider</label>
+        <div id="cloudSection">
+          <label>AI provider</label>
           <div class="cloud-select-wrap">
             <button type="button" class="cloud-select-btn" id="cloudServiceBtn">
               <span id="cloudServiceBtnLabel">Groq</span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
             </button>
-            <div class="cloud-select-menu hidden" id="cloudServiceMenu">
-              <div class="cloud-select-item" data-value="groq"><span>Groq</span></div>
-              <div class="cloud-select-item" data-value="openai"><span>OpenAI</span></div>
-              <div class="cloud-select-item" data-value="openrouter"><span>OpenRouter</span></div>
-              <div class="cloud-select-item" data-value="custom"><span>Custom (OpenAI-compatible)</span></div>
+            <div class="cloud-select-menu hidden" id="cloudServiceMenu" role="listbox">
             </div>
           </div>
+          <p class="settings-hint" id="providerNote"></p>
 
           <div id="customBaseURLRow" class="hidden" style="margin-top:10px;">
             <label for="customBaseURLInput">Base URL</label>
             <input type="text" id="customBaseURLInput" class="cloud-field" placeholder="https://your-endpoint.example.com/v1" autocomplete="off" spellcheck="false">
           </div>
 
-          <label for="cloudModelInput" style="margin-top:10px;">Model</label>
+          <div id="keySection">
+            <label for="apiKeyInput" id="apiKeyLabel" style="margin-top:12px;">API key</label>
+            <div class="key-row">
+              <div class="key-input-wrap">
+                <input type="password" id="apiKeyInput" autocomplete="off" spellcheck="false">
+                <button type="button" class="eye-btn" id="btnToggleKeyEye" aria-label="Show key"></button>
+              </div>
+              <button id="btnSaveKey" class="btn-outline" type="button">Change</button>
+            </div>
+            <div class="settings-actions">
+              <p class="settings-hint saved-line" id="keyHint"></p>
+              <button id="btnClearKey" class="link-danger hidden" type="button">Remove</button>
+            </div>
+          </div>
+
+          <label for="cloudModelInput" style="margin-top:12px;">Model</label>
           <div class="model-field-wrap">
             <input type="text" id="cloudModelInput" class="cloud-field" placeholder="model name" autocomplete="off" spellcheck="false">
             <button type="button" class="model-browse-btn" id="btnBrowseModels" aria-label="Browse available models" title="Browse available models">
@@ -783,29 +795,31 @@
             <div class="model-menu-list" id="modelMenuList"></div>
           </div>
 
-          <label for="apiKeyInput" style="margin-top:14px;">API key</label>
-          <div class="key-row">
-            <div class="key-input-wrap">
-              <input type="password" id="apiKeyInput" autocomplete="off" spellcheck="false">
-              <button type="button" class="eye-btn" id="btnToggleKeyEye" aria-label="Show key" tabindex="-1"></button>
-            </div>
-            <button id="btnSaveKey" class="btn-outline" type="button">Change</button>
-          </div>
-          <div class="settings-actions">
-            <p class="settings-hint saved-line" id="keyHint"></p>
-            <button id="btnClearKey" class="link-danger hidden" type="button">Remove</button>
-          </div>
         </div>
 
         <div class="settings-section-label">On web pages</div>
         <label class="toggle-row" for="hoverToggle">
           <span>
             <b>Hover actions</b>
-            <span class="settings-hint">Show a small Proofr icon when you rest the mouse on a paragraph, to summarize, simplify, or translate text you're reading. Chrome will ask to let Proofr read pages. Applies to pages you open or reload after turning it on.</span>
+            <span class="settings-hint">An icon on paragraphs you're reading, to summarize, simplify, or translate them. Chrome asks for permission first.</span>
           </span>
           <input type="checkbox" id="hoverToggle">
         </label>
         <p class="settings-hint" id="hoverHint" role="status"></p>
+
+        <details class="advanced" id="advancedSection">
+          <summary>Advanced: AI engine</summary>
+          <div class="advanced-body">
+            <label>AI engine</label>
+            <div class="seg-control" id="engineSeg" role="group" aria-label="AI engine">
+              <button type="button" class="seg-btn" data-value="auto">Auto</button>
+              <button type="button" class="seg-btn" data-value="device">On-device</button>
+              <button type="button" class="seg-btn" data-value="cloud">Cloud</button>
+            </div>
+            <p class="settings-hint" id="engineHint"></p>
+
+          </div>
+        </details>
 
         <div class="settings-section-label">About</div>
         <div class="settings-row" data-action="showPrivacyPolicy">

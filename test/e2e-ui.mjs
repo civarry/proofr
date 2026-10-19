@@ -233,7 +233,9 @@ check('hover off unregisters page scripts', !regs2.some(r => r.id === 'proofr-ho
 
 console.log('STEP 8');
 // 8. No-key, no-AI: hover Ask box hidden. Remove key, re-enable hover.
-await panel.evaluate(() => chrome.storage.local.remove(['srCloudKey_custom']));
+// A local endpoint with no key is legitimately ready (Ollama-style), so the
+// "nothing set up" case is a hosted provider with no key saved.
+await panel.evaluate(async () => { await chrome.storage.local.remove(['srCloudKey_custom', 'srCloudKey_groq']); await chrome.storage.sync.set({ srCloudService: 'groq' }); });
 await clk(panel, '#hoverToggle'); await sleep(1200);
 await demo.bringToFront(); await demo.reload(); await sleep(900);
 box = await (await demo.$('.wrap p')).boundingBox();
@@ -245,7 +247,7 @@ if (icon2) {
   check('Ask box hidden without a key', !(await demo.$('#srHoverAskForm')));
   await clk(demo, '.sr-hover-action[data-tone="tldr"]'); await sleep(1500);
   const errText = await demo.evaluate(() => document.querySelector('#smart-rewrite-modal')?.innerText || '');
-  check('no-AI hover action explains setup', /Set up Proofr/.test(errText) && /Groq key/.test(errText), errText.replace(/\s+/g, ' ').slice(0, 120));
+  check('no-AI hover action explains setup', /Set up Proofr/.test(errText) && /connect an AI provider/.test(errText), errText.replace(/\s+/g, ' ').slice(0, 120));
   await shot(demo, '3-setup-error.png');
 } else check('hover icon present for no-key test', false);
 
