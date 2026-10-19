@@ -46,4 +46,23 @@ assert.equal(SR_wordDiff(words(2000, 'a'), words(2000, 'b')), null);
 const long = words(3000, 'w');
 assert.equal(SR_diffCount(roundTrip(long, long.replace('w1500', 'W1500'))), 1);
 
+
+// Per-change revert: rejected groups keep the original wording, the rest keep the fix.
+{
+  const before = 'teh report are ready , i will send it tomorow.';
+  const after = 'The report is ready, I will send it tomorrow.';
+  const o = SR_wordDiff(before, after);
+  const groups = SR_diffGroups(o);
+  assert.equal(Math.max(...groups) + 1, SR_diffCount(o), 'groups match the change count');
+  assert.equal(SR_applyDiff(o), after, 'nothing rejected → the result');
+  assert.equal(SR_applyDiff(o, new Set([0, 1, 2, 3, 4])), before, 'everything rejected → the original');
+  assert.equal(SR_applyDiff(o, new Set([1])), 'The report are ready, I will send it tomorrow.');
+  assert.equal(SR_applyDiff(o, new Set([0, 4])), 'teh report is ready, I will send it tomorow.');
+  // A pure insertion and a pure deletion revert cleanly too.
+  const ins = SR_wordDiff('Send it now', 'Send it now, please');
+  assert.equal(SR_applyDiff(ins, new Set([0])), 'Send it now');
+  const del = SR_wordDiff('Send it it now', 'Send it now');
+  assert.equal(SR_applyDiff(del, new Set([0])), 'Send it it now');
+  assert.equal(SR_applyDiff(null), '');
+}
 console.log('diff: all checks passed');

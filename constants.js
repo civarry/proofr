@@ -333,13 +333,14 @@ async function SR_askCloud(provider, text, instruction, temperatureBoost = 0) {
 
 // Calls the configured cloud provider and returns the rewritten text, throwing
 // a human-readable Error on failure.
-async function SR_rewrite(provider, text, tone, targetLang, temperatureBoost = 0) {
-  return SR_callCloud(provider, SR_buildPrompt(text, tone, targetLang), SR_getTemperature(tone, temperatureBoost), 1000);
+async function SR_rewrite(provider, text, tone, targetLang, temperatureBoost = 0, signal) {
+  return SR_callCloud(provider, SR_buildPrompt(text, tone, targetLang), SR_getTemperature(tone, temperatureBoost), 1000, signal);
 }
 
 // Shared request path for SR_rewrite / SR_askCloud — same wire shape, only the
 // prompt/temperature/max_tokens differ per caller.
-async function SR_callCloud(provider, prompt, temperature, maxTokens) {
+// `signal` (optional) lets the caller stop the request (the panel's Stop button).
+async function SR_callCloud(provider, prompt, temperature, maxTokens, signal) {
   if (!SR_providerKeyOK(provider)) {
     throw new Error(`No API key set. Add your ${provider?.displayName || 'cloud'} API key to get started.`);
   }
@@ -360,7 +361,7 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
   try {
     response = await fetch(SR_chatCompletionsURL(provider.baseURL), {
       method: 'POST',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       headers: {
         ...SR_authHeaders(provider.apiKey),
         'Content-Type': 'application/json',
@@ -376,6 +377,7 @@ async function SR_callCloud(provider, prompt, temperature, maxTokens) {
       }),
     });
   } catch (err) {
+    if (signal && signal.aborted) throw SR_stopped();
     if (err && err.name === 'TimeoutError') {
       throw new Error(`${provider.displayName} didn't respond in ${Math.round(timeoutMs / 1000)}s. Try again, or select less text.`);
     }
@@ -465,7 +467,117 @@ async function SR_deviceReady() {
 const SR_DEVICE_MAX_CHARS = 4000;
 const SR_DEVICE_TIMEOUT_MS = 45000;
 
-async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureBoost = 0) {
+// Recent Chrome requires the languages up front for safety attestation, and the
+// OUTPUT must be a single supported code (an array of several is rejected).
+// Input can be any of the supported set; output is the translate target, else English.
+function SR_deviceSessionOptions(tone, targetLang, temperatureBoost = 0) {
+  return {
+    outputLanguage: (tone === 'translate' && targetLang) ? targetLang : 'en',
+    temperature: SR_getTemperature(tone, temperatureBoost),
+  };
+}
+
+async function SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor) {
+  const LM = SR_deviceModel();
+  const { outputLanguage, temperature } = SR_deviceSessionOptions(tone, targetLang, temperatureBoost);
+  const inputLanguages = SR_LANGUAGES.map((l) => l.code);
+  const baseOpts = {
+    ...(monitor ? { monitor } : {}),
+    expectedInputs: [{ type: 'text', languages: inputLanguages }],
+    expectedOutputs: [{ type: 'text', languages: [outputLanguage] }],
+  };
+
+  // Some builds reject the temperature/topK pair; some ship fewer input
+  // languages than the docs list (CfT 155 accepts only en/es/ja). Fall back
+  // step by step, always keeping the output language.
+  const attempts = [
+    { ...baseOpts, temperature, topK: 8 },
+    baseOpts,
+    { ...baseOpts, expectedInputs: [{ type: 'text', languages: ['en'] }] },
+  ];
+  let lastError;
+  for (const opts of attempts) {
+    try { return await LM.create(opts); } catch (err) { lastError = err; }
+  }
+  if (lastError && lastError.name === 'NotSupportedError' && outputLanguage !== 'en') {
+    throw new Error(`${SR_fullLangName(outputLanguage)} isn't supported by Chrome's on-device model here. Add a cloud provider key to translate into it.`);
+  }
+  throw lastError || new Error('Could not start the on-device model.');
+}
+
+// Creating a session is most of the wait on the first rewrite. The panel calls
+// SR_warmDevice when it opens; the next rewrite with the same options takes the
+// session (each session is used once, then destroyed). Never starts a download:
+// only when the model is already 'available'. An unused session is dropped after
+// SR_WARM_TTL_MS so it doesn't hold the model's memory.
+const SR_WARM_TTL_MS = 2 * 60 * 1000;
+let SR_warm = null; // { key, promise, timer }
+
+async function SR_warmDevice(tone = 'grammar', targetLang) {
+  if (await SR_deviceAvailability() !== 'available') return false;
+  const key = JSON.stringify(SR_deviceSessionOptions(tone, targetLang));
+  if (SR_warm && SR_warm.key === key) return true;
+  SR_dropWarmSession();
+  const promise = SR_createDeviceSession(tone, targetLang, 0).catch(() => null);
+  SR_warm = { key, promise, timer: setTimeout(SR_dropWarmSession, SR_WARM_TTL_MS) };
+  return !!(await promise);
+}
+
+function SR_dropWarmSession() {
+  if (!SR_warm) return;
+  const { promise, timer } = SR_warm;
+  SR_warm = null;
+  clearTimeout(timer);
+  promise.then((session) => { try { session && session.destroy && session.destroy(); } catch (_) { /* ignore */ } });
+}
+
+async function SR_takeWarmSession(tone, targetLang, temperatureBoost) {
+  if (!SR_warm || SR_warm.key !== JSON.stringify(SR_deviceSessionOptions(tone, targetLang, temperatureBoost))) return null;
+  const { promise, timer } = SR_warm;
+  SR_warm = null;
+  clearTimeout(timer);
+  return promise;
+}
+
+// promptStreaming chunks are deltas in current Chrome and the cumulative text in
+// older builds. Decided once, on the second chunk: if it extends the first, the
+// stream is cumulative. Resolves to the full text.
+async function SR_readDeviceStream(stream, onToken) {
+  let text = '';
+  let cumulative = null;
+  let count = 0;
+  const take = (chunk) => {
+    chunk = String(chunk);
+    count++;
+    if (count === 2) cumulative = chunk.startsWith(text) && text.length > 0;
+    text = cumulative ? chunk : text + chunk;
+    onToken(text.trimStart());
+  };
+  if (stream && typeof stream.getReader === 'function') {
+    const reader = stream.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        take(value);
+      }
+    } finally {
+      try { reader.releaseLock(); } catch (_) { /* ignore */ }
+    }
+  } else {
+    for await (const chunk of stream) take(chunk);
+  }
+  return text;
+}
+
+function SR_stopped() {
+  const err = new Error('Stopped.');
+  err.name = 'AbortError';
+  return err;
+}
+
+// opts.onToken(textSoFar) streams the answer; opts.signal stops it.
+async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureBoost = 0, { onToken, signal } = {}) {
   const LM = SR_deviceModel();
   if (!LM) throw new Error('On-device AI is not available on this device.');
 
@@ -485,41 +597,23 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
     }
   };
 
-  // Recent Chrome requires the languages up front for safety attestation, and the
-  // OUTPUT must be a single supported code (an array of several is rejected).
-  // Input can be any of the supported set; output is the translate target, else English.
-  const inputLanguages = SR_LANGUAGES.map((l) => l.code);
-  const outputLanguage = (tone === 'translate' && targetLang) ? targetLang : 'en';
-  const baseOpts = {
-    monitor,
-    expectedInputs: [{ type: 'text', languages: inputLanguages }],
-    expectedOutputs: [{ type: 'text', languages: [outputLanguage] }],
-  };
-
-  // Some builds reject the temperature/topK pair; some ship fewer input
-  // languages than the docs list (CfT 155 accepts only en/es/ja). Fall back
-  // step by step, always keeping the output language.
-  const attempts = [
-    { ...baseOpts, temperature: SR_getTemperature(tone, temperatureBoost), topK: 8 },
-    baseOpts,
-    { ...baseOpts, expectedInputs: [{ type: 'text', languages: ['en'] }] },
-  ];
-  let session;
-  let lastError;
-  for (const opts of attempts) {
-    try { session = await LM.create(opts); break; } catch (err) { lastError = err; }
-  }
-  if (!session) {
-    if (lastError && lastError.name === 'NotSupportedError' && outputLanguage !== 'en') {
-      throw new Error(`${SR_fullLangName(outputLanguage)} isn't supported by Chrome's on-device model here. Add a cloud provider key to translate into it.`);
-    }
-    throw lastError || new Error('Could not start the on-device model.');
-  }
-
+  const session = await SR_takeWarmSession(tone, targetLang, temperatureBoost)
+    || await SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor);
   try {
     // Race the prompt against a timeout, and try to abort the underlying work so
     // a stalled model can't leave the UI spinning forever.
     const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    // Stop wins the race even on a build whose prompt() ignores the signal.
+    let rejectStop;
+    const stopped = new Promise((_, reject) => { rejectStop = reject; });
+    const stop = () => {
+      try { controller && controller.abort(); } catch (_) { /* ignore */ }
+      rejectStop(SR_stopped());
+    };
+    if (signal) {
+      if (signal.aborted) throw SR_stopped();
+      signal.addEventListener('abort', stop, { once: true });
+    }
     let timer;
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => {
@@ -531,17 +625,20 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
     let out;
     try {
       const promptText = SR_buildPrompt(text, tone, targetLang);
-      const run = controller
-        ? session.prompt(promptText, { signal: controller.signal })
-        : session.prompt(promptText);
-      out = await Promise.race([run, timeout]);
+      const promptOpts = controller ? { signal: controller.signal } : undefined;
+      const run = onToken && typeof session.promptStreaming === 'function'
+        ? SR_readDeviceStream(session.promptStreaming(promptText, promptOpts), onToken)
+        : session.prompt(promptText, promptOpts);
+      out = await Promise.race([run, timeout, stopped]);
     } catch (err) {
+      if (signal && signal.aborted) throw SR_stopped();
       if (err && err.message === 'device-timeout') {
         throw new Error('The on-device model took too long and was stopped. Try a shorter selection, or add a cloud provider key for long text.');
       }
       throw err;
     } finally {
       clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', stop);
     }
 
     const trimmed = (out || '').trim();
@@ -553,7 +650,8 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
 }
 
 // Rewrite via the chosen engine.
-// opts: { provider: {baseURL,apiKey,model,displayName}, engine: 'auto'|'device'|'cloud', targetLang, onStatus, temperatureBoost }
+// opts: { provider: {baseURL,apiKey,model,displayName}, engine: 'auto'|'device'|'cloud', targetLang, onStatus, temperatureBoost,
+//         onToken(textSoFar): on-device answers stream (cloud ones arrive whole), signal: AbortSignal to stop }
 // Returns { text, provider }.
 async function SR_rewriteAuto(text, tone, opts = {}) {
   const engine = opts.engine || 'auto';
@@ -565,15 +663,15 @@ async function SR_rewriteAuto(text, tone, opts = {}) {
 
   if (wantDevice) {
     try {
-      const out = await SR_rewriteOnDevice(text, tone, opts.onStatus, opts.targetLang, boost);
+      const out = await SR_rewriteOnDevice(text, tone, opts.onStatus, opts.targetLang, boost, { onToken: opts.onToken, signal: opts.signal });
       return { text: out, provider: 'device' };
     } catch (err) {
-      // Forced on-device, or nothing to fall back to → surface the error.
-      if (engine === 'device' || !hasProvider) throw err;
+      // Stopped, forced on-device, or nothing to fall back to → surface the error.
+      if ((opts.signal && opts.signal.aborted) || engine === 'device' || !hasProvider) throw err;
       // Auto with a cloud provider configured → fall through to it.
     }
   }
-  return { text: await SR_rewrite(opts.provider, text, tone, opts.targetLang, boost), provider: opts.provider.id };
+  return { text: await SR_rewrite(opts.provider, text, tone, opts.targetLang, boost, opts.signal), provider: opts.provider.id };
 }
 
 // 'device' → "On-device"; any cloud service id → its friendly name (falls
@@ -638,6 +736,28 @@ function SR_wordDiff(before, after) {
   flush();
   if (suf) same(a.slice(a.length - suf).join(''));
   return ops;
+}
+
+// Change-group id per op (-1 for unchanged text): each run of del/ins between
+// unchanged text is one group, numbered from 0, the same runs SR_diffCount counts.
+function SR_diffGroups(ops) {
+  let g = -1;
+  return (ops || []).map((op, k) => {
+    if (op.type === 'same') return -1;
+    if (k === 0 || ops[k - 1].type === 'same') g++;
+    return g;
+  });
+}
+
+// The text with the changes in `rejected` (a Set of group ids) put back to the
+// original wording, and every other change kept.
+function SR_applyDiff(ops, rejected = new Set()) {
+  const groups = SR_diffGroups(ops);
+  return (ops || []).map((op, k) => {
+    if (op.type === 'same') return op.text;
+    const keepOriginal = rejected.has(groups[k]);
+    return (op.type === 'del') === keepOriginal ? op.text : '';
+  }).join('');
 }
 
 // Number of separate changes: each run of del/ins between unchanged text counts once.
@@ -749,5 +869,8 @@ if (typeof self !== 'undefined') {
   self.SR_wordDiff = SR_wordDiff;
   self.SR_diffTokens = SR_diffTokens;
   self.SR_diffCount = SR_diffCount;
+  self.SR_diffGroups = SR_diffGroups;
+  self.SR_applyDiff = SR_applyDiff;
+  self.SR_warmDevice = SR_warmDevice;
   self.SR_changeGuard = SR_changeGuard;
 }

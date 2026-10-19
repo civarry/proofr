@@ -154,7 +154,6 @@
       const working = tone === 'translate' ? 'Translating' : `Rewriting to ${toneName}`;
 
       document.getElementById('sr-modal-content').innerHTML = `
-        ${notice ? `<p class="sr-notice" role="alert">${this.escapeHtml(notice)}</p>` : ''}
         ${this.toneChipsHtml(tone)}
         ${this.langRowHtml(tone, this.currentLang)}
         <div class="sr-skeleton" role="status" aria-label="${working}">
@@ -178,6 +177,24 @@
     // opts.notice: one line shown above the result (e.g. the Proofread change guard).
     // opts.where: a ready-made "where the text went" label. opts.action: { label, run }
     // adds a primary button; run() returning true closes the dialog.
+
+    // Partial answer while a rewrite streams (on-device): replaces the skeleton
+    // with the text so far. In-place edits show only the corner toast, so no-op.
+    streamText(text) {
+      if (!this.busy || !this.modal || !this.isVisible) return;
+      let box = document.getElementById('sr-rewritten-text');
+      if (!box) {
+        const skeleton = document.querySelector('#sr-modal-content .sr-skeleton');
+        if (!skeleton) return;
+        box = document.createElement('div');
+        box.className = 'sr-result-box sr-scrollable sr-streaming';
+        box.id = 'sr-rewritten-text';
+        box.setAttribute('aria-busy', 'true');
+        skeleton.replaceWith(box);
+      }
+      box.textContent = text;
+    }
+
     showResult(originalText, rewrittenText, tone, provider, targetLang, { notice, where, action } = {}) {
       this.currentText = originalText;
       this.currentRewrite = rewrittenText;
@@ -189,16 +206,21 @@
       if (!this.modal) this.createModal();
 
       // Proofread shows what changed; null (too long) or no changes → plain text.
+      // Clicking a change puts the original words back; Copy and the action button
+      // use the text with only the accepted changes.
       const ops = tone === 'grammar' && typeof SR_wordDiff === 'function' ? SR_wordDiff(originalText, rewrittenText) : null;
-      const diffHtml = ops && SR_diffCount(ops) ? this.diffHtml(ops) : '';
-      const plainHtml = this.escapeHtml(rewrittenText);
+      const hasDiff = !!(ops && SR_diffCount(ops));
+      const rejected = new Set();
+      let plain = false;
+      const accepted = () => (hasDiff ? SR_applyDiff(ops, rejected) : rewrittenText);
+      const boxHtml = () => (hasDiff && !plain ? this.diffHtml(ops, rejected) : this.escapeHtml(accepted()));
 
       document.getElementById('sr-modal-content').innerHTML = `
         ${notice ? `<p class="sr-notice" role="alert">${this.escapeHtml(notice)}</p>` : ''}
         ${this.toneChipsHtml(tone)}
         ${this.langRowHtml(tone, targetLang)}
-        <div class="sr-result-box sr-scrollable" id="sr-rewritten-text">${diffHtml || plainHtml}</div>
-        ${diffHtml ? '<button type="button" class="sr-diff-toggle" id="sr-diff-toggle" aria-pressed="false">Show plain text</button>' : ''}
+        <div class="sr-result-box sr-scrollable${hasDiff ? ' sr-diff-anim' : ''}" id="sr-rewritten-text">${boxHtml()}</div>
+        ${hasDiff ? '<div class="sr-diff-bar"><button type="button" class="sr-diff-toggle" id="sr-diff-toggle" aria-pressed="false">Show plain text</button><span class="sr-diff-tip">Click a change to undo just that one.</span></div>' : ''}
         <details class="sr-original">
           <summary>Show original</summary>
           <div class="sr-original-text">${this.escapeHtml(originalText)}</div>
@@ -217,21 +239,37 @@
       `;
 
       document.getElementById('sr-copy-btn').addEventListener('click', () => {
-        this.copyToClipboard(rewrittenText);
+        this.copyToClipboard(accepted());
       });
       if (action) {
         document.getElementById('sr-action-btn').addEventListener('click', async () => {
-          if (await action.run()) this.hide();
+          if (await action.run(accepted())) this.hide();
         });
       }
 
+      const box = document.getElementById('sr-rewritten-text');
       const toggle = document.getElementById('sr-diff-toggle');
       if (toggle) {
         toggle.addEventListener('click', () => {
-          const plain = toggle.getAttribute('aria-pressed') !== 'true';
-          document.getElementById('sr-rewritten-text').innerHTML = plain ? plainHtml : diffHtml;
+          plain = !plain;
+          box.classList.remove('sr-diff-anim'); // the reveal runs once per result
+          box.innerHTML = boxHtml();
           toggle.setAttribute('aria-pressed', String(plain));
           toggle.textContent = plain ? 'Show changes' : 'Show plain text';
+        });
+        const flip = (el) => {
+          const g = Number(el.dataset.g);
+          if (rejected.has(g)) rejected.delete(g); else rejected.add(g);
+          this.currentRewrite = accepted();
+          box.classList.remove('sr-diff-anim');
+          box.innerHTML = boxHtml();
+          const again = box.querySelector(`.sr-change[data-g="${g}"]`);
+          if (again) again.focus();
+        };
+        box.addEventListener('click', (e) => { const el = e.target.closest('.sr-change'); if (el) flip(el); });
+        box.addEventListener('keydown', (e) => {
+          const el = e.target.closest('.sr-change');
+          if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); flip(el); }
         });
       }
 
@@ -285,11 +323,17 @@
       this.show();
     }
 
-    // opts.review: { original, rewritten, tone, provider, where? } adds a Review link that
-    // opens the result dialog (with the Proofread diff) for a replace already done.
-    showSuccess(message, { review } = {}) {
+    // opts.review: { original, rewritten, tone, provider, where?, action? } adds a Review
+    // link that opens the result dialog (with the Proofread diff) for a replace already
+    // done. opts.undo: a function that undoes the replace (Ctrl/Cmd+Z fails in some rich
+    // editors); truthy return → "Undone". A Proofread with nothing changed gets neither.
+    showSuccess(message, { review, undo } = {}) {
       this.busy = false;
       this.hideLoadingToast();
+      document.querySelectorAll('.sr-success-notification').forEach((n) => n.remove());
+      const unchanged = !!(review && review.tone === 'grammar' && typeof SR_wordDiff === 'function'
+        && SR_diffCount(SR_wordDiff(review.original, review.rewritten)) === 0);
+      if (unchanged) { review = null; undo = null; }
       const notification = document.createElement('div');
       notification.className = 'sr-success-notification';
       notification.setAttribute('role', 'status');
@@ -299,24 +343,37 @@
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
           ${review ? '<button type="button" class="sr-success-review">Review</button>' : ''}
+          ${undo ? '<button type="button" class="sr-success-undo">Undo</button>' : ''}
         </div>
       `;
+      let hideTimer;
+      const dismiss = (ms) => {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          notification.classList.remove('sr-show');
+          setTimeout(() => notification.remove(), 300);
+        }, ms);
+      };
       if (review) {
         notification.querySelector('.sr-success-review').addEventListener('click', () => {
           notification.remove();
-          this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where });
+          this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where, action: review.action });
         });
       }
-      
+      if (undo) {
+        notification.querySelector('.sr-success-undo').addEventListener('click', async () => {
+          let ok = false;
+          try { ok = await undo(); } catch (_) { ok = false; }
+          notification.querySelectorAll('button').forEach((b) => b.remove());
+          notification.querySelector('.sr-success-text').textContent = ok ? 'Undone.' : "Couldn't undo here. Try Ctrl/Cmd+Z.";
+          dismiss(ok ? 1500 : 4000);
+        });
+      }
+
       document.body.appendChild(notification);
-      
       setTimeout(() => notification.classList.add('sr-show'), 100);
-      
-      // An undo hint needs time to read and act on.
-      setTimeout(() => {
-        notification.classList.remove('sr-show');
-        setTimeout(() => notification.remove(), 300);
-      }, /undo/i.test(message) || review ? 6000 : 3000);
+      // Review and Undo need time to read and act on.
+      dismiss(/undo/i.test(message) || review || undo ? 6000 : 3000);
     }
 
     show() {
@@ -393,13 +450,27 @@
       return div.innerHTML;
     }
 
-    diffHtml(ops) {
-      return ops.map((op) => {
-        const text = this.escapeHtml(op.text);
-        if (op.type === 'del') return `<del class="sr-diff-del">${text}</del>`;
-        if (op.type === 'ins') return `<ins class="sr-diff-ins">${text}</ins>`;
-        return text;
-      }).join('');
+    // Each change (a del/ins run) is one toggle; a rejected one shows the original words.
+    diffHtml(ops, rejected = new Set()) {
+      const groups = SR_diffGroups(ops);
+      let html = '';
+      for (let k = 0; k < ops.length; k++) {
+        const g = groups[k];
+        if (g < 0) { html += this.escapeHtml(ops[k].text); continue; }
+        let del = '', ins = '';
+        for (; k < ops.length && groups[k] === g; k++) {
+          if (ops[k].type === 'del') del += ops[k].text; else ins += ops[k].text;
+        }
+        k--;
+        const off = rejected.has(g);
+        const inner = off
+          // The rejected suggestion stays visible (struck, faint) so it can be clicked back on.
+          ? `${del ? `<span class="sr-diff-kept">${this.escapeHtml(del)}</span>` : ''}${ins ? `<s class="sr-diff-off">${this.escapeHtml(ins)}</s>` : ''}`
+          : `${del ? `<del class="sr-diff-del">${this.escapeHtml(del)}</del>` : ''}${ins ? `<ins class="sr-diff-ins">${this.escapeHtml(ins)}</ins>` : ''}`;
+        const label = off ? 'Change undone. Activate to apply it again.' : 'Activate to undo this change.';
+        html += `<span class="sr-change${off ? ' sr-change-rejected' : ''}" data-g="${g}" role="button" tabindex="0" aria-pressed="${off}" title="${label}" aria-label="${this.escapeHtml(`${del.trim() || '(nothing)'} to ${ins.trim() || '(removed)'}`)}. ${label}">${inner}</span>`;
+      }
+      return html;
     }
 
     rewriteWithTone(tone, targetLang) {
