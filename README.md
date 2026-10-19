@@ -66,6 +66,9 @@ node test/efficiency.mjs
 # Teacher examples: which models get them, how they're sent, and that each passes the live checks (no browser needed)
 node test/distill.mjs
 
+# HTML escaping: every helper escapes quotes, so a model id or answer can't break out of an attribute (no browser needed)
+node test/escape.mjs
+
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
 

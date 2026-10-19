@@ -404,6 +404,23 @@ try {
   });
 
   // 3e2. A word mastered by this Proofread: one escaped line in the same toast, readable in both themes.
+  // Page text, model output and model names land in quoted attributes (title, aria-label): a quote must not end them.
+  await step('attribute escaping', async () => {
+    const r = await inModal(async () => {
+      const M = window.SmartRewriteModal;
+      const evil = '" onmouseover="window.__pwned=1" x="';
+      M.showResult('teh cat', `the${evil} cat`, 'grammar', 'custom', null, { where: `Sent to Custom · m${evil}` });
+      const bad = [...document.querySelectorAll('[onmouseover]')].length;
+      const tag = document.querySelector('.sr-engine');
+      const out = { bad, title: tag && tag.title, esc: M.escapeHtml(`"'<>&`) };
+      M.hide();
+      return out;
+    });
+    check(r.bad === 0, `escaping: a quote in model output or the model name adds no attribute (found ${r.bad})`);
+    check(r.title === 'Sent to Custom · m" onmouseover="window.__pwned=1" x="', `escaping: the title shows the name as text (got ${JSON.stringify(r.title)})`);
+    check(r.esc === '&quot;&#39;&lt;&gt;&amp;', `escaping: quotes, angle brackets and & (got ${r.esc})`);
+  });
+
   await step('mastered line', async () => {
     for (const scheme of ['light', 'dark']) {
       await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);

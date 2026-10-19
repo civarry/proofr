@@ -6,9 +6,9 @@ const $ = (id) => document.getElementById(id);
 let windowId = null; // cached so sidePanel.open can run synchronously inside a click
 
 function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s ?? '';
-  return d.innerHTML;
+  // Quotes too: values go inside attributes (model ids from a provider's list).
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(s ?? '').replace(/[&<>"']/g, (c) => map[c]);
 }
 
 function markDone(stepId, done) {

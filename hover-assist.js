@@ -11,6 +11,12 @@
   const DWELL_MS = 220;
   // Built for text that isn't yours (someone else's comment, an article
   // paragraph). Writing tones live in the right-click menu and side panel.
+  // Quotes too, so a label can never close an attribute.
+  function escapeHtml(s) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(s ?? '').replace(/[&<>"']/g, (c) => map[c]);
+  }
+
   const READING_TONES = ['tldr', 'simple', 'translate'];
   const ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-7 14-2-5-5-2Z"/></svg>';
 
@@ -121,7 +127,7 @@
     popover.innerHTML = tones.map((id) => {
       const tone = (typeof SR_getTone === 'function') ? SR_getTone(id) : { name: id };
       const label = id === 'translate' ? `Translate → ${targetLangName}` : tone.name;
-      return `<button type="button" class="sr-hover-action" data-tone="${id}">${label}</button>`;
+      return `<button type="button" class="sr-hover-action" data-tone="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
     }).join('')
       + (hasKey ? `<div class="sr-hover-divider"></div>
         <form class="sr-hover-ask" id="srHoverAskForm">
