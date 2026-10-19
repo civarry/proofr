@@ -290,6 +290,30 @@ await clk(panel, '#sendBtn'); await sleep(2000);
 const n5 = await panel.evaluate(() => ({ calls: window.__createCalls, out: [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '' }));
 check('Auto + key + model not downloaded: uses the key, no download', n5.calls === 0 && /^R\(auto mode text\)/.test(n5.out), JSON.stringify(n5));
 
+// 6e. Quick engine switch from the status pill: on-device and a connected
+// provider both listed; one click switches and the pill says so.
+await panel.bringToFront();
+await panel.evaluate(async () => {
+  await chrome.storage.sync.set({ srEngine: 'auto', srCloudService: 'custom' });
+  SR_deviceAvailability = async () => 'available';
+  await refreshProviderPill();
+  document.getElementById('providerPill').click();
+});
+await sleep(600);
+const menu = await panel.evaluate(() => [...document.querySelectorAll('#engineMenu .engine-item b')].map(b => b.textContent.replace(' ✓', '')));
+check('pill menu lists on-device, connected provider, Auto, settings', ['On this computer', 'Custom', 'Auto', 'Add or change a provider…'].every(t => menu.includes(t)), menu.join(' | '));
+await panel.evaluate(() => document.querySelector('#engineMenu [data-choice="cloud:custom"]').click());
+await sleep(600);
+const afterPick = await panel.evaluate(async () => ({ s: await chrome.storage.sync.get(['srEngine', 'srCloudService']), pill: document.getElementById('providerPillText').textContent, open: !document.getElementById('engineMenu').classList.contains('hidden') }));
+check('picking a provider switches engine to it', afterPick.s.srEngine === 'cloud' && afterPick.s.srCloudService === 'custom' && /Custom/.test(afterPick.pill) && !afterPick.open, JSON.stringify(afterPick));
+await panel.evaluate(() => { document.getElementById('providerPill').click(); });
+await sleep(400);
+await panel.evaluate(() => document.querySelector('#engineMenu [data-choice="device"]').click());
+await sleep(600);
+const back = await panel.evaluate(async () => ({ e: (await chrome.storage.sync.get(['srEngine'])).srEngine, pill: document.getElementById('providerPillText').textContent }));
+check('picking on-device switches back', back.e === 'device' && /On-device/.test(back.pill), JSON.stringify(back));
+await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
+
 // 7. Hover toggle: grants (pre-granted in test copy), registers scripts, applies on reload.
 await panel.bringToFront();
 await panel.evaluate(() => document.getElementById('btnSettings').click()); await sleep(400);

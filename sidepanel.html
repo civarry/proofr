@@ -85,6 +85,29 @@
       color: var(--ink-soft);
     }
     .provider-pill .pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--ink-faint); }
+    button.provider-pill { font-family: var(--mono); cursor: pointer; }
+    button.provider-pill:hover { border-color: var(--line-focus); }
+    .provider-pill .pill-chev { width: 11px; height: 11px; flex: none; opacity: .7; }
+
+    /* Quick engine switcher under the status pill. */
+    .app-header { position: relative; }
+    .engine-menu {
+      position: absolute; top: calc(100% - 4px); right: 14px; z-index: 50;
+      width: min(290px, calc(100vw - 28px));
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+      box-shadow: var(--shadow-lg); padding: 4px;
+    }
+    .engine-menu.hidden { display: none; }
+    .engine-item {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%;
+      padding: 8px 10px; border: none; border-radius: 7px; background: none; text-align: left; cursor: pointer;
+      font-family: var(--sans); color: var(--ink);
+    }
+    .engine-item:hover, .engine-item:focus-visible { background: var(--line-soft); outline: none; }
+    .engine-item b { font-size: 12.5px; font-weight: 600; }
+    .engine-item[aria-checked="true"] b::after { content: " ✓"; color: var(--live-ink); }
+    .engine-item span { font-size: 11px; color: var(--ink-soft); font-family: var(--mono); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .engine-sep { height: 1px; background: var(--line-soft); margin: 4px 6px; }
     .provider-pill.connected { color: var(--live-ink); background: var(--live-bg); border-color: var(--live-border); }
     .provider-pill.connected .pulse { background: var(--live); animation: sr-pulse 2.2s infinite; }
     @keyframes sr-pulse {
@@ -686,7 +709,11 @@
   <div class="app-header">
     <div class="mark" id="mark"></div>
     <h1>Proofr</h1>
-    <div class="provider-pill" id="providerPill"><span class="pulse"></span><span id="providerPillText">Checking…</span></div>
+    <button type="button" class="provider-pill" id="providerPill" aria-haspopup="menu" aria-expanded="false" aria-controls="engineMenu" title="Choose which AI Proofr uses">
+      <span class="pulse"></span><span id="providerPillText">Checking…</span>
+      <svg class="pill-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <div class="engine-menu hidden" id="engineMenu" role="menu" aria-label="AI engine"></div>
     <button class="icon-btn" id="btnClearHistory" type="button" title="Clear history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
     </button>
