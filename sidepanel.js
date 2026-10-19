@@ -118,11 +118,30 @@ class StatsManager {
   static async updateStats(style) {
     const stats = await this.getStats();
     stats.totalRewrites++;
+    stats.days = SR_bumpDay(stats.days);
     stats.styleUsage[style] = (stats.styleUsage[style] || 0) + 1;
     stats.lastUsed = Date.now();
     await chrome.storage.local.set({ rewriteStats: stats });
     return stats;
   }
+}
+
+// Per-day counts for the last 14 days, for the quiet "this week" line in
+// Settings. Local only; no streaks (they reward writing badly on purpose).
+function SR_bumpDay(days) {
+  const out = { ...(days || {}) };
+  const today = new Date().toISOString().slice(0, 10);
+  out[today] = (out[today] || 0) + 1;
+  const cutoff = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
+  for (const d of Object.keys(out)) if (d < cutoff) delete out[d];
+  return out;
+}
+
+async function refreshWeekLine() {
+  const { rewriteStats } = await chrome.storage.local.get(['rewriteStats']);
+  const since = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10);
+  const n = Object.entries((rewriteStats && rewriteStats.days) || {}).filter(([d]) => d >= since).reduce((a, [, c]) => a + c, 0);
+  refs.weekLine.textContent = n ? `This week: ${n} rewrite${n === 1 ? '' : 's'} with Proofr.` : '';
 }
 
 // === Settings (engine, translate target, last-used mode) ===
@@ -203,6 +222,8 @@ function formatLatency(ms) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
+const ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-7 14-2-5-5-2Z"/></svg>';
+const ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';
 const ICON_REDO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
 const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
@@ -345,6 +366,7 @@ async function refreshSettingsPanel() {
 
   const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
   refs.hoverToggle.checked = !!srHoverAssist;
+  refreshWeekLine();
 }
 
 // === Settings panel: cloud provider picker (service + model + base URL) ===
@@ -769,6 +791,10 @@ function toggleSettingsPanel(forceOpen) {
 }
 
 // === Mode tag + palette ===
+// One tone order everywhere (right-click menu, screenshots, here): the
+// shared top list, minus the mode just used, gives the "Try as" chips.
+const CHIP_LABELS = { grammar: 'Proofread', professional: 'Professional', friendly: 'Friendly', short: 'Concise', simple: 'Plain English' };
+
 function updateModeTag() {
   const name = SR_getToneName(currentMode);
   refs.modeTagLabel.textContent = currentMode === 'translate'
@@ -879,40 +905,77 @@ function resetComposer() {
   refs.ta.value = '';
   autoGrow();
   updateCharCount();
-  refs.sendBtn.disabled = true;
+  refs.sendBtn.disabled = !activeRun; // stays enabled as Stop while a rewrite runs
 }
 
 async function sendMessage() {
+  // While a rewrite runs, the send button is a Stop button.
+  if (activeRun) { activeRun.abort(); return; }
   const text = refs.ta.value.trim();
   if (!text) return;
+  if (await startTurn(text, currentMode, currentMode === 'translate' ? currentTargetLang : undefined)) resetComposer();
+}
+
+// Starts a new entry for `text` in `mode`. Used by Send and by the "Try as"
+// chips on a result (same text, another tone). Returns false when nothing
+// can run yet and Settings was opened instead.
+async function startTurn(text, mode, targetLang) {
+  if (activeRun) return false;
 
   const hasKey = await CloudProvider.isReady();
   const { engine } = await Settings.get();
   const runnable = engine === 'cloud' ? hasKey : engine === 'device' ? deviceReady : (deviceReady || hasKey);
   if (!runnable) {
     toggleSettingsPanel(true);
-    return;
+    return false;
   }
 
   // On-device only covers five languages; anything else needs a cloud key.
-  if (currentMode === 'translate' && !SR_isOnDeviceLanguage(currentTargetLang) && !hasKey) {
+  if (mode === 'translate' && !SR_isOnDeviceLanguage(targetLang) && !hasKey) {
     toggleSettingsPanel(true);
-    return;
+    return false;
   }
 
   const turn = {
     id: (crypto.randomUUID ? crypto.randomUUID() : `t${Date.now()}${Math.random()}`),
     ts: Date.now(),
-    mode: currentMode,
-    targetLang: currentMode === 'translate' ? currentTargetLang : undefined,
+    mode,
+    targetLang: mode === 'translate' ? targetLang : undefined,
     inputText: text,
     status: 'pending',
   };
   turns.push(turn);
   renderThread();
-  resetComposer();
+  runTurn(turn);
+  return true;
+}
 
-  await runTurn(turn);
+// === The one rewrite in flight ===
+// Streamed text and the elapsed timer update only the pending card's body,
+// never the whole thread (that re-render would run dozens of times a second).
+let activeRun = null; // AbortController while a rewrite runs
+
+function pendingBody(turn) {
+  return refs.thread.querySelector(`.turn[data-id="${CSS.escape(turn.id)}"] .assistant-body`);
+}
+
+function paintPending(turn, elapsedMs) {
+  const body = pendingBody(turn);
+  if (!body) return;
+  const secs = Math.floor(elapsedMs / 1000);
+  const wait = turn.streamed
+    ? ''
+    : `<div class="status-text">${escapeHtml(turn.statusText || (turn.onDevice ? 'Working on this computer…' : 'Working…'))}${secs >= 2 ? ` ${secs}s` : ''}${turn.onDevice && secs >= 4 && !turn.statusText ? '<br>On-device AI can take a while on the first run.' : ''}</div>
+      <div class="sr-skel-line"></div><div class="sr-skel-line"></div><div class="sr-skel-line short"></div>`;
+  body.innerHTML = turn.streamed ? `<span class="streaming">${escapeHtml(turn.streamed)}</span>` : wait;
+}
+
+function setRunning(running) {
+  refs.sendBtn.classList.toggle('stop', running);
+  refs.sendBtn.title = running ? 'Stop' : 'Send (Ctrl/Cmd+Enter)';
+  refs.sendBtn.setAttribute('aria-label', running ? 'Stop' : 'Send');
+  refs.sendBtn.innerHTML = running ? ICON_STOP : ICON_SEND;
+  refs.sendBtn.disabled = running ? false : refs.ta.value.trim().length === 0;
 }
 
 // Every call here is a fresh, single-turn request: SR_rewriteAuto only ever
@@ -921,20 +984,34 @@ async function sendMessage() {
 // render past entries.
 async function runTurn(turn, opts = {}) {
   const start = performance.now();
+  const controller = new AbortController();
+  activeRun = controller;
+  setRunning(true);
+  let frame = 0;
+  const repaint = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; paintPending(turn, performance.now() - start); });
+  };
+  const ticker = setInterval(repaint, 1000);
   try {
     const provider = await CloudProvider.getConfig();
     const settings = await Settings.get();
     // Same rule as background.js rewriteNow: on Auto with a key, don't start a
     // multi-GB model download mid-rewrite; use the key until the user sets
     // on-device up from the card in Settings.
-    const engine = (settings.engine === 'auto' && providerReady(provider) && (await SR_deviceAvailability()) !== 'available')
+    const availability = await SR_deviceAvailability();
+    const engine = (settings.engine === 'auto' && providerReady(provider) && availability !== 'available')
       ? 'cloud' : settings.engine;
+    turn.onDevice = engine === 'device' || (engine === 'auto' && availability !== 'unavailable');
+    repaint();
     const { text: rewritten, provider: providerId } = await SR_rewriteAuto(turn.inputText, turn.mode, {
       provider,
       engine,
       targetLang: turn.targetLang,
       temperatureBoost: opts.boost ? 0.15 : 0,
-      onStatus: (msg) => { turn.statusText = msg; renderThread(); },
+      signal: controller.signal,
+      onStatus: (msg) => { turn.statusText = msg; repaint(); },
+      onToken: (soFar) => { turn.streamed = soFar; repaint(); },
     });
     turn.outputText = rewritten;
     turn.provider = providerId;
@@ -950,13 +1027,23 @@ async function runTurn(turn, opts = {}) {
     await StatsManager.updateStats(turn.mode);
   } catch (error) {
     turn.status = 'error';
-    turn.errorMessage = error.message || 'Something went wrong.';
+    turn.errorMessage = controller.signal.aborted ? 'Stopped.' : (error.message || 'Something went wrong.');
+  } finally {
+    clearInterval(ticker);
+    if (frame) cancelAnimationFrame(frame);
+    activeRun = null;
+    setRunning(false);
+    delete turn.streamed;
+    delete turn.onDevice;
   }
+  turn.justFinished = true; // the card gets its one short reveal
   turns = await TurnLog.save(turns);
   renderThread();
+  delete turn.justFinished;
 }
 
 async function regenerateTurn(turn) {
+  if (activeRun) return;
   turn.status = 'pending';
   renderThread();
   await runTurn(turn, { boost: true });
@@ -1016,12 +1103,13 @@ function renderAssistantCard(turn) {
 
   // Say where the text went, in plain words.
   const engineName = escapeHtml(turn.where || (turn.provider === 'device' ? 'On this computer' : `Sent to ${SR_providerDisplayLabel(turn.provider)}`));
-  return `<div class="assistant-card">
+  return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
     <div class="assistant-head"><span><span class="tag">${modeName}</span> · ${engineName}</span><span>${formatLatency(turn.latencyMs)}</span></div>
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
     <div class="assistant-actions">
-      <button class="chip-btn" data-action="redo">${ICON_REDO}Rewrite again</button>
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
+      <div class="retone"><span class="retone-label">Try as</span>${SR_MENU_TOP.filter((m) => m !== turn.mode && m !== 'translate').slice(0, 3)
+        .map((m) => `<button class="chip-btn" data-action="retone" data-mode="${m}">${CHIP_LABELS[m] || SR_getToneName(m)}</button>`).join('')}</div>
     </div>
   </div>`;
 }
@@ -1044,18 +1132,10 @@ function renderTurn(turn) {
 
 function renderThread() {
   if (turns.length === 0) {
-    // First-use guide in place of an empty list: the three ways in, shortest first.
-    const mod = /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
+    // One line, not a manual: the fastest way in, with the real shortcut.
+    const keys = shortcutText ? `<kbd>${escapeHtml(shortcutText)}</kbd>` : 'the Proofr shortcut';
     refs.thread.innerHTML = `<div class="thread-empty">
-      <h2>Three ways to use Proofr</h2>
-      <ol>
-        <li><b>On any page:</b> select text, right-click, choose <b>Proofr</b>, then a tone. In a text box your text is replaced; <kbd>${mod}</kbd>+<kbd>Z</kbd> undoes it.</li>
-        <li><b>Quick proofread:</b> ${shortcutText
-          ? `select text (or click in a text box) and press <kbd>${escapeHtml(shortcutText)}</kbd>.`
-          : 'set a keyboard shortcut under Settings, then select text and press it.'}</li>
-        <li><b>Here:</b> paste text below, type <kbd>/</kbd> to pick a mode, and press <kbd>${mod}</kbd>+<kbd>Enter</kbd>.</li>
-      </ol>
-      <p class="fine">Each result here is separate: Proofr never sends earlier entries with a new one. This history stays on this computer.</p>
+      <p>Select text anywhere and press ${keys}. Or paste it below.</p>
     </div>`;
     return;
   }
@@ -1087,7 +1167,7 @@ async function loadShortcut() {
 // Shown once, under a successful result, after 5 successful rewrites (the
 // same rewriteStats counter every surface increments). Same ask for everyone,
 // no reward, never blocks anything; either choice retires it for good.
-const RATE_AFTER = 5;
+const RATE_AFTER = 10; // after real use, not after a first try
 
 async function maybeShowRatePrompt() {
   const last = turns[turns.length - 1];
@@ -1121,6 +1201,7 @@ function bindThreadDelegation() {
 
     if (btn.dataset.action === 'copy') await copyTurn(turn, btn);
     else if (btn.dataset.action === 'redo' || btn.dataset.action === 'retry') await regenerateTurn(turn);
+    else if (btn.dataset.action === 'retone') await startTurn(turn.inputText, btn.dataset.mode, turn.targetLang);
   });
 }
 
@@ -1163,7 +1244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
-    'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut',
+    'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
@@ -1182,6 +1263,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await loadShortcut();
   const { hasKey } = await refreshProviderPill();
+  // Cold start is the slowest part of an on-device rewrite; start it now,
+  // while the user is still pasting. Never triggers a model download.
+  if (typeof SR_warmDevice === 'function') SR_warmDevice().catch(() => {});
   if (hasKey) checkModelStillListed();
 
   turns = await TurnLog.getAll();
@@ -1369,7 +1453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   refs.ta.addEventListener('input', () => {
     autoGrow();
     updateCharCount();
-    refs.sendBtn.disabled = refs.ta.value.trim().length === 0;
+    if (!activeRun) refs.sendBtn.disabled = refs.ta.value.trim().length === 0;
 
     const v = refs.ta.value;
     if (v.startsWith('/')) {

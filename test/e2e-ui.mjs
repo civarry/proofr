@@ -159,13 +159,13 @@ check('filter text is not saved as the model', afterBlur.saved === 'other-model'
 
 console.log('STEP 4');
 // 4. Successful side panel rewrite through the mock, plus the rating line.
-await panel.evaluate(() => chrome.storage.local.set({ rewriteStats: { totalRewrites: 4, styleUsage: {}, lastUsed: null } }));
+await panel.evaluate(() => chrome.storage.local.set({ rewriteStats: { totalRewrites: 9, styleUsage: {}, lastUsed: null } }));
 await panel.evaluate(() => document.getElementById('btnSettingsBack').click());
 await focusSel(panel, '#ta'); await panel.keyboard.type('we was going to the store yesterday');
 await clk(panel, '#sendBtn'); await sleep(2500);
 const card = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '');
 check('side panel rewrite succeeds end-to-end', /^R\(we was going/.test(card), card.slice(0, 80));
-check('rating line shown after 5th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
+check('rating line shown after 10th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
 await shot(panel, '2-panel-result.png');
 await clk(panel, '.rate-line [data-rate="later"]'); await sleep(300);
 check('Not now records srRateAsked', (await panel.evaluate(() => chrome.storage.local.get(['srRateAsked']))).srRateAsked === true);
@@ -204,6 +204,21 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   const opened = browser.waitForTarget(t => t.url().startsWith('chrome://extensions/shortcuts'), { timeout: 5000 }).then(() => true, () => false);
   await panel.evaluate(() => document.getElementById('btnChangeShortcut').click());
   check('Change opens Chrome\'s shortcut page', await opened);
+}
+
+// 4f. "Try as" on a result reruns the same text in another tone, one tap.
+{
+  await panel.bringToFront();
+  const before = await panel.evaluate(() => document.querySelectorAll('.turn').length);
+  await panel.evaluate(() => { document.getElementById('ta').value = ''; });
+  await focusSel(panel, '#ta'); await panel.keyboard.type('try as source text');
+  await clk(panel, '#sendBtn'); await sleep(1500);
+  await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1).querySelector('[data-action="retone"][data-mode="professional"]').click());
+  await sleep(1500);
+  const last = await panel.evaluate(() => { const t = [...document.querySelectorAll('.turn')].at(-1); return { user: t.querySelector('.msg-user').textContent, meta: t.querySelector('.turn-meta').textContent }; });
+  check('Try as reruns the same text in the chosen tone', last.user === 'try as source text' && /Professional/.test(last.meta), JSON.stringify(last));
+  const after = await panel.evaluate(() => document.querySelectorAll('.turn').length);
+  check('Try as adds a new entry, keeps the original', after === before + 2, `${before} -> ${after}`);
 }
 
 console.log('STEP 5');

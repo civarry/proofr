@@ -729,3 +729,30 @@
     animation: none;
   }
 }
+/* ── Streaming, per-change revert, toast Undo (content.js; added in the motion round) ──
+   Motion only where it explains something, and none under prefers-reduced-motion. */
+.sr-streaming { color: var(--sr-gray-700); }
+.sr-diff-bar { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sr-diff-tip { font-size: 11.5px; color: var(--sr-gray-500); }
+.sr-change { cursor: pointer; border-radius: 3px; }
+.sr-change:hover, .sr-change:focus-visible { outline: 1px solid var(--sr-gray-400); outline-offset: 1px; }
+.sr-change:focus:not(:focus-visible) { outline: none; }
+.sr-diff-off { color: var(--sr-gray-400); text-decoration: line-through; margin-left: 3px; }
+.sr-success-undo {
+  margin-left: 4px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: transparent;
+  color: inherit;
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+}
+.sr-success-undo:hover { background: rgba(255, 255, 255, 0.15); }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The added words arrive once, so the eye finds what changed (under 200ms). */
+  .sr-diff-anim .sr-diff-ins { animation: sr-ins-in 180ms ease-out both; }
+  @keyframes sr-ins-in { from { opacity: 0; } to { opacity: 1; } }
+  .sr-success-notification.sr-show .sr-success-icon { animation: sr-ins-in 150ms ease-out both; }
+}

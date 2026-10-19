@@ -24,6 +24,10 @@ const BASE = `http://localhost:${PORT}`;
 const OUT = 'Proofr mock result.';
 const KEY = 'sk-mock-1234567890';
 
+// The extension's own helpers, for computing expected text (constants.js assigns to `self`).
+const C = {};
+new Function('self', fs.readFileSync(path.join(src, 'constants.js'), 'utf8'))(C);
+
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'PASS' : 'FAIL'} ${msg}`); if (!ok) failures++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -194,6 +198,56 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  // 3c. The dialog's own pieces, driven in the content script's world (as background does).
+  const inModal = (fn, ...args) => sw.evaluate(async (id, src, a) => {
+    const [r] = await chrome.scripting.executeScript({ target: { tabId: id }, func: new Function(`return (${src})(...arguments)`), args: a });
+    return r.result;
+  }, tabId, fn.toString(), args);
+  await step('streaming', async () => {
+    const shown = await inModal(() => {
+      window.SmartRewriteModal.showLoading('Good morning team.', 'professional');
+      const skeleton = !!document.querySelector('#sr-modal-content .sr-skeleton');
+      window.SmartRewriteModal.streamText('Good mor');
+      window.SmartRewriteModal.streamText('Good morning, team');
+      return { skeleton, text: (document.getElementById('sr-rewritten-text') || {}).textContent, gone: !document.querySelector('#sr-modal-content .sr-skeleton') };
+    });
+    check(shown.skeleton, 'loading dialog: shows the skeleton');
+    check(shown.gone && shown.text === 'Good morning, team', `streamText: replaces the skeleton with the text so far (got ${JSON.stringify(shown.text)})`);
+    await page.keyboard.press('Escape');
+  });
+  await step('per-change revert', async () => {
+    const r = await inModal(() => {
+      const M = window.SmartRewriteModal;
+      M.showResult('teh report are ready.', 'The report is ready.', 'grammar', 'custom');
+      const box = document.getElementById('sr-rewritten-text');
+      const n = box.querySelectorAll('.sr-change').length;
+      box.querySelector('.sr-change[data-g="1"]').click();
+      const rejected = box.querySelectorAll('.sr-change-rejected').length;
+      document.getElementById('sr-diff-toggle').click();
+      return { n, rejected, plain: box.textContent };
+    });
+    check(r.n === 2, `per-change revert: one toggle per change (got ${r.n})`);
+    check(r.rejected === 1 && r.plain === 'The report are ready.', `per-change revert: a clicked change keeps the original words (got ${JSON.stringify(r.plain)})`);
+    await page.keyboard.press('Escape');
+  });
+  await step('toast undo', async () => {
+    const r = await inModal(async () => {
+      const M = window.SmartRewriteModal;
+      M.showSuccess('Fixed 1 thing.', { review: { original: 'teh', rewritten: 'the', tone: 'grammar' }, undo: () => true });
+      const t = document.querySelector('.sr-success-notification');
+      const buttons = [...t.querySelectorAll('button')].map((b) => b.textContent);
+      t.querySelector('.sr-success-undo').click();
+      await new Promise((res) => setTimeout(res, 50));
+      const after = t.querySelector('.sr-success-text').textContent;
+      M.showSuccess('Nothing to fix.', { review: { original: 'Fine.', rewritten: 'Fine.', tone: 'grammar' }, undo: () => true });
+      const none = document.querySelectorAll('.sr-success-notification button').length;
+      return { buttons, after, none };
+    });
+    check(r.buttons.join() === 'Review,Undo', `toast: Review and Undo buttons (got ${r.buttons})`);
+    check(r.after === 'Undone.', `toast: Undo calls the undo function and says so (got ${JSON.stringify(r.after)})`);
+    check(r.none === 0, 'toast: nothing changed → no Review, no Undo');
+  });
+
   // 4. In-place replace + undo.
   const undo = process.platform === 'darwin' ? 'Meta' : 'Control';
   for (const [sel, label] of [['#ta', 'textarea'], ['#ce', 'contenteditable']]) {
@@ -252,6 +306,16 @@ try {
     const forced = await waitFor(() => page.evaluate((out) => document.querySelector('#ta').value === out
       && document.querySelector('.sr-modal-overlay').getClientRects().length === 0, OUT), 3000);
     check(forced, 'change guard: "Replace anyway" replaces the text and closes the dialog');
+
+    // Revert one change first: Replace anyway must insert only what was kept.
+    await selectField(risky);
+    await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, risky);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text .sr-change[data-g="0"]')), 5000);
+    await page.evaluate(() => document.querySelector('#sr-rewritten-text .sr-change[data-g="0"]').click());
+    await page.evaluate(() => document.getElementById('sr-action-btn').click());
+    const expected = C.SR_applyDiff(C.SR_wordDiff(risky, OUT), new Set([0]));
+    const partial = await waitFor(() => page.evaluate((want) => document.querySelector('#ta').value === want, expected), 3000);
+    check(partial && expected !== OUT, `change guard: after undoing one change, Replace anyway inserts only the kept changes (want ${JSON.stringify(expected)}, got ${JSON.stringify(await page.evaluate(() => document.querySelector('#ta').value))})`);
   });
 
   // 4d. A real mouse click reaches the toast's Review button (z-index, pointer-events).

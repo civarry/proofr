@@ -64,6 +64,16 @@ async function getSettings() {
   return { engine: r.srEngine || 'auto', targetLang: r.srTargetLang || 'en' };
 }
 
+// Same per-day counts as sidepanel.js SR_bumpDay (last 14 days).
+function bumpDay(days) {
+  const out = { ...(days || {}) };
+  const today = new Date().toISOString().slice(0, 10);
+  out[today] = (out[today] || 0) + 1;
+  const cutoff = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
+  for (const d of Object.keys(out)) if (d < cutoff) delete out[d];
+  return out;
+}
+
 class StatsManager {
   static async getStats() {
     const result = await chrome.storage.local.get(['rewriteStats']);
@@ -73,6 +83,7 @@ class StatsManager {
   static async updateStats(style) {
     const stats = await this.getStats();
     stats.totalRewrites++;
+    stats.days = bumpDay(stats.days);
     stats.styleUsage[style] = (stats.styleUsage[style] || 0) + 1;
     stats.lastUsed = Date.now();
     await chrome.storage.local.set({ rewriteStats: stats });
@@ -126,9 +137,9 @@ function whereLabel(providerId, cfg) {
 
 // Rewrite with whatever is ready: on-device only when already downloaded,
 // otherwise the cloud key.
-function rewriteNow(text, tone, status, targetLang) {
+function rewriteNow(text, tone, status, targetLang, onToken) {
   const engine = (status.settings.engine === 'auto' && !status.deviceNow) ? 'cloud' : status.settings.engine;
-  return SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang });
+  return SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang, onToken });
 }
 
 // Clicking the toolbar icon opens the side panel directly (replaces the old popup).
@@ -424,7 +435,16 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     if (!noReplace) await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
     inject(tabId, showLoadingModal, [text, tone, lang]);
 
-    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang);
+    // On-device answers stream; show them arriving in the dialog instead of a
+    // long skeleton. Throttled: each update is a script injection.
+    let lastPush = 0;
+    const onToken = (soFar) => {
+      const now = Date.now();
+      if (now - lastPush < 150) return;
+      lastPush = now;
+      inject(tabId, streamPartial, [soFar]);
+    };
+    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, onToken);
     await StatsManager.updateStats(tone);
 
     inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider)]);
@@ -509,6 +529,10 @@ function showErrorMessage(message, title) {
   }
 }
 
+function streamPartial(soFar) {
+  if (window.SmartRewriteModal && window.SmartRewriteModal.streamText) window.SmartRewriteModal.streamText(soFar);
+}
+
 function showLoadingModal(originalText, tone, targetLang) {
   if (window.SmartRewriteModal) {
     window.SmartRewriteModal.showLoading(originalText, tone, targetLang);
@@ -525,17 +549,16 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   if (targets) targets.delete(requestId);
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   let replaced = false;
-  let undoable = false;
 
   // Proofread should only fix mistakes. If it changed much more, or dropped a
   // number, name, or "not", don't paste it in silently: show it for review.
-  const insertInto = (t) => {
+  const insertInto = (t, text) => {
     if (t.kind === 'field' && t.el.isConnected
         && norm(t.el.value.slice(t.start, t.end)) === norm(t.original)) {
       t.el.focus();
       t.el.setSelectionRange(t.start, t.end);
-      if (document.execCommand('insertText', false, rewrittenText)) return 'undoable';
-      t.el.setRangeText(rewrittenText, t.start, t.end, 'end');
+      if (document.execCommand('insertText', false, text)) return 'undoable';
+      t.el.setRangeText(text, t.start, t.end, 'end');
       t.el.dispatchEvent(new Event('input', { bubbles: true }));
       return 'replaced';
     }
@@ -545,7 +568,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(t.range);
-      return document.execCommand('insertText', false, rewrittenText) ? 'undoable' : null;
+      return document.execCommand('insertText', false, text) ? 'undoable' : null;
     }
     return null;
   };
@@ -554,30 +577,56 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   if (guard && !guard.ok) {
     if (window.SmartRewriteModal) {
       const opts = { notice: `Check this before using it: ${guard.reasons.join(', ')}.`, where };
-      // The user can still accept it: same target, same safety re-check.
-      if (target) opts.action = { label: 'Replace anyway', run: () => { try { return !!insertInto(target); } catch (_) { return false; } } };
+      // The user can still accept it: same target, same safety re-check. The
+      // dialog hands back the accepted text (changes the user clicked off are
+      // put back), so that's what goes in, not the full suggestion.
+      if (target) opts.action = { label: 'Replace anyway', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } };
       window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, opts);
     }
     return;
   }
 
   try {
-    const how = target ? insertInto(target) : null;
+    const how = target ? insertInto(target, rewrittenText) : null;
     replaced = !!how;
-    undoable = how === 'undoable';
   } catch (_) {
     replaced = false;
   }
 
+  // A visible Undo on the toast: Cmd/Ctrl+Z doesn't work in every editor.
+  // A plain field gets its original text put back exactly; a rich editor
+  // uses the browser's own undo for the edit just made.
+  const undo = () => {
+    try {
+      if (target.kind === 'field' && target.el.isConnected
+          && target.el.value.slice(target.start, target.start + rewrittenText.length) === rewrittenText) {
+        target.el.focus();
+        target.el.setSelectionRange(target.start, target.start + rewrittenText.length);
+        if (!document.execCommand('insertText', false, target.original)) {
+          target.el.setRangeText(target.original, target.start, target.start + rewrittenText.length, 'end');
+          target.el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return true;
+      }
+      if (target.kind === 'editable' && target.el.isConnected) {
+        target.el.focus();
+        const before = target.el.innerText;
+        document.execCommand('undo');
+        return target.el.innerText !== before;
+      }
+    } catch (_) { /* fall through */ }
+    return false;
+  };
+
   if (replaced) {
     if (window.SmartRewriteModal) {
-      const undoKey = /Mac/i.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
       // Proofread says how much it fixed, so "nothing changed" is visible too.
       const ops = (tone === 'grammar' && typeof SR_wordDiff === 'function') ? SR_wordDiff(originalText, rewrittenText) : null;
       const fixes = ops && typeof SR_diffCount === 'function' ? SR_diffCount(ops) : null;
       const what = fixes === 0 ? 'No changes needed.' : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
-      window.SmartRewriteModal.showSuccess(undoable && fixes !== 0 ? `${what} ${undoKey} to undo.` : what,
-        { review: { original: originalText, rewritten: rewrittenText, tone, provider, where } });
+      // "Nothing to fix" needs no Review or Undo; otherwise both are buttons.
+      window.SmartRewriteModal.showSuccess(fixes === 0 ? 'Nothing to fix.' : what,
+        fixes === 0 ? {} : { review: { original: originalText, rewritten: rewrittenText, tone, provider, where }, undo });
     }
     return;
   }
