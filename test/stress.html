@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofr stress run</title>
+<style>
+  :root { --paper:#FAF9F7; --card:#FFF; --ink:#23221E; --soft:#5E5B53; --faint:#6C695F; --line:#E6E3DC; --accent:#1D64D8; --good:#276B41; --bad:#B4443A; --ins:#E7F3EA; }
+  @media (prefers-color-scheme: dark) { :root { --paper:#1B1A17; --card:#24231F; --ink:#EDEBE5; --soft:#C2BEB3; --faint:#A8A498; --line:#34322C; --accent:#7EA8F8; --good:#8FD3A6; --bad:#E58A80; --ins:#1F3326; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px; background: var(--paper); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  header, #summary { grid-column: 1 / -1; }
+  h1 { font-size: 18px; margin: 0 0 4px; } p { margin: 0; color: var(--soft); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); margin: 0 0 8px; }
+  .big { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 8px 0; } .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-top: 1px solid var(--line); } th { color: var(--faint); font-size: 12px; border-top: none; }
+  .good { color: var(--good); font-weight: 600; } .bad { color: var(--bad); font-weight: 600; }
+  #log { max-height: 560px; overflow-y: auto; display: flex; flex-direction: column-reverse; gap: 6px; }
+  .item { border-top: 1px solid var(--line); padding-top: 6px; font-size: 12px; }
+  .item b { font-weight: 600; } .meta { color: var(--faint); }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  button { font: 600 13px inherit; padding: 9px 14px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  #summary .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Proofr: 200 rewrites on Gemini Nano</h1>
+    <p>Proofr's own rewrite code (SR_rewriteAuto, the same path the extension uses) on Chrome's on-device model. Every input is different, so nothing comes from the cache. Nothing is sent anywhere.</p>
+    <div class="row"><button id="start" type="button">Start 200 rewrites</button><span id="status" role="status"></span></div>
+  </header>
+  <section id="summary">
+    <div class="grid">
+      <div><h2>Done</h2><div class="big" id="done">0 / 200</div><div class="bar"><i id="bar"></i></div></div>
+      <div><h2>Succeeded</h2><div class="big" id="ok">0</div></div>
+      <div><h2>Median time</h2><div class="big" id="p50">-</div></div>
+      <div><h2>Slowest 5%</h2><div class="big" id="p95">-</div></div>
+      <div><h2>Elapsed</h2><div class="big" id="elapsed">-</div></div>
+    </div>
+  </section>
+  <section><h2>By mode</h2><table id="modes"><tr><th>Mode</th><th>Done</th><th>OK</th><th>Median</th><th>Slowest 5%</th><th>Checks</th></tr></table></section>
+  <section><h2>Live results (newest first)</h2><div id="log"></div></section>
+</main>
+<script src="../constants.js"></script>
+<script src="stress.js"></script>
+</body>
+</html>
