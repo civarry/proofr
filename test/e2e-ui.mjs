@@ -40,7 +40,11 @@ fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify(m, null, 2));
 
 const SENT = 'Jane said we was hoping to recieve it by friday at 3pm.';
 const FIXED = 'Jane said we were hoping to receive it by Friday at 3pm.';
-const FIXES = { [SENT]: FIXED };
+// The change guard flags this "proofread": it rewrote the sentence.
+const REWRITE = 'please send the files to the team before noon today';
+const FIXES = { [SENT]: FIXED, [REWRITE]: 'Kindly forward every document to all colleagues ahead of lunchtime.' };
+// Tips as a model might write them, one with an example the user never wrote.
+const TIPS = '1. You wrote "recieve" for receive: i before e, except after c.\n2. With we, use were, not "was".\n3. You also wrote "definately" for definitely.';
 // Mock provider: records request bodies, answers /models and /chat/completions.
 const mockRequests = [];
 const mock = http.createServer((req, res) => {
@@ -61,7 +65,8 @@ const mock = http.createServer((req, res) => {
     const input = (prompt.match(/<(text-[0-9a-f]{12})>\n([\s\S]*?)\n<\/\1>/) || [, , ''])[2].trim();
     // A real-looking Proofread for the Progress checks; LEAK makes the model
     // obey an injection and repeat its instructions.
-    const content = FIXES[input] || (/LEAK/.test(input) ? parsed.messages[0].content : `R(${input})`);
+    const content = /Write exactly 3 tips/.test(prompt) ? TIPS
+      : FIXES[input] || (/LEAK/.test(input) ? parsed.messages[0].content : `R(${input})`);
     const reply = () => {
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }] }));
@@ -464,6 +469,17 @@ check('progress stores the corrected words', /recieve→receive/.test(blob) && /
 check('progress never stores sentences, names or numbers', !/hoping|Jane|3pm|said/.test(blob), blob.slice(0, 300));
 const today = Object.values(store?.days || {})[0] || {};
 check('progress counts the words proofread', today.words === 12 && today.fixes >= 3, JSON.stringify(today));
+// The same mistakes again (a pair is only taught once it repeats).
+await putBox('ins', SENT);
+await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, SENT); await sleep(1500);
+store = await insights();
+check('a repeated mistake is counted again', store?.pairs?.['recieve→receive']?.n === 2, JSON.stringify(store?.pairs?.['recieve→receive']));
+
+// A result the change guard flagged is not learned from.
+await putBox('ins', REWRITE);
+await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, REWRITE); await sleep(1500);
+check('a flagged rewrite is not learned from', JSON.stringify(await insights()) === JSON.stringify(store), JSON.stringify((await insights())?.days));
+await demo.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
 
 // Turned off: nothing more is recorded.
 await sw.evaluate(() => chrome.storage.sync.set({ srInsightsOn: false }));
@@ -490,7 +506,7 @@ const prog = await panel.evaluate(() => ({
 }));
 check('progress tab shows the rate and what to work on', prog.shown && /^\d+\.\d$/.test(prog.rate) && /recieve/.test(prog.working) && /r-e-c-e-i-v-e/.test(prog.working), JSON.stringify(prog).slice(0, 220));
 check('progress offers practice', prog.focus);
-check('progress says what the rate is based on', /Based on 1 proofread, 12 words/.test(prog.basis), prog.basis);
+check('progress says what the rate is based on', /Based on 2 proofreads, 24 words/.test(prog.basis), prog.basis);
 await shot(panel, '9-progress.png');
 
 // Practice: the right answer scores all right, the unchanged sentence none.
@@ -516,7 +532,11 @@ mockRequests.length = 0;
 await clk(panel, '#btnTips'); await sleep(1500);
 const tipsBody = JSON.stringify(mockRequests.at(-1) || {});
 check('tips send the word list only', /recieve/.test(tipsBody) && !/hoping|Jane|3pm/.test(tipsBody), tipsBody.slice(0, 200));
-check('tips show the answer', await panel.evaluate(() => !document.getElementById('insTips').hidden && document.getElementById('insTips').textContent.length > 0));
+const tipsShown = await panel.evaluate(() => (document.getElementById('insTips').hidden ? '' : document.getElementById('insTips').textContent));
+check('tips show only advice about the user\'s own words', /recieve/.test(tipsShown) && !/definately/.test(tipsShown), tipsShown);
+const askedBefore = mockRequests.length;
+await clk(panel, '#btnTips'); await sleep(800);
+check('asking for tips again on the same list costs no request', mockRequests.length === askedBefore && /recieve/.test(await panel.evaluate(() => document.getElementById('insTips').textContent)));
 
 // Coach mode on: spots marked, text untouched; Show fixes then Apply.
 await clk(panel, '#btnSettings'); await sleep(500);

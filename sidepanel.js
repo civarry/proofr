@@ -1218,17 +1218,24 @@ function pairHtml(p) {
   return `<span class="from">${escapeHtml(p.from)}</span> <span aria-hidden="true">→</span><span class="visually-hidden"> to </span> <span class="to">${escapeHtml(p.to)}</span>`;
 }
 
-// Practice needs pairs it can build sentences from; returns the kind to focus
-// on and whether a round can be built for it.
+// The focus is the kind of mistake Practice can drill most: sentence-start
+// capitals and punctuation have no wrong word to type over, so they never
+// lead. With nothing to practice, the most common word fix is shown instead.
 function pickFocus(view) {
+  const items = typeof SR_buildPractice === 'function' ? SR_buildPractice(view, 3, 0) : [];
+  const practicable = new Set(items.flatMap((it) => it.targets.map((t) => `${t.from}→${t.to}`)));
+  const pool = view.working.filter((p) => practicable.has(`${p.from}→${p.to}`));
+  const from = pool.length ? pool : view.working.filter((p) => p.kind !== 'punctuation');
   const counts = {};
-  for (const p of view.working) counts[p.kind] = (counts[p.kind] || 0) + p.n;
+  for (const p of from) counts[p.kind] = (counts[p.kind] || 0) + p.n;
   const kind = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
   if (!kind) return null;
-  const words = view.working.filter((p) => p.kind === kind).slice(0, 3).map((p) => p.to);
-  const canPractice = typeof SR_buildPractice === 'function' && SR_buildPractice(view, 3, 0).length > 0;
-  return { kind, words, canPractice };
+  const words = from.filter((p) => p.kind === kind).slice(0, 3).map((p) => p.to);
+  return { kind, words, canPractice: pool.length > 0 };
 }
+
+// Punctuation pairs ("," → ";") read as noise in a word list.
+const wordPairs = (list) => list.filter((p) => p.kind !== 'punctuation');
 
 async function renderProgress() {
   if (typeof SR_insightsView !== 'function') return null;
@@ -1278,11 +1285,12 @@ async function renderProgress() {
   }
 
   // Mastered / Still working on
-  refs.progMasteredCard.hidden = !view.mastered.length;
-  refs.progMastered.innerHTML = view.mastered.slice(0, 5).map((p) =>
+  const mastered = wordPairs(view.mastered), working = wordPairs(view.working);
+  refs.progMasteredCard.hidden = !mastered.length;
+  refs.progMastered.innerHTML = mastered.slice(0, 5).map((p) =>
     `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(p.to)}</span><span class="meta">clean for ${p.daysClean} days</span></div>`).join('');
-  refs.progWorkingCard.hidden = !view.working.length;
-  refs.progWorking.innerHTML = view.working.slice(0, 5).map((p) => {
+  refs.progWorkingCard.hidden = !working.length;
+  refs.progWorking.innerHTML = working.slice(0, 5).map((p) => {
     const rule = typeof SR_ruleFor === 'function' ? SR_ruleFor(p) : null;
     return `<div class="prog-row"><div>${pairHtml(p)}${rule ? `<div class="rule">${escapeHtml(rule)}</div>` : ''}</div><span class="meta">${p.n}×</span></div>`;
   }).join('');
@@ -1290,14 +1298,23 @@ async function renderProgress() {
 }
 
 // Tips: the connected provider, else Chrome's on-device model (from this
-// click, so a first-time download is allowed). The list is fenced as data
-// and the reply checked like any other (SR_cleanOutput).
+// click, so a first-time download is allowed). The list is fenced as data,
+// the reply checked like any other (SR_cleanOutput), and only tips naming the
+// user's own words are kept (SR_checkTips). The same list asks once: the
+// answer is kept until the list changes, so repeat clicks cost nothing.
 async function getTips() {
   const view = await renderProgress();
-  if (!view || !view.working.length && !view.mastered.length) return;
-  const pairs = [...view.working, ...view.mastered].slice(0, 15);
-  const kinds = view.kinds;
-  const prompt = SR_buildTipsPrompt(pairs, kinds);
+  if (!view) return;
+  const pairs = [...view.working, ...view.mastered].filter((p) => p.kind !== 'punctuation').slice(0, 15);
+  if (!pairs.length) {
+    refs.insTipsStatus.textContent = 'Tips need a few repeated fixes first. Keep proofreading and try again later.';
+    return;
+  }
+  const key = pairs.map((p) => `${p.from}→${p.to}:${p.n}`).join('|');
+  const { srTipsCache } = await chrome.storage.local.get(['srTipsCache']);
+  if (srTipsCache && srTipsCache.key === key && Array.isArray(srTipsCache.tips)) { showTips(srTipsCache.tips); return; }
+
+  const prompt = SR_buildTipsPrompt(pairs, view.kinds);
   refs.btnTips.disabled = true;
   refs.insTipsStatus.textContent = 'Looking at your list…';
   refs.insTips.hidden = true;
@@ -1307,21 +1324,28 @@ async function getTips() {
     const deviceNow = (await SR_deviceAvailability()) === 'available';
     let text;
     if (providerReady(provider) && (engine === 'cloud' || !deviceNow)) {
-      text = await SR_callCloud(provider, prompt, 0.4, 600);
+      text = await SR_callCloud(provider, prompt, 0.4, 400);
     } else {
       const LM = SR_deviceModel();
       if (!LM) throw new Error('Connect an AI provider in Settings to get tips.');
       const session = await LM.create({ expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] });
       try { text = await session.prompt(SR_joinPrompt(prompt)); } finally { try { session.destroy(); } catch { /* ignore */ } }
     }
-    refs.insTips.textContent = SR_cleanOutput(text, { fence: prompt.fence });
-    refs.insTips.hidden = false;
-    refs.insTipsStatus.textContent = '';
+    const tips = SR_checkTips(SR_cleanOutput(text, { fence: prompt.fence }), pairs);
+    if (!tips.length) throw new Error('The AI\'s tips didn\'t match your words, so Proofr didn\'t show them. Try again.');
+    await chrome.storage.local.set({ srTipsCache: { key, tips } });
+    showTips(tips);
   } catch (error) {
     refs.insTipsStatus.textContent = error.message || 'Couldn\'t get tips right now. Try again.';
   } finally {
     refs.btnTips.disabled = false;
   }
+}
+
+function showTips(tips) {
+  refs.insTips.textContent = tips.map((t, i) => `${i + 1}. ${t}`).join('\n');
+  refs.insTips.hidden = false;
+  refs.insTipsStatus.textContent = '';
 }
 
 // === Practice ===
@@ -1784,7 +1808,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   refs.btnProgEmpty.addEventListener('click', () => toggleSettingsPanel(true));
   refs.btnTips.addEventListener('click', getTips);
   refs.btnClearInsights.addEventListener('click', async () => {
-    await chrome.storage.local.remove(['srInsights']);
+    await chrome.storage.local.remove(['srInsights', 'srTipsCache']);
     refs.insTips.hidden = true;
     renderProgress();
   });
