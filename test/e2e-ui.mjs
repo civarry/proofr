@@ -42,7 +42,9 @@ const SENT = 'Jane said we was hoping to recieve it by friday at 3pm.';
 const FIXED = 'Jane said we were hoping to receive it by Friday at 3pm.';
 // The change guard flags this "proofread": it rewrote the sentence.
 const REWRITE = 'please send the files to the team before noon today';
-const FIXES = { [SENT]: FIXED, [REWRITE]: 'Kindly forward every document to all colleagues ahead of lunchtime.' };
+// Already correct: the model returns it unchanged, so its words are right uses.
+const CLEAN = 'We will receive it soon.';
+const FIXES = { [SENT]: FIXED, [CLEAN]: CLEAN, [REWRITE]: 'Kindly forward every document to all colleagues ahead of lunchtime.' };
 // Tips as a model might write them, one with an example the user never wrote.
 const TIPS = '1. You wrote "recieve" for receive: i before e, except after c.\n2. With we, use were, not "was".\n3. You also wrote "definately" for definitely.';
 // Mock provider: records request bodies, answers /models and /chat/completions.
@@ -567,6 +569,59 @@ await panel.evaluate(async () => {
 await clk(panel, '#tabWrite'); await clk(panel, '#tabProgress'); await sleep(500);
 const habitsText = await panel.evaluate(() => (document.getElementById('progHabitsCard').hidden ? '' : document.getElementById('progHabits').innerText));
 check('progress names this writer\'s own pattern', /apostrophes/.test(habitsText) && /don't/.test(habitsText), habitsText);
+await demo.bringToFront();
+
+// Text selected on a page (someone else's writing) teaches nothing.
+await demo.bringToFront();
+let snapshot = JSON.stringify(await insights());
+await demo.evaluate(() => {
+  document.activeElement && document.activeElement.blur();
+  const p = document.createElement('p'); p.id = 'pagetext'; p.textContent = 'teh article was writen by someone else';
+  document.body.prepend(p);
+  const r = document.createRange(); r.selectNodeContents(p);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+});
+await sw.evaluate((id) => handleRewrite(id, 'teh article was writen by someone else', 'grammar', { ensure: true }), tabId); await sleep(1500);
+await demo.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+check('page text someone else wrote is not recorded', JSON.stringify(await insights()) === snapshot);
+
+// Writing a word right in your own box earns it. Mastery takes right uses on
+// 3 different days and 2 weeks with no fix, so earlier days are seeded with the
+// same merge the extension runs, at past times.
+const pairOf = async (k) => (await insights())?.pairs?.[k] || {};
+await putBox('clean', CLEAN);
+await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, CLEAN); await sleep(1200);
+const once = await pairOf('recieve→receive');
+check('a word written right counts as a right use', /g$/.test(once.h || '') && once.streak >= 1, JSON.stringify(once));
+await putBox('clean', CLEAN);
+await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, CLEAN); await sleep(1200);
+check('the same day twice counts once', (await pairOf('recieve→receive')).streak === once.streak, JSON.stringify(await pairOf('recieve→receive')));
+await sw.evaluate(async (clean) => {
+  const DAY = 864e5, now = Date.now();
+  const fix = [{ from: 'acheive', to: 'achieve' }];
+  let st = (await chrome.storage.local.get(['srInsights'])).srInsights;
+  st = SR_mergeInsights(st, fix, now - 30 * DAY, 8, 1, 'we acheive it');
+  st = SR_mergeInsights(st, fix, now - 29 * DAY, 8, 1, 'we acheive it');
+  st = SR_mergeInsights(st, [], now - 3 * DAY, 4, 0, clean);
+  st = SR_mergeInsights(st, [], now - 2 * DAY, 4, 0, clean);
+  await chrome.storage.local.set({ srInsights: st });
+}, 'We will achieve it.');
+const ACHIEVE = 'We will achieve it.';
+FIXES[ACHIEVE] = ACHIEVE;
+await putBox('clean', ACHIEVE);
+await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, ACHIEVE); await sleep(1200);
+const toastText = await demo.evaluate(() => document.getElementById('sr-toast')?.innerText || '');
+check('third day right, no fix in 2 weeks: the toast says it is mastered', /achieve/.test(toastText) && /Mastered/.test(toastText), toastText.replace(/\s+/g, ' '));
+await panel.bringToFront();
+await clk(panel, '#tabWrite'); await clk(panel, '#tabProgress'); await sleep(500);
+const strips = await panel.evaluate(() => ({
+  mastered: document.getElementById('progMastered').innerText,
+  dots: [...document.querySelectorAll('#progWorking .prog-dots')].map((d) => d.getAttribute('aria-label')),
+  bars: document.querySelectorAll('#progKinds .prog-bar').length,
+}));
+check('a mastered word shows how it was earned', /achieve/.test(strips.mastered) && /3 right in a row/.test(strips.mastered), strips.mastered);
+check('words being worked on show their recent history', strips.dots.length > 0 && strips.dots.every((l) => /^Last \d times: fixed \d, right \d$/.test(l)), JSON.stringify(strips.dots));
+check('"What you fix" bars show', strips.bars > 0, String(strips.bars));
 await demo.bringToFront();
 
 // Injection obeyed by the model: the leaked instructions never reach the box.

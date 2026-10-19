@@ -69,6 +69,8 @@ for (const theme of ['light', 'dark']) {
   for (const k of ['--ink', '--ink-soft', '--ink-faint', '--live-ink', '--error']) {
     for (const bg of [panel['--paper'], panel['--card']]) if (ratio(panel[k], bg) < 4.5) fail(`${theme}: panel ${k} ${panel[k]} is ${ratio(panel[k], bg).toFixed(2)}:1 on ${bg}`);
   }
+  // Word-strip dots are graphics: 3:1 against the card (WCAG 1.4.11).
+  for (const k of ['--dot-fixed', '--dot-right']) if (ratio(panel[k], panel['--card']) < 3) fail(`${theme}: ${k} ${panel[k]} is ${ratio(panel[k], panel['--card']).toFixed(2)}:1 on cards`);
   if (ratio(panel['--warn-ink'], panel['--warn-bg']) < 4.5) fail(`${theme}: practice miss text is ${ratio(panel['--warn-ink'], panel['--warn-bg']).toFixed(2)}:1 on its fill`);
   if (ratio(panel['--accent-fg'], panel['--accent']) < 4.5) fail(`${theme}: button text on accent is ${ratio(panel['--accent-fg'], panel['--accent']).toFixed(2)}:1`);
   for (const k of ['--sr-gray-500', '--sr-gray-600', '--sr-gray-900', '--sr-error', '--sr-del-fg', '--sr-notice-fg']) {

@@ -68,15 +68,15 @@ const s0 = { v: 1, pairs: { 'teh→the': { n: 1, first: NOW - 3 * DAY, last: NOW
 const frozen = JSON.stringify(s0);
 const s1 = SR_mergeInsights(s0, [{ from: 'teh', to: 'the' }, { from: 'was', to: 'were' }], NOW, 40, 3);
 assert.equal(JSON.stringify(s0), frozen, 'input not mutated');
-assert.deepEqual(s1.pairs['teh→the'], { n: 2, first: NOW - 3 * DAY, last: NOW, kind: 'spelling' });
-assert.deepEqual(s1.pairs['was→were'], { n: 1, first: NOW, last: NOW, kind: 'grammar' });
-assert.deepEqual(s1.days, { [SR_dayKey(NOW)]: { fixes: 3, words: 40, proofreads: 1 } }, 'fixes counts every change, not only the kept pairs');
+assert.deepEqual(s1.pairs['teh→the'], { n: 2, first: NOW - 3 * DAY, last: NOW, kind: 'spelling', h: 'm', streak: 0, g: 0 });
+assert.deepEqual(s1.pairs['was→were'], { n: 1, first: NOW, last: NOW, kind: 'grammar', h: 'm', streak: 0, g: 0 });
+assert.deepEqual(s1.days, { [SR_dayKey(NOW)]: { fixes: 3, words: 40, proofreads: 1, k: { spelling: 1, grammar: 1 } } }, 'fixes counts every change, not only the kept pairs');
 const s2 = SR_mergeInsights(s1, [{ from: 'u', to: 'you' }], NOW + 1000, 10, 1);
-assert.deepEqual(s2.days[SR_dayKey(NOW)], { fixes: 4, words: 50, proofreads: 2 }, 'same day adds up');
+assert.deepEqual(s2.days[SR_dayKey(NOW)], { fixes: 4, words: 50, proofreads: 2, k: { spelling: 2, grammar: 1 } }, 'same day adds up');
 // Day rollover: tomorrow is a new key, and days older than 120 are dropped.
 const s3 = SR_mergeInsights({ v: 1, pairs: {}, days: { [SR_dayKey(NOW)]: { fixes: 1, words: 9 }, [SR_dayKey(NOW + DAY - 119 * DAY)]: { fixes: 1, words: 9 }, [SR_dayKey(NOW + DAY - 120 * DAY)]: { fixes: 1, words: 9 } } }, [], NOW + DAY, 20, 0);
 assert.deepEqual(Object.keys(s3.days).sort(), [SR_dayKey(NOW + DAY - 119 * DAY), SR_dayKey(NOW), SR_dayKey(NOW + DAY)].sort(), 'tomorrow is a new day; day 120 back is dropped');
-assert.deepEqual(s3.days[SR_dayKey(NOW + DAY)], { fixes: 0, words: 20, proofreads: 1 });
+assert.deepEqual(s3.days[SR_dayKey(NOW + DAY)], { fixes: 0, words: 20, proofreads: 1, k: {} });
 // The 300 cap: one-off pairs go first, oldest first; a repeat pair survives though older.
 let big = { v: 1, pairs: { 'old→repeat': { n: 3, first: NOW - 50 * DAY, last: NOW - 40 * DAY, kind: 'other' } }, days: {} };
 for (let i = 0; i < 305; i++) big = SR_mergeInsights(big, [{ from: `w${i}`, to: `v${i}` }], NOW + i, 1, 1); // merge doesn't filter
@@ -87,16 +87,16 @@ assert.ok(!Object.values(big.pairs).some((p) => p.last === NOW), 'the oldest one
 // A garbage store (older build, hand edit, corrupted storage) still merges into a valid one.
 for (const junk of [null, undefined, 'abc', 42, [], { pairs: ['teh→the'], days: 'x' }, { pairs: { 'a→b': { n: NaN, last: 'x' }, nokey: { n: 3 }, 'c→d': null }, days: { bad: { fixes: 1 }, [SR_dayKey(NOW)]: { fixes: -5, words: NaN } } }]) {
   const out = SR_mergeInsights(junk, [{ from: 'teh', to: 'the' }, null, { from: 3 }], NOW, NaN, 'x');
-  assert.deepEqual(out.pairs, { 'teh→the': { n: 1, first: NOW, last: NOW, kind: 'spelling' } }, `junk: ${JSON.stringify(junk)}`);
+  assert.deepEqual(out.pairs, { 'teh→the': { n: 1, first: NOW, last: NOW, kind: 'spelling', h: 'm', streak: 0, g: 0 } }, `junk: ${JSON.stringify(junk)}`);
   assert.equal(out.v, 1);
   for (const [day, d] of Object.entries(out.days)) {
     assert.match(day, /^\d{4}-\d{2}-\d{2}$/);
-    assert.ok(Object.values(d).every((x) => Number.isFinite(x) && x >= 0), `days are clean counts: ${JSON.stringify(out.days)}`);
+    assert.ok([d.fixes, d.words, d.proofreads, ...Object.values(d.k)].every((x) => Number.isFinite(x) && x >= 0), `days are clean counts: ${JSON.stringify(out.days)}`);
   }
   assert.doesNotThrow(() => SR_insightsView(junk, NOW));
 }
 const kept = SR_mergeInsights({ pairs: { 'x→y': { n: 2.7, first: 0, last: NOW - DAY, kind: 7 } } }, [], NOW, 0, 0);
-assert.deepEqual(kept.pairs['x→y'], { n: 2, first: NOW - DAY, last: NOW - DAY, kind: 'other' }, 'a fixable entry is repaired, not dropped');
+assert.deepEqual(kept.pairs['x→y'], { n: 2, first: NOW - DAY, last: NOW - DAY, kind: 'other', h: '', streak: 0, g: 0 }, 'a fixable entry is repaired, not dropped');
 
 // View: per-100 math, the trend, mastered and working, and the empty store.
 const day = (n) => SR_dayKey(NOW - n * DAY);
@@ -104,8 +104,8 @@ const view = SR_insightsView({
   v: 1,
   days: { [day(0)]: { fixes: 3, words: 150 }, [day(6)]: { fixes: 1, words: 250 }, [day(7)]: { fixes: 10, words: 200 }, [day(13)]: { fixes: 2, words: 100 }, [day(20)]: { fixes: 1, words: 600 } },
   pairs: {
-    'teh→the': { n: 4, first: NOW - 40 * DAY, last: NOW - 20 * DAY, kind: 'spelling' }, // twice+, 20 days clean, 1,000 words since
-    'was→were': { n: 3, first: NOW - 30 * DAY, last: NOW - 10 * DAY, kind: 'grammar' }, // only 10 days clean
+    'teh→the': { n: 4, first: NOW - 40 * DAY, last: NOW - 20 * DAY, kind: 'spelling', h: 'mmggg', streak: 3 }, // right 3 times, 20 days since
+    'was→were': { n: 3, first: NOW - 30 * DAY, last: NOW - 10 * DAY, kind: 'grammar', h: 'mmmgg', streak: 2 }, // one short, 10 days back
     'its→it\'s': { n: 1, first: NOW - 30 * DAY, last: NOW - 30 * DAY, kind: 'apostrophe' }, // seen once
     'u→you': { n: 2, first: NOW - 5 * DAY, last: NOW - DAY, kind: 'other' },
   },
@@ -113,8 +113,8 @@ const view = SR_insightsView({
 assert.deepEqual(view.week, { fixes: 4, words: 400, per100: 1 });
 assert.deepEqual(view.prevWeek, { fixes: 12, words: 300, per100: 4 });
 assert.equal(view.trend, -3, 'fewer fixes per 100 words is the improvement');
-assert.deepEqual(view.mastered, [{ from: 'teh', to: 'the', n: 4, daysClean: 20 }]);
-assert.deepEqual(view.working, [{ from: 'was', to: 'were', n: 3, kind: 'grammar' }, { from: 'u', to: 'you', n: 2, kind: 'other' }]);
+assert.deepEqual(view.mastered, [{ from: 'teh', to: 'the', n: 4, streak: 3 }]);
+assert.deepEqual(view.working, [{ from: 'was', to: 'were', n: 3, kind: 'grammar', h: 'mmmgg', streak: 2 }, { from: 'u', to: 'you', n: 2, kind: 'other', h: '', streak: 0 }]);
 assert.deepEqual(view.kinds, { spelling: 4, grammar: 3, apostrophe: 1, other: 2 });
 // A recent pair fixed once may be the model's mistake: it's never in working.
 {
@@ -124,14 +124,17 @@ assert.deepEqual(view.kinds, { spelling: 4, grammar: 3, apostrophe: 1, other: 2 
   } }, NOW);
   assert.deepEqual(once.working.map((p) => p.from), ['dont'], 'a one-off fix is not taught');
 }
-// "Mastered" needs proofreading in between, not just time away.
-const idle = SR_insightsView({ v: 1, days: {}, pairs: { 'teh→the': { n: 4, first: NOW - 40 * DAY, last: NOW - 20 * DAY, kind: 'spelling' } } }, NOW);
-assert.deepEqual(idle.mastered, [], 'no words proofread since: not mastered');
+// "Mastered" is earned by right uses, not time away; an old fix with no streak leaves working.
+const idle = SR_insightsView({ v: 1, days: { [day(1)]: { fixes: 0, words: 5000 } }, pairs: { 'teh→the': { n: 4, first: NOW - 40 * DAY, last: NOW - 20 * DAY, kind: 'spelling' } } }, NOW);
+assert.deepEqual([idle.mastered, idle.working], [[], []], 'not using the word for weeks is not mastery');
+// Two right in a row after 20 quiet days: not mastered yet, and still shown as working on.
+const almost = SR_insightsView({ v: 1, days: {}, pairs: { 'recieve→receive': { n: 3, first: NOW - 40 * DAY, last: NOW - 20 * DAY, kind: 'spelling', h: 'mmmgg', streak: 2 } } }, NOW);
+assert.deepEqual([almost.mastered, almost.working.map((p) => p.streak)], [[], [2]], 'one more to master it');
 // Too few words for a trend.
 assert.equal(SR_insightsView({ v: 1, pairs: {}, days: { [day(0)]: { fixes: 1, words: 50 }, [day(8)]: { fixes: 1, words: 500 } } }, NOW).trend, null);
 assert.deepEqual(SR_insightsView(undefined, NOW), {
   week: { fixes: 0, words: 0, per100: null }, prevWeek: { fixes: 0, words: 0, per100: null }, trend: null,
-  weeks: Array(8).fill({ fixes: 0, words: 0, per100: null }), total: { proofreads: 0, words: 0 }, mastered: [], working: [], kinds: {},
+  weeks: Array(8).fill({ fixes: 0, words: 0, per100: null }), total: { proofreads: 0, words: 0 }, mastered: [], working: [], kinds: {}, kindsNow: null, kindsThen: null,
 });
 
 // weeks (oldest first) and totals for the chart and "Based on N proofreads".
@@ -139,8 +142,67 @@ assert.equal(view.weeks.length, 8);
 assert.deepEqual(view.weeks[7], view.week);
 assert.deepEqual(view.weeks[6], view.prevWeek);
 const counted = SR_mergeInsights(SR_mergeInsights(undefined, [], NOW, 30, 1), [], NOW, 20, 0);
-assert.deepEqual(counted.days[SR_dayKey(NOW)], { fixes: 1, words: 50, proofreads: 2 });
+assert.deepEqual(counted.days[SR_dayKey(NOW)], { fixes: 1, words: 50, proofreads: 2, k: {} });
 assert.deepEqual(SR_insightsView(counted, NOW).total, { proofreads: 2, words: 50 });
+
+// Right uses: the corrected form in the user's own text, one a day, never stored as text.
+{
+  const T = (d, h = 9) => NOW + d * DAY + h * 3600000 - 12 * 3600000;
+  let st = SR_mergeInsights(undefined, [{ from: 'recieve', to: 'receive' }], T(0), 5, 1, 'I will recieve it');
+  st = SR_mergeInsights(st, [{ from: 'recieve', to: 'receive' }], T(1), 5, 1, 'did you recieve it');
+  const rec = () => st.pairs['recieve→receive'];
+  assert.deepEqual([rec().h, rec().streak], ['mm', 0]);
+  st = SR_mergeInsights(st, [], T(2), 5, 0, 'We received it and will receive more.');
+  assert.deepEqual([rec().h, rec().streak], ['mmg', 1], 'whole word only once, "received" is not "receive"');
+  const pasted = SR_mergeInsights(st, [], T(2, 15), 5, 0, 'We will receive it.');
+  assert.deepEqual([pasted.pairs['recieve→receive'].h, pasted.pairs['recieve→receive'].streak], ['mmg', 1], 'a second right use the same day earns nothing');
+  st = SR_mergeInsights(st, [], T(3), 5, 0, 'I receive mail.');
+  st = SR_mergeInsights(st, [], T(4), 5, 0, 'Did you receive it?');
+  assert.deepEqual([rec().h, rec().streak], ['mmggg', 3]);
+  assert.deepEqual(SR_insightsView(st, T(4)).mastered, [], '3 right in a row, but fixed 3 days ago: not yet');
+  assert.equal(SR_insightsView(st, T(4)).working[0].streak, 3, 'still working on it, with its streak');
+  const before15 = st;
+  st = SR_mergeInsights(st, [], T(15), 5, 0, 'Received, thanks.');
+  assert.deepEqual(SR_newlyMastered(before15, st), ['receive'], 'crossed into mastered on this merge (14 days since the fix)');
+  assert.deepEqual(SR_newlyMastered(st, SR_mergeInsights(st, [], T(16), 5, 0, 'receive')), [], 'already mastered is not new');
+  assert.deepEqual(SR_insightsView(st, T(15)).mastered, [{ from: 'recieve', to: 'receive', n: 2, streak: 3 }]);
+  assert.deepEqual(SR_insightsView(st, T(15)).working, [], 'mastered words leave working');
+  st = SR_mergeInsights(st, [{ from: 'recieve', to: 'receive' }], T(17), 5, 1, 'recieve');
+  assert.deepEqual([rec().h, rec().streak], ['mmgggm', 0], 'a fix resets the streak; h keeps the last 6');
+  assert.deepEqual(SR_newlyMastered(undefined, undefined), []);
+  assert.ok(!JSON.stringify(st).includes('mail') && !JSON.stringify(st).includes('Did'), 'no text stored');
+  // The corrected form is the only evidence: "its" (a correct possessive) says nothing about its→it's.
+  let a = SR_mergeInsights(undefined, [{ from: 'its', to: "it's" }, { from: 'its', to: "it's" }], T(0), 5, 2, 'its fine its ok');
+  a = SR_mergeInsights(a, [], T(1), 5, 0, 'The dog wagged its tail.');
+  assert.deepEqual([a.pairs["its→it's"].h, a.pairs["its→it's"].streak], ['m', 0], 'one m per proofread; "its" is not a right use');
+  a = SR_mergeInsights(a, [], T(2), 5, 0, 'It’s fine.');
+  assert.equal(a.pairs["its→it's"].streak, 1, 'curly apostrophe and sentence case still count');
+  // A word fixed in this same text is not a right use elsewhere in it.
+  let b = SR_mergeInsights(undefined, [{ from: 'there', to: 'their' }], T(0), 5, 1, 'x');
+  b = SR_mergeInsights(b, [{ from: 'their', to: 'there' }], T(1), 5, 1, 'over their is their house');
+  assert.equal(b.pairs['there→their'].streak, 0);
+  // Case matters for capitals: "friday" is not a right use of Friday; "I" is.
+  let c = SR_mergeInsights(undefined, [{ from: 'friday', to: 'Friday' }, { from: 'i', to: 'I' }], T(0), 5, 2, 'x');
+  c = SR_mergeInsights(c, [], T(1), 5, 0, 'see you friday, I think');
+  assert.deepEqual([c.pairs['friday→Friday'].streak, c.pairs['i→I'].streak], [0, 1]);
+  // Punctuation pairs have no word to use.
+  let d = SR_mergeInsights(undefined, [{ from: '', to: ',' }], T(0), 5, 1, 'x');
+  d = SR_mergeInsights(d, [], T(1), 5, 0, 'a, b, c');
+  assert.equal(d.pairs['→,'].streak, 0);
+  // Stored h and streak are repaired if storage hands back junk.
+  const junkH = SR_mergeInsights({ pairs: { 'x→y': { n: 2, last: NOW, h: '<b>', streak: -4, g: 'x' } } }, [], NOW, 0, 0);
+  assert.deepEqual(junkH.pairs['x→y'], { n: 2, first: NOW, last: NOW, kind: 'other', h: '', streak: 0, g: 0 });
+}
+// Kinds over time: shares of the last 28 days and the 28 before, each only with 10 fixes.
+{
+  const k = (spelling, grammar) => ({ fixes: 0, words: 0, k: { spelling, grammar } });
+  const kv = SR_insightsView({ v: 1, pairs: {}, days: { [day(3)]: k(2, 8), [day(27)]: k(1, 1), [day(28)]: k(10, 2), [day(55)]: k(0, 0), [day(56)]: k(50, 0) } }, NOW);
+  assert.deepEqual([kv.kindsNow, kv.kindsThen], [{ spelling: 25, grammar: 75 }, { spelling: 83, grammar: 17 }]);
+  const thin = SR_insightsView({ v: 1, pairs: {}, days: { [day(3)]: k(20, 8), [day(30)]: k(5, 4) } }, NOW);
+  assert.deepEqual([thin.kindsNow, thin.kindsThen], [{ spelling: 71, grammar: 29 }, null], 'new user: this month set, 4 weeks ago null (9 fixes)');
+  const quiet = SR_insightsView({ v: 1, pairs: {}, days: { [day(3)]: k(5, 4), [day(30)]: k(20, 8) } }, NOW);
+  assert.deepEqual([quiet.kindsNow, quiet.kindsThen], [null, { spelling: 71, grammar: 29 }], 'each window stands alone');
+}
 
 // Rules: one plain line for the common cases, null rather than something generic.
 const rule = (from, to, k) => SR_ruleFor({ from, to, kind: k });

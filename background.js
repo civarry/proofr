@@ -74,31 +74,37 @@ function bumpDay(days) {
   return out;
 }
 
-// === "Your writing": corrected word pairs only, never sentences ===
-// Proofread results feed a local tally of which words get fixed, for the
-// side panel's "Your writing" view. Writes are chained so two results
-// landing together can't overwrite each other's update.
+// === Progress: corrected word pairs only, never sentences ===
+// Proofreads of the user's own writing (a text box, or the side panel) feed
+// a local tally for the Progress tab: which words get fixed, and which they
+// now get right. Writes are chained so two results landing together can't
+// overwrite each other's update. Resolves to the words this proofread
+// mastered (for the toast), or [].
 let insightsQueue = Promise.resolve();
 function recordInsights(before, after) {
-  insightsQueue = insightsQueue.then(async () => {
-    if (typeof SR_extractCorrections !== 'function' || typeof SR_mergeInsights !== 'function') return;
+  const run = insightsQueue.then(async () => {
+    if (typeof SR_extractCorrections !== 'function' || typeof SR_mergeInsights !== 'function') return [];
     const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
-    if (srInsightsOn === false) return;
+    if (srInsightsOn === false) return [];
     // Every proofread counts, even a clean one: words with no fixes are what
     // brings "mistakes per 100 words" down. Fixes are counted from the full
     // diff, not the stored pairs, so pairs dropped for privacy (names,
     // numbers) don't read as fewer mistakes.
     // A result the change guard flagged rewrote more than it fixed; learning
     // from it would teach the model's mistakes, not the user's.
-    if (typeof SR_changeGuard === 'function' && !SR_changeGuard(before, after).ok) return;
+    if (typeof SR_changeGuard === 'function' && !SR_changeGuard(before, after).ok) return [];
     const pairs = SR_extractCorrections(before, after);
     const words = (String(before).match(/[\p{L}\p{N}]+/gu) || []).length;
     const ops = SR_wordDiff(before, after);
     const fixes = ops ? SR_diffCount(ops) : pairs.length;
     const { srInsights } = await chrome.storage.local.get(['srInsights']);
-    await chrome.storage.local.set({ srInsights: SR_mergeInsights(srInsights, pairs, Date.now(), words, fixes) });
-  }).catch((e) => console.warn('Insights:', e?.message || e));
-  return insightsQueue;
+    // `before` lets the merge see words the user already got right.
+    const next = SR_mergeInsights(srInsights, pairs, Date.now(), words, fixes, before);
+    await chrome.storage.local.set({ srInsights: next });
+    return typeof SR_newlyMastered === 'function' ? SR_newlyMastered(srInsights, next) : [];
+  }).catch((e) => { console.warn('Insights:', e?.message || e); return []; });
+  insightsQueue = run;
+  return run;
 }
 
 class StatsManager {
@@ -410,7 +416,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // page's. Only extension pages may write here, never a content script.
   if (message.action === 'recordInsights') {
     if (sender.tab || !String(sender.url || '').startsWith(chrome.runtime.getURL(''))) return false;
-    recordInsights(String(message.before || ''), String(message.after || '')).then(() => sendResponse({ ok: true }));
+    recordInsights(String(message.before || ''), String(message.after || '')).then((mastered) => sendResponse({ ok: true, mastered }));
     return true; // async sendResponse
   }
   if (message.action === 'hasCloudKey') {
@@ -486,7 +492,14 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const controller = new AbortController();
     activeRewrites.set(requestId, controller);
-    if (!noReplace) await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
+    // Only the user's own writing teaches Progress: a text box (the selection
+    // is in one, or the whole box was read), never text selected on a page,
+    // which someone else wrote.
+    let ownText = noReplace;
+    if (!noReplace) {
+      const [captured] = await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
+      ownText = !!(captured && captured.result);
+    }
     const onDevice = status.settings.engine === 'device' || (status.settings.engine === 'auto' && status.deviceNow);
     inject(tabId, showLoadingModal, [text, tone, lang, requestId, onDevice]);
 
@@ -505,9 +518,11 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     const coach = tone === 'grammar' && (await chrome.storage.sync.get(['srCoach'])).srCoach === true;
     const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, coach ? null : onToken, controller.signal);
     await StatsManager.updateStats(tone);
-    if (tone === 'grammar') recordInsights(text, rewritten);
+    // Local storage only, a few ms: awaited so a word mastered by this very
+    // proofread can be named in its toast.
+    const mastered = tone === 'grammar' && ownText ? await recordInsights(text, rewritten) : [];
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider), coach]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider), coach, mastered]);
   } catch (error) {
     // Stopped from the toast: it already says "Stopped.", so add nothing.
     if (error && error.name === 'AbortError') return;
@@ -584,12 +599,14 @@ function captureReplaceTarget(originalText, requestId) {
   const targets = window.__srTargets || (window.__srTargets = new Map());
   if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.selectionStart !== el.selectionEnd) {
     targets.set(requestId, { kind: 'field', el, start: el.selectionStart, end: el.selectionEnd, original: originalText });
-    return;
+    return 'field';
   }
   const sel = window.getSelection();
   if (el && el.isContentEditable && sel && sel.rangeCount > 0 && !sel.isCollapsed) {
     targets.set(requestId, { kind: 'editable', el, range: sel.getRangeAt(0).cloneRange(), original: originalText });
+    return 'editable';
   }
+  return null; // page text: someone else's writing
 }
 
 // `actions.retry` / `actions.alternative` arrive as plain data (injected
@@ -630,7 +647,7 @@ function showLoadingModal(originalText, tone, targetLang, requestId, onDevice) {
 // so the page's editor (React, Lexical, ProseMirror…) sees a normal input
 // event and Ctrl+Z restores the original. Only replaces when the captured
 // text is still there; otherwise the result opens in the modal instead.
-function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach) {
+function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered) {
   const targets = window.__srTargets;
   const target = targets && targets.get(requestId);
   if (targets) targets.delete(requestId);
@@ -775,8 +792,10 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
       const review = { original: originalText, rewritten: rewrittenText, tone, provider, where,
         action: { label: 'Apply to text box', run: (accepted) => applyAccepted(accepted ?? rewrittenText) } };
       if (fixes !== 0) window.__srLastReview = review; // for the "review last change" shortcut
+      // A word this proofread mastered is named in the same toast (no extra UI).
+      const won = mastered && mastered.length ? { mastered } : {};
       window.SmartRewriteModal.showSuccess(fixes === 0 ? 'Nothing to fix.' : what,
-        fixes === 0 ? {} : { review, undo });
+        fixes === 0 ? won : { review, undo, ...won });
     }
     return;
   }
