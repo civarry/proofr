@@ -379,12 +379,27 @@
 
     /* Local servers need no key: hide the key input, keep the Connect button. */
     #keySection.keyless .key-input-wrap { display: none; }
+    #cloudSection.collapsed { display: none; }
+    .panel-notice {
+      flex: none;
+      margin: 10px 14px 0;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      font-size: 12px; color: var(--ink);
+    }
+    .panel-notice.hidden { display: none; }
     #keySection.keyless .key-row { justify-content: flex-start; }
     .cloud-select-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .cloud-select-tag { font-size: 10.5px; color: var(--ink-soft); }
 
     /* Download progress for a first on-device run, inside a pending card. */
     .status-text { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 8px; }
+
+    /* Proofread results: inline changes. */
+    .diff-ins { background: var(--live-bg); color: var(--live-ink); text-decoration: none; border-radius: 3px; padding: 0 1px; }
+    .diff-del { color: var(--ink-soft); text-decoration: line-through; }
 
     /* One-time rating ask under the newest result. */
     .rate-line {
@@ -630,6 +645,8 @@
       margin-bottom: 6px;
     }
     .settings-row:hover { background: var(--line-soft); }
+    a.settings-row { text-decoration: none; }
+    .settings-row.hidden { display: none; }
     .settings-row .chevron { width: 14px; height: 14px; color: var(--ink-faint); flex: none; }
 
     /* ── Info overlay (Privacy / Help) ──── */
@@ -682,6 +699,7 @@
        left the thread visible/scrollable underneath, which read as broken. -->
   <div class="panel-body">
 
+    <p class="panel-notice hidden" id="panelNotice" role="status"></p>
     <div class="thread" id="thread"></div>
 
     <div class="composer-wrap">
@@ -720,13 +738,6 @@
       <div class="saved-toast" id="savedToast">✓ Saved</div>
 
       <div class="settings-body">
-        <!-- First-install tab only (sidepanel.html?welcome=1). -->
-        <div class="setup-card hidden" id="welcomeCard">
-          <h2 class="setup-title">Proofr is installed</h2>
-          <p>Select text on any page, right-click, and choose <b>Proofr</b>. Or press <b>Alt+Shift+P</b> to proofread the selection. Click the Proofr icon in the toolbar to open this panel any time.</p>
-          <p>Check the setup below, then close this tab.</p>
-        </div>
-
         <!-- The device can run on-device AI but hasn't downloaded the model yet. -->
         <div class="setup-card hidden" id="deviceSetupCard">
           <b>On-device AI needs a one-time setup</b>
@@ -747,6 +758,12 @@
             <li>Paste it in the <b>API key</b> field below and press Save.</li>
           </ol>
           <p>Running Ollama or LM Studio on this computer? Pick it under <b>AI provider</b>; no key needed.</p>
+        </div>
+
+        <div class="setup-card hidden" id="cloudOffer">
+          <b>On-device AI is ready</b>
+          <p>Proofr runs privately on this computer, with no account or key. You can also connect a cloud AI provider for more languages and longer text.</p>
+          <button type="button" class="btn-outline" id="btnUseCloud">Use a cloud AI provider instead</button>
         </div>
 
         <div id="cloudSection">
@@ -826,6 +843,10 @@
           <span>Privacy</span>
           <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
         </div>
+        <a class="settings-row hidden" id="supportRow" target="_blank" rel="noopener">
+          <span>Support Proofr</span>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
         <div class="settings-row" data-action="showSupport">
           <span>Help &amp; support</span>
           <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>

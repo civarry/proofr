@@ -174,37 +174,49 @@ chrome.permissions.onRemoved.addListener(() => { syncHoverScripts().catch(() => 
 chrome.permissions.onAdded.addListener(() => { syncHoverScripts().catch(() => {}); });
 
 // === Install / update ===
+// === Context menu ===
+// The six modes people reach for most sit at the top; the rest are one level
+// down under "More" so the menu scans quickly. The first item shows the real
+// shortcut (blank if Chrome couldn't assign Alt+Shift+P on this machine).
+const MENU_TOP = ['grammar', 'professional', 'friendly', 'short', 'simple', 'translate'];
+
+async function shortcutLabel() {
+  const commands = await chrome.commands.getAll().catch(() => []);
+  const cmd = commands.find((c) => c.name === 'proofread-selection');
+  return cmd && cmd.shortcut ? cmd.shortcut : '';
+}
+
+async function buildContextMenus() {
+  const shortcut = await shortcutLabel();
+  await chrome.contextMenus.removeAll();
+  const add = (props) => chrome.contextMenus.create(props);
+  const sel = ['selection'];
+
+  // One top-level "Proofr" entry for both selections and text boxes. Two
+  // separate top-level items would make Chrome nest them under the extension
+  // name ("Proofr > Proofr > ..."). Each child filters by its own context.
+  const selOrField = ['selection', 'editable'];
+  add({ id: 'smartRewrite', title: 'Proofr', contexts: selOrField });
+  for (const id of MENU_TOP) {
+    const name = SR_getToneName(id);
+    add({ id: `sr:${id}`, parentId: 'smartRewrite', contexts: sel, title: id === 'grammar' && shortcut ? `${name}  (${shortcut})` : name });
+  }
+  add({ id: 'srMore', parentId: 'smartRewrite', title: 'More', contexts: sel });
+  for (const tone of SR_TONES.filter((t) => !MENU_TOP.includes(t.id))) {
+    add({ id: `sr:${tone.id}`, parentId: 'srMore', title: tone.name, contexts: sel });
+  }
+  // Right-click in a text box with nothing selected (like Chrome's "Help me write").
+  add({ id: 'srField:grammar', parentId: 'smartRewrite', title: 'Proofread this whole text box', contexts: ['editable'] });
+  add({ id: 'separator1', parentId: 'smartRewrite', type: 'separator', contexts: selOrField });
+  add({ id: 'openPanelWith', parentId: 'smartRewrite', title: 'Open in Proofr panel', contexts: sel });
+  add({ id: 'openSettings', parentId: 'smartRewrite', title: 'Settings…', contexts: selOrField });
+
+  // Plain page, nothing selected: a way into the panel.
+  add({ id: 'openPanel', title: 'Open Proofr panel', contexts: ['page'] });
+}
+
 chrome.runtime.onInstalled.addListener(async (details) => {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'smartRewrite',
-      title: 'Proofr',
-      contexts: ['selection'],
-    });
-
-    SR_TONES.forEach(tone => {
-      chrome.contextMenus.create({
-        id: `sr:${tone.id}`,
-        parentId: 'smartRewrite',
-        title: tone.name,
-        contexts: ['selection'],
-      });
-    });
-
-    chrome.contextMenus.create({
-      id: 'separator1',
-      parentId: 'smartRewrite',
-      type: 'separator',
-      contexts: ['selection'],
-    });
-
-    chrome.contextMenus.create({
-      id: 'openSettings',
-      parentId: 'smartRewrite',
-      title: 'Settings…',
-      contexts: ['selection'],
-    });
-  });
+  await buildContextMenus().catch((e) => console.warn('Context menu:', e?.message || e));
 
   await migrateKeysToLocal().catch((e) => console.warn('Key migration:', e?.message || e));
 
@@ -216,20 +228,47 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
   await syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
 
-  // First install: the side panel can't open without a click, so show the
-  // same setup screen in a tab. It tells the user whether on-device AI works
-  // here and, if not, how to connect a free key, before their first attempt.
+  // First install: a welcome tab built around one real first proofread, the
+  // pin prompt, and the setup the user's Chrome actually needs.
   if (details.reason === 'install') {
-    chrome.tabs.create({ url: 'sidepanel.html?welcome=1' });
+    chrome.tabs.create({ url: 'welcome.html' });
   }
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  // The shortcut shown in the menu can be rebound with no event to tell us,
+  // so the menu is rebuilt each time Chrome starts.
+  buildContextMenus().catch(() => {});
   migrateKeysToLocal().catch(() => {});
   syncHoverScripts().catch(() => {});
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+// Named (not an inline listener) so tests can drive it with a fake click.
+chrome.contextMenus.onClicked.addListener((info, tab) => handleMenuClick(info, tab));
+
+async function handleMenuClick(info, tab) {
+  // sidePanel.open must run inside the click's user gesture, so it's called
+  // before any await; the text to prefill follows through storage.
+  if (info.menuItemId === 'openPanel' || info.menuItemId === 'openPanelWith') {
+    chrome.sidePanel.open({ tabId: tab.id }).catch((e) => console.warn('Side panel:', e?.message || e));
+    if (info.menuItemId === 'openPanelWith' && info.selectionText) {
+      await chrome.storage.local.set({ srPanelPrefill: info.selectionText });
+    }
+    return;
+  }
+
+  if (info.menuItemId === 'srField:grammar') {
+    try {
+      const [{ result: field } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: selectWholeField });
+      // A rich editor's whole content (Gmail: quoted thread, signature, links)
+      // would come back as plain text, so only plain fields are replaced in place.
+      await handleRewrite(tab.id, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain) });
+    } catch (error) {
+      console.warn('Proofr could not read this text box:', error?.message || error);
+    }
+    return;
+  }
+
   if (info.menuItemId === 'openSettings') {
     try {
       await chrome.sidePanel.open({ tabId: tab.id });
@@ -244,11 +283,33 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const tone = info.menuItemId.slice(3);
     await handleRewrite(tab.id, info.selectionText, tone, { ensure: true });
   }
-});
+}
 
 // === Keyboard shortcut (manifest "commands", rebindable at chrome://extensions/shortcuts) ===
+// Pages where Chrome never lets an extension run: its own pages, the Web
+// Store (where a new user is when they install), other extensions' pages.
+function isBlockedPage(url) {
+  if (!url) return false;
+  return /^(chrome|chrome-extension|chrome-untrusted|devtools|edge|about|view-source):/i.test(url)
+    || /^https:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(url);
+}
+
+// Tell the user instead of failing silently: open the panel (still inside
+// the shortcut's gesture when the page is known to be blocked) with a note,
+// else flag the toolbar icon.
+async function explainBlockedPage(tabId, gestureStillValid) {
+  await chrome.storage.local.set({ srPanelNotice: 'Chrome doesn’t let extensions work on this page. Paste the text here instead.' });
+  if (gestureStillValid) {
+    chrome.sidePanel.open({ tabId }).catch(() => {});
+    return;
+  }
+  chrome.action.setBadgeText({ tabId, text: '!' });
+  chrome.action.setTitle({ tabId, title: 'Proofr can’t work on this page. Click to paste the text in the panel.' });
+}
+
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== 'proofread-selection' || !tab || tab.id == null) return;
+  if (isBlockedPage(tab.url)) { explainBlockedPage(tab.id, true); return; }
   try {
     const [{ result: text } = {}] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -257,6 +318,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
     await handleRewrite(tab.id, text, 'grammar', { ensure: true });
   } catch (error) {
     console.warn('Proofr shortcut could not run on this page:', error?.message || error);
+    explainBlockedPage(tab.id, false);
   }
 });
 
@@ -319,7 +381,7 @@ async function handleHoverAskAI(message, sendResponse) {
 }
 
 // === Core flow: validate → capture target → loading → rewrite → result ===
-async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } = {}) {
+async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false } = {}) {
   try {
     // No content script runs by default, so the modal is injected on demand
     // (under the activeTab grant from the menu click or shortcut).
@@ -343,7 +405,7 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } =
     // arrives: the user may click elsewhere, or start another rewrite, during
     // a slow one. Each request keeps its own target, keyed by id.
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
+    if (!noReplace) await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
     inject(tabId, showLoadingModal, [text, tone, lang]);
 
     const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang);
@@ -396,6 +458,18 @@ function readSelectionText() {
     return el.value.slice(el.selectionStart, el.selectionEnd);
   }
   return String(window.getSelection() || '');
+}
+
+// "Proofread this text box": a plain field gets selected whole so the normal
+// capture and in-place replace path handles it. A rich editor is only read.
+function selectWholeField() {
+  const el = document.activeElement;
+  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
+    el.select();
+    return { text: el.value, plain: true };
+  }
+  if (el && el.isContentEditable) return { text: el.innerText, plain: false };
+  return { text: '', plain: false };
 }
 
 function captureReplaceTarget(originalText, requestId) {
@@ -465,7 +539,11 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   if (replaced) {
     if (window.SmartRewriteModal) {
       const undoKey = /Mac/i.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
-      window.SmartRewriteModal.showSuccess(undoable ? `Text replaced. ${undoKey} to undo.` : 'Text replaced.');
+      // Proofread says how much it fixed, so "nothing changed" is visible too.
+      const ops = (tone === 'grammar' && typeof SR_wordDiff === 'function') ? SR_wordDiff(originalText, rewrittenText) : null;
+      const fixes = ops && typeof SR_diffCount === 'function' ? SR_diffCount(ops) : null;
+      const what = fixes === 0 ? 'No changes needed.' : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
+      window.SmartRewriteModal.showSuccess(undoable && fixes !== 0 ? `${what} ${undoKey} to undo.` : what);
     }
     return;
   }

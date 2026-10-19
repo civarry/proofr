@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome to Proofr</title>
+  <style>
+    /* Same tokens as sidepanel.html, so the first page a user sees matches the panel. */
+    :root {
+      --paper: #FAFAF9; --card: #FFFFFF; --ink: #17181C; --ink-soft: #6B6D76; --ink-faint: #A6A8B0;
+      --line: #E7E6E2; --line-soft: #F0EFEC; --accent: #16171B; --accent-fg: #FFFFFF;
+      --live: #3DA35D; --live-bg: #EAF6EE; --live-ink: #276B41; --error: #B4443A;
+      --radius: 12px;
+      --mono: "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--sans); color: var(--ink); background: var(--paper); -webkit-font-smoothing: antialiased; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 48px 16px 64px; }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .mark { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); display: flex; align-items: center; justify-content: center; }
+    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+    .lede { color: var(--ink-soft); font-size: 14px; line-height: 1.55; margin-bottom: 28px; }
+
+    .step { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+    .step h2 { font-size: 14.5px; font-weight: 650; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .step h2 .n { width: 20px; height: 20px; border-radius: 50%; background: var(--line-soft); color: var(--ink-soft); font-size: 11.5px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .step.done h2 .n { background: var(--live-bg); color: var(--live-ink); }
+    .step p { font-size: 13px; line-height: 1.6; color: var(--ink-soft); }
+    .step p + p { margin-top: 6px; }
+    .step a { color: var(--ink); font-weight: 600; }
+    .status { margin-top: 8px; font-size: 13px; }
+    .status.ok { color: var(--live-ink); }
+    .status.bad { color: var(--error); }
+
+    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px; border-radius: 9px; font: 600 13px var(--sans); cursor: pointer; border: 1px solid transparent; }
+    .btn-solid { background: var(--accent); color: var(--accent-fg); }
+    .btn-solid:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-outline { background: var(--card); border-color: var(--line); color: var(--ink); }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+
+    textarea { width: 100%; min-height: 84px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; font: 14px/1.55 var(--sans); color: var(--ink); background: var(--paper); resize: vertical; }
+    textarea:focus { outline: 2px solid var(--line); }
+    .result { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: var(--paper); border: 1px solid var(--line); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+    .result.hidden, .hidden { display: none; }
+    .diff-ins { background: var(--live-bg); color: var(--live-ink); border-radius: 3px; padding: 0 1px; }
+    .diff-del { color: var(--ink-faint); text-decoration: line-through; }
+    kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--card); color: var(--ink); }
+    ul.sites { margin-top: 10px; padding-left: 18px; font-size: 13px; line-height: 1.8; color: var(--ink-soft); }
+    footer { margin-top: 24px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
+    footer a { color: var(--ink-soft); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <span class="mark" id="mark" aria-hidden="true"></span>
+      <h1>Proofr is installed</h1>
+    </header>
+    <p class="lede">Proofr fixes and rewrites the text you select, right where you're writing. Three quick steps and you're set.</p>
+
+    <section class="step" id="stepPin">
+      <h2><span class="n">1</span>Pin Proofr to your toolbar</h2>
+      <p>The Proofr icon opens its side panel, where you can paste text and change settings. Click the puzzle-piece icon at the top right of Chrome, then the pin next to Proofr.</p>
+      <p class="status" id="pinStatus" role="status"></p>
+    </section>
+
+    <section class="step" id="stepAI">
+      <h2><span class="n">2</span>Choose how Proofr thinks</h2>
+      <p id="aiText">Checking what this Chrome supports…</p>
+      <div class="row" id="aiActions"></div>
+      <p class="status" id="aiStatus" role="status"></p>
+    </section>
+
+    <section class="step" id="stepTry">
+      <h2><span class="n">3</span>Try it here</h2>
+      <p>This text has a few mistakes. Press Proofread and see exactly what changes.</p>
+      <label for="tryText" class="hidden">Text to proofread</label>
+      <textarea id="tryText">We was hoping to recieve the report by friday, but it dont arrive yet. Their going to send it tomorow instead.</textarea>
+      <div class="row">
+        <button type="button" class="btn btn-solid" id="btnTry">Proofread</button>
+        <span class="status" id="tryStatus" role="status"></span>
+      </div>
+      <div class="result hidden" id="tryResult" aria-live="polite"></div>
+    </section>
+
+    <section class="step">
+      <h2><span class="n">4</span>Now use it where you write</h2>
+      <p>On any page, select some text, right-click, and choose <b>Proofr</b>, then a tone. In a text box, your text is replaced and <kbd id="undoKey">Ctrl+Z</kbd> undoes it. With nothing selected, right-click inside a text box and choose <b>Proofread this whole text box</b>.</p>
+      <p id="shortcutLine">Or select text and press <kbd id="shortcutKey">Alt+Shift+P</kbd> to proofread it.</p>
+      <ul class="sites">
+        <li>An email draft in Gmail or Outlook</li>
+        <li>A post or comment on LinkedIn</li>
+        <li>Any form or text box on a website</li>
+      </ul>
+      <div class="row">
+        <button type="button" class="btn btn-outline" id="btnPanel">Open the Proofr panel</button>
+      </div>
+    </section>
+
+    <footer>
+      Proofr works only on pages where you use it, and stores your settings on this computer. <a href="https://civarry.github.io/proofr/privacy.html" target="_blank" rel="noopener">Privacy policy</a>.
+    </footer>
+  </main>
+
+  <script src="constants.js"></script>
+  <script src="welcome.js"></script>
+</body>
+</html>

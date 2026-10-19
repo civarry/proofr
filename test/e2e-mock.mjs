@@ -155,7 +155,12 @@ try {
       if (back && !document.getElementById('settingsPanel').classList.contains('hidden')) back.click();
       document.getElementById('sendBtn').click();
     });
-    const turnOk = await waitFor(() => panel.evaluate((out) => [...document.querySelectorAll('.msg-assistant')].some((n) => n.textContent.includes(out)), OUT));
+    // A Proofread turn renders a word diff; dropping the <del> parts must leave exactly the result.
+    const turnOk = await waitFor(() => panel.evaluate((out) => [...document.querySelectorAll('.msg-assistant')].some((n) => {
+      const c = n.cloneNode(true);
+      c.querySelectorAll('del').forEach((d) => d.remove());
+      return c.textContent.includes(out);
+    }), OUT));
     const why = turnOk ? '' : ` (thread: ${JSON.stringify(await panel.evaluate(() => document.getElementById('thread').textContent.trim().slice(0, 160)))})`;
     check(turnOk, `side panel: a turn returns the provider result${why}`);
   });
@@ -172,6 +177,20 @@ try {
     check(/into Korean\b/.test(prompt), `right-click translate to ko: prompt says Korean (got: ${(prompt.match(/into [A-Za-z ()]+?\./) || ['none'])[0]})`);
     const modalOk = await waitFor(() => page.evaluate((out) => (document.getElementById('sr-rewritten-text') || {}).textContent === out, OUT), 5000);
     check(modalOk, 'right-click on page text: result opens in the modal');
+    await page.keyboard.press('Escape');
+  });
+
+  // 3b. Proofread on page text shows the word diff, and the toggle gives back the plain result.
+  await step('proofread diff', async () => {
+    await page.evaluate(() => getSelection().removeAllRanges());
+    await sw.evaluate((id) => handleRewrite(id, 'Good morning team, the report is ready.', 'grammar', { ensure: true }), tabId);
+    const shown = await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text ins.sr-diff-ins') && !!document.querySelector('#sr-rewritten-text del.sr-diff-del')), 5000);
+    check(shown, 'proofread result: changes shown as ins/del');
+    const plain = await page.evaluate(() => {
+      document.getElementById('sr-diff-toggle').click();
+      return document.getElementById('sr-rewritten-text').textContent;
+    });
+    check(plain === OUT, `proofread result: "Show plain text" shows exactly the result (got ${JSON.stringify(plain)})`);
     await page.keyboard.press('Escape');
   });
 
