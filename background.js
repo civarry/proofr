@@ -137,9 +137,9 @@ function whereLabel(providerId, cfg) {
 
 // Rewrite with whatever is ready: on-device only when already downloaded,
 // otherwise the cloud key.
-function rewriteNow(text, tone, status, targetLang, onToken) {
+function rewriteNow(text, tone, status, targetLang, onToken, signal) {
   const engine = (status.settings.engine === 'auto' && !status.deviceNow) ? 'cloud' : status.settings.engine;
-  return SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang, onToken });
+  return SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang, onToken, signal });
 }
 
 // Clicking the toolbar icon opens the side panel directly (replaces the old popup).
@@ -328,7 +328,14 @@ async function explainBlockedPage(tabId, gestureStillValid) {
 }
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command !== 'proofread-selection' || !tab || tab.id == null) return;
+  if (!tab || tab.id == null) return;
+  if (command === 'review-last') {
+    if (isBlockedPage(tab.url)) return;
+    await ensureContentAssets(tab.id);
+    inject(tab.id, reviewLast, []);
+    return;
+  }
+  if (command !== 'proofread-selection') return;
   if (isBlockedPage(tab.url)) { explainBlockedPage(tab.id, true); return; }
   try {
     const [{ result: text } = {}] = await chrome.scripting.executeScript({
@@ -356,7 +363,12 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 // to the hover script so it can open it in the modal itself.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'rewriteWithTone') {
-    handleRewrite(sender.tab.id, message.text, message.tone, { targetLang: message.targetLang });
+    handleRewrite(sender.tab.id, message.text, message.tone, { targetLang: message.targetLang, engine: message.engine });
+    return false;
+  }
+  if (message.action === 'stopRewrite') {
+    const controller = activeRewrites.get(message.requestId);
+    if (controller) controller.abort();
     return false;
   }
   if (message.action === 'hoverRewrite') {
@@ -408,18 +420,24 @@ async function handleHoverAskAI(message, sendResponse) {
 }
 
 // === Core flow: validate → capture target → loading → rewrite → result ===
-async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false } = {}) {
+// Rewrites in flight, by request id, so the toast's Stop (or Esc) can end one.
+const activeRewrites = new Map();
+
+async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false, engine: forceEngine } = {}) {
+  let requestId = null;
+  let usedDevice = false;
   try {
     // No content script runs by default, so the modal is injected on demand
     // (under the activeTab grant from the menu click or shortcut).
     if (ensure) await ensureContentAssets(tabId);
 
     if (!text || text.trim().length === 0) {
-      inject(tabId, showErrorMessage, ['Select some text first, then choose a tone.']);
+      inject(tabId, showErrorMessage, ['Select some text first, then choose a tone.', null, { light: true }]);
       return;
     }
 
     const status = await aiStatus();
+    if (forceEngine) status.settings = { ...status.settings, engine: forceEngine };
     // Prefer the language the caller passed (avoids racing storage), else the saved default.
     const lang = targetLang || status.settings.targetLang;
     const problem = setupProblem(status);
@@ -431,9 +449,12 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // Remember exactly where the selection was now, not when the result
     // arrives: the user may click elsewhere, or start another rewrite, during
     // a slow one. Each request keeps its own target, keyed by id.
-    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const controller = new AbortController();
+    activeRewrites.set(requestId, controller);
     if (!noReplace) await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
-    inject(tabId, showLoadingModal, [text, tone, lang]);
+    const onDevice = status.settings.engine === 'device' || (status.settings.engine === 'auto' && status.deviceNow);
+    inject(tabId, showLoadingModal, [text, tone, lang, requestId, onDevice]);
 
     // On-device answers stream; show them arriving in the dialog instead of a
     // long skeleton. Throttled: each update is a script injection.
@@ -444,19 +465,30 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
       lastPush = now;
       inject(tabId, streamPartial, [soFar]);
     };
-    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, onToken);
+    usedDevice = onDevice;
+    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, onToken, controller.signal);
     await StatsManager.updateStats(tone);
 
     inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider)]);
   } catch (error) {
+    // Stopped from the toast: it already says "Stopped.", so add nothing.
+    if (error && error.name === 'AbortError') return;
     console.warn('Rewrite failed:', error?.message || error);
     let message = error.message || 'Something went wrong.';
+    const cloud = await CloudProvider.getConfig();
+    const cloudReady = providerReady(cloud);
     // On-device failures (too long, unsupported language, timeout) have a
     // cloud fallback the user may not know about.
-    if (!(await CloudProvider.isReady()) && !/key|provider/i.test(message)) {
+    if (!cloudReady && !/key|provider/i.test(message)) {
       message += ' Connecting an AI provider in the Proofr side panel handles longer text and more languages.';
     }
-    inject(tabId, showErrorMessage, [message]);
+    // Every model error can be retried in place; an on-device failure can go
+    // straight to the connected cloud provider instead.
+    const retry = { text, tone, targetLang, label: 'Try again' };
+    const alternative = usedDevice && cloudReady ? { text, tone, targetLang, engine: 'cloud', label: `Use ${cloud.displayName} instead` } : null;
+    inject(tabId, showErrorMessage, [message, null, { retry, alternative }]);
+  } finally {
+    if (requestId) activeRewrites.delete(requestId);
   }
 }
 
@@ -521,21 +553,37 @@ function captureReplaceTarget(originalText, requestId) {
   }
 }
 
-function showErrorMessage(message, title) {
-  if (window.SmartRewriteModal) {
-    window.SmartRewriteModal.showError(message, title ? { title } : undefined);
-  } else {
-    alert('Proofr: ' + message);
-  }
+// `actions.retry` / `actions.alternative` arrive as plain data (injected
+// arguments are serialized) and become buttons that re-run the request.
+function showErrorMessage(message, title, actions) {
+  if (!window.SmartRewriteModal) { alert('Proofr: ' + message); return; }
+  const opts = {};
+  if (title) opts.title = title;
+  if (actions && actions.light) opts.light = true;
+  const rerun = (a) => a && { label: a.label, run: () => {
+    chrome.runtime.sendMessage({ action: 'rewriteWithTone', text: a.text, tone: a.tone, targetLang: a.targetLang, engine: a.engine });
+    return true;
+  } };
+  if (actions && actions.retry) opts.retry = rerun(actions.retry);
+  if (actions && actions.alternative) opts.alternative = rerun(actions.alternative);
+  window.SmartRewriteModal.showError(message, opts);
+}
+
+// The keyboard way back to the last result on this page (the toast may be
+// gone, and focus stays in the text box, so Review isn't reachable by Tab).
+function reviewLast() {
+  if (!window.SmartRewriteModal) return;
+  if (window.__srLastReview && window.SmartRewriteModal.showReview) window.SmartRewriteModal.showReview(window.__srLastReview);
+  else window.SmartRewriteModal.showError('Nothing to review on this page yet.', { light: true });
 }
 
 function streamPartial(soFar) {
   if (window.SmartRewriteModal && window.SmartRewriteModal.streamText) window.SmartRewriteModal.streamText(soFar);
 }
 
-function showLoadingModal(originalText, tone, targetLang) {
+function showLoadingModal(originalText, tone, targetLang, requestId, onDevice) {
   if (window.SmartRewriteModal) {
-    window.SmartRewriteModal.showLoading(originalText, tone, targetLang);
+    window.SmartRewriteModal.showLoading(originalText, tone, targetLang, { requestId, onDevice });
   }
 }
 
@@ -574,13 +622,38 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   };
 
   const guard = (tone === 'grammar' && typeof SR_changeGuard === 'function') ? SR_changeGuard(originalText, rewrittenText) : null;
-  if (guard && !guard.ok) {
+  const guardFailed = !!(guard && !guard.ok);
+  // "Replace anyway" after a guard trip: same target, same safety re-check.
+  // The dialog hands back the accepted text (changes clicked off are put
+  // back), so that's what goes in, not the full suggestion.
+  const replaceAnyway = target ? { label: 'Replace anyway', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
+  const guardNotice = guardFailed ? `Check this before using it: ${guard.reasons.join(', ')}.` : null;
+
+  // The user moved on to another field while this was running: never pull
+  // focus back, drop text into a box they left, or open a dialog over the
+  // box they're typing in. Offer it in the toast instead; Apply is their
+  // click, so focusing the old box then is expected. A result the guard
+  // flagged gets no one-click Apply: Review shows why, with Replace anyway.
+  const active = document.activeElement;
+  const movedOn = target && active && active !== document.body
+    && active !== target.el && !target.el.contains(active) && !(active.closest && active.closest('#smart-rewrite-modal, #sr-toast'));
+  if (movedOn) {
+    const review = { original: originalText, rewritten: rewrittenText, tone, provider, where };
+    if (guardFailed) { review.notice = guardNotice; review.action = replaceAnyway; }
+    window.__srLastReview = review;
     if (window.SmartRewriteModal) {
-      const opts = { notice: `Check this before using it: ${guard.reasons.join(', ')}.`, where };
-      // The user can still accept it: same target, same safety re-check. The
-      // dialog hands back the accepted text (changes the user clicked off are
-      // put back), so that's what goes in, not the full suggestion.
-      if (target) opts.action = { label: 'Replace anyway', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } };
+      window.SmartRewriteModal.showSuccess(
+        guardFailed ? 'Proofread ready for the box you left. It changed more than usual: review it first.' : 'Proofread ready for the box you left.',
+        guardFailed ? { review } : { review, apply: { label: 'Apply', run: () => { try { return !!insertInto(target, rewrittenText); } catch (_) { return false; } } } });
+    }
+    return;
+  }
+
+  if (guardFailed) {
+    if (window.SmartRewriteModal) {
+      const opts = { notice: guardNotice, where };
+      if (replaceAnyway) opts.action = replaceAnyway;
+      window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: replaceAnyway };
       window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, opts);
     }
     return;
@@ -618,6 +691,26 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
     return false;
   };
 
+  // After an in-place fix, Review can still change it: changes the user clicks
+  // off in the diff are applied to the text box (not just to Copy).
+  const applyAccepted = (accepted) => {
+    try {
+      if (target.kind === 'field' && target.el.isConnected
+          && target.el.value.slice(target.start, target.start + rewrittenText.length) === rewrittenText) {
+        target.el.focus();
+        target.el.setSelectionRange(target.start, target.start + rewrittenText.length);
+        if (!document.execCommand('insertText', false, accepted)) {
+          target.el.setRangeText(accepted, target.start, target.start + rewrittenText.length, 'end');
+          target.el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return true;
+      }
+      // A rich editor: undo the edit just made, then insert what was kept.
+      if (target.kind === 'editable' && target.el.isConnected && undo()) return !!insertInto(target, accepted);
+    } catch (_) { /* fall through */ }
+    return false;
+  };
+
   if (replaced) {
     if (window.SmartRewriteModal) {
       // Proofread says how much it fixed, so "nothing changed" is visible too.
@@ -625,13 +718,17 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
       const fixes = ops && typeof SR_diffCount === 'function' ? SR_diffCount(ops) : null;
       const what = fixes === 0 ? 'No changes needed.' : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
       // "Nothing to fix" needs no Review or Undo; otherwise both are buttons.
+      const review = { original: originalText, rewritten: rewrittenText, tone, provider, where,
+        action: { label: 'Apply to text box', run: (accepted) => applyAccepted(accepted ?? rewrittenText) } };
+      if (fixes !== 0) window.__srLastReview = review; // for the "review last change" shortcut
       window.SmartRewriteModal.showSuccess(fixes === 0 ? 'Nothing to fix.' : what,
-        fixes === 0 ? {} : { review: { original: originalText, rewritten: rewrittenText, tone, provider, where }, undo });
+        fixes === 0 ? {} : { review, undo });
     }
     return;
   }
 
   if (window.SmartRewriteModal) {
+    window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where };
     window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, { where });
   } else {
     navigator.clipboard.writeText(rewrittenText)
