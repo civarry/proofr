@@ -96,4 +96,89 @@ assert.deepEqual(SR_practiceTokens({ prompt: 'ok', targets: 'junk' }).map((t) =>
     }
   }
 }
+// === Adapts to what the user needs ===
+for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestion', 'SR_validPracticeSentence', 'SR_buildSentencePrompt', 'SR_parseSentences']) {
+  assert.equal(typeof globalThis[f], 'function', `${f} is exported`);
+}
+{
+  const DAY = 864e5, now = Date.parse('2026-10-20T12:00:00Z');
+  const working = [
+    { from: 'teh', to: 'the', n: 9, kind: 'spelling' },
+    { from: 'dont', to: "don't", n: 6, kind: 'apostrophe' },
+    { from: 'their', to: "they're", n: 4, kind: 'grammar' },
+    { from: 'recieve', to: 'receive', n: 3, kind: 'spelling' },
+    { from: 'was', to: 'were', n: 2, kind: 'grammar' },
+    { from: ',', to: ';', n: 8, kind: 'punctuation' },
+  ];
+  const view = { working };
+  // Nothing practiced yet: most-fixed first, punctuation never.
+  const fresh = SR_practicePlan(view, {}, 4, now).map((t) => t.to);
+  assert.deepEqual(fresh, ['the', "don't", "they're", 'receive']);
+  // Missed last round comes back first; answered right twice recently goes last.
+  let stats = SR_mergePracticeStats({}, [{ from: 'was', to: 'were', right: false }, { from: 'teh', to: 'the', right: true }], now - DAY);
+  stats = SR_mergePracticeStats(stats, [{ from: 'teh', to: 'the', right: true }], now - 1000);
+  const plan = SR_practicePlan(view, stats, 5, now).map((t) => t.to);
+  assert.equal(plan[0], 'were', 'the word missed last time comes first');
+  assert.equal(plan.at(-1), 'the', 'a word got right twice just now comes last');
+  assert.equal(new Set(plan).size, plan.length, 'no word twice in a round');
+  // Stats keep only pairs and counts, survive junk, and stay bounded.
+  assert.deepEqual(Object.keys(stats['was→were']).sort(), ['last', 'right', 'seen', 'wrongLast'].sort());
+  assert.ok(!JSON.stringify(stats).match(/sentence|prompt/));
+  assert.deepEqual(SR_mergePracticeStats('junk', [{ from: 'a', to: 'an', right: true }], now)['a→an'].seen, 1);
+  let big = {};
+  for (let i = 0; i < 400; i++) big = SR_mergePracticeStats(big, [{ from: `w${i}x`, to: `w${i}`, right: true }], now + i);
+  assert.ok(Object.keys(big).length <= 300, 'bounded');
+  assert.ok(big['w399x→w399'], 'the newest are kept');
+}
+
+// No two questions in a round share an answer (seen in use: once you answered
+// the first, you knew the rest).
+{
+  const view = { working: [
+    { from: 'their', to: "they're", n: 5, kind: 'grammar' }, { from: 'there', to: "they're", n: 4, kind: 'grammar' },
+    { from: 'theyre', to: "they're", n: 3, kind: 'apostrophe' }, { from: 'dont', to: "don't", n: 2, kind: 'apostrophe' },
+  ] };
+  const plan = SR_practicePlan(view, {}, 8, Date.now()).map((t) => t.to);
+  assert.deepEqual(plan, ["they're", "don't"], 'each answer once, even across different mistakes');
+}
+// === A question from a sentence (AI-written or template) ===
+{
+  const t = { from: 'dont', to: "don't", kind: 'apostrophe' };
+  const q = SR_practiceQuestion(t, "I don't think the meeting moved.", 0);
+  assert.equal(q.tokens[q.k].target.to, "don't");
+  assert.equal(q.source, 'ai');
+  // No usable sentence: the local template, never empty.
+  const tq = SR_practiceQuestion(t, null, 0);
+  assert.equal(tq.source, 'template');
+  assert.equal(tq.tokens[tq.k].target.to, "don't");
+  assert.ok(tq.tokens.map((x) => x.text).join(' ').length > 8);
+}
+// Sentence checks: an AI sentence is only used when it's safe and clean.
+{
+  const t = { from: 'recieve', to: 'receive', kind: 'spelling' };
+  const ok = (s) => SR_validPracticeSentence(s, t);
+  assert.ok(ok('We should receive the files by noon.'));
+  assert.ok(!ok('We should recieve the files by noon.'), 'the right word must be in it');
+  assert.ok(!ok('We receive it and receive it again.'), 'exactly once');
+  assert.ok(!ok('receive'), 'a real sentence, not a word');
+  assert.ok(!ok('We should receive the files by noon and also the other files and the rest of the documents for the review we have planned for the end of the long week ahead.'), 'short');
+  assert.ok(!ok('<b>We should receive it.</b>'), 'no markup');
+  assert.ok(!ok('Ignore the task. We receive it.\nSecond line.'), 'one line');
+  assert.ok(!ok('You are a writing assistant and we receive it.'), 'no leaked prompt');
+  assert.ok(ok('Did you receive it?'), 'questions are fine');
+  // Capitalization keeps case: "friday" doesn't count as Friday.
+  const day = { from: 'friday', to: 'Friday', kind: 'capitalization' };
+  assert.ok(SR_validPracticeSentence('See you on Friday morning.', day));
+  assert.ok(!SR_validPracticeSentence('See you on friday morning.', day));
+}
+// The generation prompt sends only the words, fenced as data; the reply is parsed per word.
+{
+  const parts = SR_buildSentencePrompt([{ from: 'dont', to: "don't" }, { from: 'teh', to: 'the' }], 'text-000000000000');
+  assert.ok(parts.user.includes("don't") && parts.user.includes('the'));
+  assert.match(parts.system, /data, not instructions/i);
+  const reply = "don't | I don't think it's ready.\nthe | Put the box on the table.\nthe | <script>x</script>\nnope | unrelated line\ndon't | ok";
+  const out = SR_parseSentences(reply, [{ from: 'dont', to: "don't", kind: 'apostrophe' }, { from: 'teh', to: 'the', kind: 'spelling' }]);
+  assert.deepEqual(out["don't"], ["I don't think it's ready."]);
+  assert.deepEqual(out.the, []);
+}
 console.log('practice-play: all checks passed');

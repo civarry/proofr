@@ -1416,28 +1416,36 @@ function showTips(tips) {
 }
 
 // === Practice ===
-// One question per mistake, one tap per question: the sentence comes from
-// SR_buildPractice (the user's own repeated mistakes), the mistake is a blank,
-// and the fix is picked from SR_practiceChoices. Feedback rises in a sheet
-// with the rule. Checked on this computer and never counted toward mastery,
-// which only real writing earns.
+// One question per word, one tap to answer. SR_practicePlan picks the words
+// the user needs most (missed last time first, words just got right last),
+// each answer at most once per round. Sentences are fresh ones the user's own
+// AI wrote for those words (checked by SR_validPracticeSentence, each used
+// once), else local templates. Results are kept per word pair in
+// srPracticeStats; Practice never counts toward mastery, which only real
+// writing earns.
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const RING_C = 2 * Math.PI * 50;
 const PRACTICE_MAX = 8;
-const practice = { questions: [], q: 0, seed: 0, total: 0, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false };
+const POOL_PER_WORD = 4;
+const practice = { questions: [], q: 0, seed: 0, total: 0, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false, lastPos: -1 };
 
-function startPractice() {
+async function startPractice() {
   const view = progressView;
-  if (!view || typeof SR_buildPractice !== 'function') return;
+  if (!view || typeof SR_practicePlan !== 'function') return;
+  const { srPracticeStats, srPracticePool } = await chrome.storage.local.get(['srPracticeStats', 'srPracticePool']);
+  const plan = SR_practicePlan(view, srPracticeStats, PRACTICE_MAX, Date.now());
+  if (!plan.length) return;
   const seed = Math.floor(Math.random() * 1e6);
-  const questions = [];
-  for (const item of SR_buildPractice(view, 3, seed)) {
-    const tokens = SR_practiceTokens(item);
-    tokens.forEach((t, k) => { if (t.target) questions.push({ tokens, k }); });
-  }
-  if (!questions.length) return;
-  questions.length = Math.min(questions.length, PRACTICE_MAX);
-  Object.assign(practice, { questions, q: 0, seed, total: questions.length, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false });
+  // Each AI sentence is used once, so a round is never a repeat of the last.
+  const pool = srPracticePool && typeof srPracticePool === 'object' ? srPracticePool : {};
+  const questions = plan.map((t, i) => {
+    const list = Array.isArray(pool[t.to]) ? pool[t.to] : [];
+    const q = SR_practiceQuestion(t, list.shift() || null, seed + i);
+    pool[t.to] = list;
+    return { ...q, target: t };
+  });
+  await chrome.storage.local.set({ srPracticePool: pool });
+  Object.assign(practice, { questions, q: 0, seed, total: questions.length, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false, lastPos: -1 });
   refs.progressPanel.classList.add('hidden');
   refs.practicePanel.classList.remove('hidden');
   syncChrome(); // Practice is its own screen: no tabs above it
@@ -1447,6 +1455,44 @@ function startPractice() {
   closeSheet();
   setBar(0);
   showQuestion();
+  refillPracticePool(plan); // fresh sentences for next time, in the background
+}
+
+// Asks the user's AI (on-device first, else their provider) for new example
+// sentences for the planned words that are running low. Only the words are
+// sent. Quietly does nothing without an AI, with learning off, or on error.
+let refilling = false;
+async function refillPracticePool(plan) {
+  if (refilling || typeof SR_buildSentencePrompt !== 'function') return;
+  refilling = true;
+  try {
+    const { srPracticePool, } = await chrome.storage.local.get(['srPracticePool']);
+    const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
+    if (srInsightsOn === false) return;
+    const pool = srPracticePool && typeof srPracticePool === 'object' ? srPracticePool : {};
+    const need = plan.filter((t) => !Array.isArray(pool[t.to]) || pool[t.to].length < 2);
+    if (!need.length) return;
+    const parts = SR_buildSentencePrompt(need);
+    let text = '';
+    if ((await SR_deviceAvailability()) === 'available') {
+      const LM = SR_deviceModel();
+      const session = await LM.create({ expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] });
+      try { text = await session.prompt(SR_joinPrompt(parts)); } finally { try { session.destroy(); } catch { /* ignore */ } }
+    } else {
+      const provider = await CloudProvider.getConfig();
+      if (!providerReady(provider)) return;
+      text = await SR_callCloud(provider, parts, 0.9, 500);
+    }
+    const fresh = SR_parseSentences(text, need);
+    const now = (await chrome.storage.local.get(['srPracticePool'])).srPracticePool || {};
+    for (const [to, list] of Object.entries(fresh)) {
+      const have = Array.isArray(now[to]) ? now[to] : [];
+      now[to] = [...have, ...list.filter((x) => !have.includes(x))].slice(-POOL_PER_WORD);
+    }
+    await chrome.storage.local.set({ srPracticePool: now });
+  } catch (_) { /* templates still work */ } finally {
+    refilling = false;
+  }
 }
 
 function setBar(done) {
@@ -1470,14 +1516,18 @@ function showQuestion() {
     if (t.punct) return `<span class="pr-punct">${escapeHtml(t.text)}</span>`;
     const lead = j ? ' ' : '';
     if (j === k) return `${lead}<span class="pr-blank" id="prBlank" aria-label="blank"></span>`;
-    // Mistakes already asked show fixed; ones still to come are faded
-    // blanks, so a later question's answer is never shown early.
-    if (t.target) return j < k ? lead + escapeHtml(t.target.to) : `${lead}<span class="pr-blank later" aria-label="another blank"></span>`;
+    if (t.target) return lead + escapeHtml(t.target.to);
     return lead + escapeHtml(t.text);
   }).join('');
   refs.prAsk.textContent = 'Which word is right?';
   refs.prLeft.textContent = `${practice.q + 1} of ${practice.total}`;
-  const opts = SR_practiceChoices(tokens[k].target, practice.seed + practice.q * 7);
+  // The right answer never sits where it sat last question, so it can't be guessed by place.
+  const raw = SR_practiceChoices(tokens[k].target, practice.seed + practice.q * 7);
+  const slots = [...raw.keys()].filter((i) => i !== practice.lastPos);
+  const want = slots[Math.floor(Math.random() * slots.length)];
+  practice.lastPos = want;
+  const opts = raw.filter((w) => w !== tokens[k].target.to);
+  opts.splice(want, 0, tokens[k].target.to);
   refs.prChoices.innerHTML = opts.map((w, n) =>
     `<button type="button" class="pr-choice" data-word="${escapeHtml(w)}"><span class="key" aria-hidden="true">${n + 1}</span>${escapeHtml(w)}</button>`).join('');
   refs.prChoices.hidden = false;
@@ -1491,7 +1541,7 @@ function onChoice(word) {
   const target = tokens[k].target;
   const right = word === target.to;
   practice.answered = true;
-  practice.words.push({ to: target.to, right });
+  practice.words.push({ from: target.from, to: target.to, right });
   if (right) { practice.firstTry++; practice.combo++; practice.best = Math.max(practice.best, practice.combo); } else practice.combo = 0;
   // The blank fills with the right word; the buttons show what was picked.
   const blank = document.getElementById('prBlank');
@@ -1537,6 +1587,9 @@ function onContinue() {
 }
 
 function finishPractice() {
+  // Remember how each word went, so the next round starts with what was missed.
+  chrome.storage.local.get(['srPracticeStats']).then(({ srPracticeStats }) =>
+    chrome.storage.local.set({ srPracticeStats: SR_mergePracticeStats(srPracticeStats, practice.words, Date.now()) })).catch(() => {});
   refs.prStage.hidden = true;
   refs.prCombo.hidden = true;
   refs.prDone.hidden = false;
@@ -1961,7 +2014,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   refs.btnProgEmpty.addEventListener('click', () => toggleSettingsPanel(true));
   refs.btnTips.addEventListener('click', getTips);
   refs.btnClearInsights.addEventListener('click', async () => {
-    await chrome.storage.local.remove(['srInsights', 'srTipsCache']);
+    await chrome.storage.local.remove(['srInsights', 'srTipsCache', 'srPracticeStats', 'srPracticePool']);
     refs.insTips.hidden = true;
     renderProgress();
   });
