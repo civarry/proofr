@@ -65,9 +65,12 @@ try {
   const extId = new URL(swT.url()).host;
   const sw = await swT.worker();
   const panelURL = `chrome-extension://${extId}/sidepanel.html`;
+  // The store frames are light; Chrome follows the system theme, so pin it.
+  const light = [{ name: 'prefers-color-scheme', value: 'light' }];
   const panelShot = async (name) => {
     const p = await browser.newPage();
     await p.setViewport({ width: 400, height: 760, deviceScaleFactor: 2 });
+    await p.emulateMediaFeatures(light);
     await p.goto(panelURL);
     await sleep(1500);
     return p;
@@ -102,6 +105,7 @@ try {
 
   // Proofread in a text box: before, then after the in-place replace.
   const page = await browser.newPage();
+  await page.emulateMediaFeatures(light);
   await page.goto(`${BASE}/`);
   await sleep(800);
   const ta = await page.$$('textarea');
@@ -116,13 +120,16 @@ try {
   const original = await page.evaluate((el) => el.value, ta[0]);
   await sw.evaluate((id, text) => handleRewrite(id, text, 'grammar', { ensure: true }), tabId, original);
   await sleep(1200);
-  await page.evaluate(() => getSelection().removeAllRanges());
+  // The confirmation sits just below the field now; keep it out of the crop.
+  await page.evaluate(() => { getSelection().removeAllRanges(); document.getElementById('sr-toast').style.visibility = 'hidden'; });
   await page.screenshot({ path: `${out}/field-after.png`, clip });
+  await page.evaluate(() => { document.getElementById('sr-toast').style.visibility = ''; });
 
   // Review from the in-place toast: the word diff of what Proofread changed.
   await page.evaluate(() => document.querySelector('.sr-success-notification .sr-success-review').click());
   await page.waitForSelector('#sr-rewritten-text ins.sr-diff-ins', { timeout: 5000 });
   await sleep(500);
+  await page.evaluate(() => document.activeElement.blur()); // no focus ring in the listing shot
   await (await page.$('.sr-modal-container')).screenshot({ path: `${out}/review-diff.png` });
   await page.keyboard.press('Escape');
 

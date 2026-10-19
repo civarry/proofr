@@ -5,7 +5,7 @@
 <style>
   :root{
     --ink:#26251f; --muted:#57554e; --faint:#8a887f; --line:#e4e2db;
-    --paper:#faf9f7; --canvas:#f3f2ee; --white:#fff; --ok:#3f7d5b; --err:#b4443a;
+    --paper:#faf9f7; --canvas:#f3f2ee; --white:#fff; --accent:#1D64D8; --ok:#3f7d5b; --err:#b4443a;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{margin:0;padding:0}
@@ -16,7 +16,7 @@
     color:var(--ink);padding:26px 28px;display:flex;flex-direction:column;
   }
   .brand{display:flex;align-items:center;gap:9px}
-  .logo{width:30px;height:30px;border-radius:9px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center}
+  .logo{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
   .logo svg{width:19px;height:19px}
   .brandname{font-size:17px;font-weight:700;letter-spacing:-.3px}
   .headline{font-size:31px;font-weight:800;letter-spacing:-1.1px;line-height:1.06;margin-top:18px}
@@ -37,11 +37,11 @@
     <span class="logo" id="logo"></span>
     <span class="brandname">Proofr</span>
   </div>
-  <div class="headline">Fix your writing<br>in one click.</div>
-  <div class="tagline">Proofread · Rewrite · Translate — on your device</div>
+  <div class="headline">Fix it where<br>you wrote it.</div>
+  <div class="tagline">Proofread · Rewrite · Translate</div>
   <div class="demo">
     <div class="tag">Proofread</div>
-    We <ins>were</ins> hoping to <ins>receive</ins> the report <ins>by</ins> Friday.
+    We <ins>were</ins> hoping to <ins>receive</ins> the report by Friday.
   </div>
 </div>
 <script>
