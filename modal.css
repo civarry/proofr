@@ -5,6 +5,10 @@
   --sr-primary-dark: #171614;
   --sr-secondary: #2a2926;
   --sr-white: #faf9f7;        /* paper */
+  /* Motion (SATISFACTION.md M1/M2): entrances decelerate in 180ms, exits are
+     quicker and accelerate out; nothing overshoots. */
+  --sr-enter: 180ms cubic-bezier(0, 0, 0, 1);
+  --sr-exit: 120ms cubic-bezier(0.3, 0, 1, 1);
   --sr-gray-50: #f3f2ee;
   --sr-gray-100: #eeece6;
   --sr-gray-200: #e4e2db;
@@ -33,13 +37,14 @@
   z-index: 2147483647;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity var(--sr-exit);
   /* Render our own controls (details, selects, scrollbars) in light mode even on dark-themed host pages. */
   color-scheme: light;
 }
 
 #smart-rewrite-modal.sr-visible {
   opacity: 1;
+  transition: opacity var(--sr-enter);
 }
 
 .sr-modal-overlay {
@@ -65,14 +70,15 @@
   width: 100%;
   max-height: 82vh;
   overflow: hidden;
-  transform: scale(0.97) translateY(12px);
-  transition: all 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+  transform: translateY(8px);
+  transition: transform var(--sr-exit), opacity var(--sr-exit);
   display: flex;
   flex-direction: column;
 }
 
 #smart-rewrite-modal.sr-visible .sr-modal-container {
-  transform: scale(1) translateY(0);
+  transform: none;
+  transition: transform var(--sr-enter), opacity var(--sr-enter);
 }
 
 .sr-modal-header {
@@ -121,7 +127,7 @@
   cursor: pointer;
   padding: 8px;
   border-radius: 8px;
-  transition: all 0.2s ease;
+  transition: background-color 120ms ease, color 120ms ease;
   line-height: 1;
 }
 
@@ -458,7 +464,7 @@
   font-weight: 500;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -474,7 +480,6 @@
 
 .sr-btn-primary:hover {
   background: var(--sr-primary-dark);
-  transform: translateY(-1px);
 }
 
 .sr-btn-primary.sr-success {
@@ -490,8 +495,6 @@
 .sr-btn-secondary:hover {
   background: var(--sr-gray-50);
   border-color: var(--sr-gray-400);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .sr-success-notification {
@@ -504,13 +507,16 @@
   border-radius: 12px;
   padding: 16px 20px;
   box-shadow: var(--sr-shadow-lg);
-  transform: translateX(100%);
-  transition: transform 0.25s ease-out;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity var(--sr-exit), transform var(--sr-exit);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .sr-success-notification.sr-show {
-  transform: translateX(0);
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--sr-enter), transform var(--sr-enter);
 }
 
 .sr-success-content {
@@ -547,11 +553,12 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13.5px;
   font-weight: 500;
-  transform: translateX(130%);
-  transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity var(--sr-exit), transform var(--sr-exit);
 }
 
-.sr-loading-toast.sr-show { transform: translateX(0); }
+.sr-loading-toast.sr-show { opacity: 1; transform: none; transition: opacity var(--sr-enter), transform var(--sr-enter); }
 
 .sr-toast-spin {
   width: 15px;
@@ -721,7 +728,12 @@
   .sr-modal-container,
   .sr-btn,
   .sr-chip,
-  .sr-success-notification {
+  .sr-success-notification,
+  .sr-loading-toast,
+  #smart-rewrite-modal.sr-visible,
+  #smart-rewrite-modal.sr-visible .sr-modal-container,
+  .sr-success-notification.sr-show,
+  .sr-loading-toast.sr-show {
     transition: none;
   }
 
@@ -749,6 +761,22 @@
   cursor: pointer;
 }
 .sr-success-undo:hover { background: rgba(255, 255, 255, 0.15); }
+/* The one toast (#sr-toast): loading state's Stop, seconds/percent, first-run line. */
+#sr-toast.sr-loading-toast { flex-wrap: wrap; max-width: min(380px, calc(100vw - 16px)); }
+.sr-toast-meta { color: var(--sr-gray-500); font-variant-numeric: tabular-nums; }
+.sr-toast-meta:empty, .sr-toast-hint:empty { display: none; }
+.sr-toast-hint { flex-basis: 100%; font-size: 12px; font-weight: 400; color: var(--sr-gray-500); }
+.sr-toast-stop {
+  margin-left: 4px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--sr-gray-300);
+  background: transparent;
+  color: inherit;
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+}
+.sr-toast-stop:hover { background: var(--sr-gray-50); }
 
 @media (prefers-reduced-motion: no-preference) {
   /* The added words arrive once, so the eye finds what changed (under 200ms). */

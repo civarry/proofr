@@ -221,6 +221,17 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   check('Try as adds a new entry, keeps the original', after === before + 2, `${before} -> ${after}`);
 }
 
+// 4g. Clear history: immediate, no native dialog, Undo restores it.
+{
+  await panel.bringToFront();
+  const n = await panel.evaluate(() => document.querySelectorAll('.turn').length);
+  await panel.evaluate(() => document.getElementById('btnClearHistory').click()); await sleep(400);
+  const cleared = await panel.evaluate(() => document.querySelectorAll('.turn').length);
+  await panel.evaluate(() => document.getElementById('btnUndoClear')?.click()); await sleep(400);
+  const back = await panel.evaluate(() => document.querySelectorAll('.turn').length);
+  check('clear history is immediate with Undo (no confirm dialog)', n > 0 && cleared === 0 && back === n, `${n} -> ${cleared} -> ${back}`);
+}
+
 console.log('STEP 5');
 // 5. Translate prompt names the real language (board T2).
 mockRequests.length = 0;
@@ -260,7 +271,9 @@ await sw.evaluate((id) => handleRewrite(id, 'beta', 'grammar', { ensure: true })
 await pA; await sleep(800);
 const [va, vb] = await demo.evaluate(() => [document.getElementById('ta-a').value, document.getElementById('ta-b').value]);
 check('overlapping rewrites: B gets only its own result', vb === 'second R(beta) end', vb);
-check('overlapping rewrites: A replaced in place, not B', va === 'first R(SLOW alpha) end', va);
+// The user moved on to B, so A's late result is offered (Apply), not typed
+// into A behind their back (SATISFACTION.md gap 1).
+check('overlapping rewrites: A left alone while the user is in B', va === 'first SLOW alpha end', va);
 
 // Control: the old direct value assignment is NOT undoable. Proves the undo check can fail.
 await demo.evaluate(() => { const t = document.getElementById('probe'); t.value = 'hello we was here ok'; t.focus(); t.setSelectionRange(6, 12); t.value = 'hello XX here ok'; });
@@ -328,6 +341,47 @@ await sleep(600);
 const back = await panel.evaluate(async () => ({ e: (await chrome.storage.sync.get(['srEngine'])).srEngine, pill: document.getElementById('providerPillText').textContent }));
 check('picking on-device switches back', back.e === 'device' && /On-device/.test(back.pill), JSON.stringify(back));
 await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
+
+// 6f. A slow result must not pull focus back or type into a box the user
+// left (SATISFACTION.md gap 1): it waits behind "Apply" instead.
+{
+  await demo.bringToFront();
+  await demo.evaluate(() => {
+    const mk = (id, top, v) => { const t = document.createElement('textarea'); t.id = id; t.value = v; t.style.cssText = `position:fixed;top:${top}px;left:460px;width:300px;height:40px;z-index:99999`; document.body.appendChild(t); return t; };
+    const a = mk('fa', 90, 'SLOW we was here'); mk('fb', 140, '');
+    a.focus(); a.select();
+  });
+  const p1 = sw.evaluate((id) => handleRewrite(id, 'SLOW we was here', 'grammar', { ensure: true }), tabId);
+  await sleep(500);
+  await demo.evaluate(() => { const b = document.getElementById('fb'); b.focus(); });
+  await demo.keyboard.type('abc');
+  await p1; await sleep(600);
+  await demo.keyboard.type('XYZ');
+  const f = await demo.evaluate(() => ({ a: document.getElementById('fa').value, b: document.getElementById('fb').value, active: document.activeElement.id, toast: document.querySelector('.sr-success-notification')?.textContent || '' }));
+  check('slow result does not steal focus or keystrokes', f.b === 'abcXYZ' && f.active === 'fb' && f.a === 'SLOW we was here', JSON.stringify(f));
+  check('slow result offers Apply for the box you left', /box you left/.test(f.toast), f.toast.slice(0, 80));
+}
+
+// 6g. Stop ends a running rewrite and leaves the text alone.
+{
+  await demo.evaluate(() => { const a = document.getElementById('fa'); a.value = 'SLOW stop me please'; a.focus(); a.select(); });
+  const p2 = sw.evaluate((id) => handleRewrite(id, 'SLOW stop me please', 'grammar', { ensure: true }), tabId);
+  await sleep(500);
+  await demo.evaluate(() => document.querySelector('#sr-toast .sr-toast-stop')?.click());
+  await p2; await sleep(800);
+  const st = await demo.evaluate(() => ({ a: document.getElementById('fa').value, msg: document.getElementById('sr-toast')?.textContent || '' }));
+  check('Stop leaves the field unchanged and says so', st.a === 'SLOW stop me please' && /Stopped/.test(st.msg), st.a);
+}
+
+// 6h. Review-last command reopens the last result on this page.
+{
+  await demo.evaluate(() => { document.querySelector('.sr-success-notification')?.remove(); window.SmartRewriteModal && window.SmartRewriteModal.hide(); });
+  await sleep(300);
+  await sw.evaluate((id) => typeof reviewLast === 'function' && chrome.scripting.executeScript({ target: { tabId: id }, func: reviewLast }), tabId);
+  await sleep(500);
+  check('review-last opens the last result', await demo.evaluate(() => !!document.querySelector('#smart-rewrite-modal.sr-visible #sr-rewritten-text')));
+  await demo.evaluate(() => window.SmartRewriteModal && window.SmartRewriteModal.hide());
+}
 
 // 7. Hover toggle: grants (pre-granted in test copy), registers scripts, applies on reload.
 await panel.bringToFront();

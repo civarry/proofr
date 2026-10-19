@@ -92,7 +92,7 @@ const tabId = await sw.evaluate(async () => (await chrome.tabs.query({ url: 'htt
 await demo.evaluate(() => { const t = document.getElementById('t'); t.focus(); t.select(); });
 const tStart = Date.now();
 sw.evaluate((id) => handleRewrite(id, 'We was hoping to recieve it by friday.', 'grammar', { ensure: true }), tabId);
-await demo.waitForFunction(() => document.getElementById('sr-loading-toast') || document.querySelector('#smart-rewrite-modal.sr-visible'), { timeout: 5000, polling: 10 }).catch(() => {});
+await demo.waitForFunction(() => document.getElementById('sr-toast') || document.querySelector('#smart-rewrite-modal.sr-visible'), { timeout: 5000, polling: 10 }).catch(() => {});
 record('Text box: action → "working" visible', Date.now() - tStart, 300);
 await demo.waitForFunction(() => /Fixed|Nothing/.test(document.querySelector('.sr-success-notification')?.textContent || ''), { timeout: 10000, polling: 10 }).catch(() => {});
 record('Text box: action → fixed + toast', Date.now() - tStart, MOCK_MS + 500);

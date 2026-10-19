@@ -1276,11 +1276,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Header
   refs.btnSettings.addEventListener('click', () => toggleSettingsPanel());
   refs.btnSettingsBack.addEventListener('click', () => toggleSettingsPanel(false));
+  // Clear at once and offer Undo for a few seconds, instead of an "Are you
+  // sure?" dialog people learn to click through (SATISFACTION.md E2).
+  let clearedTurns = null;
+  let clearTimer = null;
   refs.btnClearHistory.addEventListener('click', async () => {
-    if (turns.length === 0) return;
-    if (!confirm("Clear all rewrite history? This can't be undone.")) return;
+    if (turns.length === 0 || activeRun) return;
+    clearedTurns = turns;
     turns = [];
     await TurnLog.clear();
+    renderThread();
+    refs.panelNotice.innerHTML = 'History cleared. <button type="button" class="notice-undo" id="btnUndoClear">Undo</button>';
+    refs.panelNotice.classList.remove('hidden');
+    clearTimeout(clearTimer);
+    clearTimer = setTimeout(() => { clearedTurns = null; refs.panelNotice.classList.add('hidden'); }, 8000);
+  });
+  refs.panelNotice.addEventListener('click', async (e) => {
+    if (!e.target.closest('#btnUndoClear') || !clearedTurns) return;
+    turns = await TurnLog.save(clearedTurns.concat(turns));
+    clearedTurns = null;
+    clearTimeout(clearTimer);
+    refs.panelNotice.classList.add('hidden');
     renderThread();
   });
 

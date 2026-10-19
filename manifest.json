@@ -39,6 +39,13 @@
         "chromeos": "Alt+Shift+P"
       },
       "description": "Proofread the selected text (or the whole text box if nothing is selected)"
+    },
+    "review-last": {
+      "suggested_key": {
+        "default": "Alt+Shift+R",
+        "mac": "Alt+Shift+R"
+      },
+      "description": "Review the last Proofr change on this page"
     }
   },
   "icons": {

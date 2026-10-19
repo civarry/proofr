@@ -17,13 +17,13 @@
       modal.id = 'smart-rewrite-modal';
       modal.innerHTML = `
         <div class="sr-modal-overlay">
-          <div class="sr-modal-container">
+          <div class="sr-modal-container" role="dialog" aria-modal="true" aria-labelledby="sr-modal-heading">
             <div class="sr-modal-header">
               <div class="sr-modal-title">
                 <div class="sr-logo">${(typeof SR_LOGO_SVG !== 'undefined') ? SR_LOGO_SVG : 'SR'}</div>
-                <h3>Proofr</h3>
+                <h3 id="sr-modal-heading">Proofr</h3>
               </div>
-              <button class="sr-close-btn" id="sr-close-btn">✕</button>
+              <button class="sr-close-btn" id="sr-close-btn" aria-label="Close">✕</button>
             </div>
             
             <div class="sr-modal-content" id="sr-modal-content">
@@ -49,8 +49,11 @@
         if (this.isVisible) {
           if (e.key === 'Escape') {
             this.hide();
+          } else if (e.key === 'Tab') {
+            this.trapTab(e);
           } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
-            if (this.currentRewrite) {
+            // Only when nothing is selected, so copying from "Show original" still works.
+            if (this.currentRewrite && !String(window.getSelection() || '')) {
               this.copyToClipboard(this.currentRewrite);
               e.preventDefault();
             }
@@ -116,28 +119,161 @@
       return !!(el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable));
     }
 
-    // A small corner indicator for inline replacements — no full modal.
-    showLoadingToast(tone) {
-      this.hideLoadingToast();
-      const toneName = this.getToneName(tone);
-      const label = tone === 'translate' ? 'Translating' : `Rewriting to ${toneName}`;
-      const toast = document.createElement('div');
-      toast.className = 'sr-loading-toast';
-      toast.id = 'sr-loading-toast';
-      toast.innerHTML = `<span class="sr-toast-spin"></span><span>${label}…</span>`;
-      document.body.appendChild(toast);
-      requestAnimationFrame(() => toast.classList.add('sr-show'));
+    // Keeps Tab inside the dialog (it's appended at the end of body).
+    trapTab(e) {
+      const box = this.modal.querySelector('.sr-modal-container');
+      const items = [...box.querySelectorAll('button:not([disabled]), select, summary, a[href], [tabindex="0"]')]
+        .filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      const inside = box.contains(document.activeElement);
+      if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+    }
+
+    workingLabel(tone) {
+      if (tone === 'grammar') return 'Proofreading…';
+      if (tone === 'translate') return 'Translating…';
+      return `Making it ${this.getToneName(tone).toLowerCase()}…`;
+    }
+
+    // One toast per action. Loading, then success, "ready", or a light error,
+    // all in the same element: it enters once and changes state in place.
+    toastEl() {
+      let t = document.getElementById('sr-toast');
+      if (t) return t;
+      t = document.createElement('div');
+      t.id = 'sr-toast';
+      t.setAttribute('role', 'status');
+      t.setAttribute('aria-live', 'polite');
+      // Never vanish under the pointer or keyboard focus.
+      t.addEventListener('mouseenter', () => { this.toastHeld = true; clearTimeout(this.toastTimer); });
+      t.addEventListener('focusin', () => { this.toastHeld = true; clearTimeout(this.toastTimer); });
+      const release = () => {
+        if (t.matches(':hover') || t.contains(document.activeElement)) return;
+        this.toastHeld = false;
+        if (this.toastMs) this.dismissToast(this.toastMs);
+      };
+      t.addEventListener('mouseleave', release);
+      t.addEventListener('focusout', () => setTimeout(release, 0));
+      document.body.appendChild(t);
+      return t;
+    }
+
+    // Just below the field (above it near the bottom edge), clamped to the
+    // viewport; the top-right corner when there's no visible field.
+    placeToast(t) {
+      const el = this.toastAnchor;
+      const r = el && el.isConnected ? el.getBoundingClientRect() : null;
+      const w = t.offsetWidth, h = t.offsetHeight, gap = 8, vw = window.innerWidth, vh = window.innerHeight;
+      if (!r || r.bottom < 0 || r.top > vh || (r.width === 0 && r.height === 0)) {
+        t.style.top = t.style.left = t.style.right = '';
+        return;
+      }
+      let top = r.bottom + gap;
+      if (top + h > vh - gap) top = r.top - h - gap;
+      if (top < gap) top = Math.min(Math.max(gap, r.bottom - h - gap), vh - h - gap);
+      t.style.top = `${Math.round(top)}px`;
+      t.style.left = `${Math.round(Math.min(Math.max(gap, r.left), vw - w - gap))}px`;
+      t.style.right = 'auto';
+    }
+
+    // kind: 'loading' | 'success' | 'error'. Returns the element, already placed.
+    renderToast(kind, html) {
+      this.stopToastClock();
+      clearTimeout(this.toastTimer);
+      this.toastMs = 0;
+      this.toastGen = (this.toastGen || 0) + 1;
+      const t = this.toastEl();
+      const fresh = !t.classList.contains('sr-show');
+      t.className = `${kind === 'loading' ? 'sr-loading-toast' : 'sr-success-notification'}${fresh ? '' : ' sr-show'}`;
+      t.setAttribute('aria-busy', String(kind === 'loading'));
+      t.innerHTML = html;
+      this.placeToast(t);
+      if (fresh) requestAnimationFrame(() => t.classList.add('sr-show'));
+      return t;
+    }
+
+    // ms: how long it stays once nobody is pointing at or focused in it.
+    dismissToast(ms) {
+      this.toastMs = ms;
+      clearTimeout(this.toastTimer);
+      if (this.toastHeld) return;
+      this.toastTimer = setTimeout(() => this.removeToast(), ms);
+    }
+
+    removeToast() {
+      this.stopToastClock();
+      clearTimeout(this.toastTimer);
+      this.toastHeld = false;
+      const t = document.getElementById('sr-toast');
+      if (!t) return;
+      t.removeAttribute('id'); // the next action gets a new toast, not this leaving one
+      t.classList.remove('sr-show');
+      setTimeout(() => t.remove(), 120); // the exit transition's length
+    }
+
+    stopToastClock() {
+      clearInterval(this.toastClock);
+      clearTimeout(this.spinTimer);
+      this.toastClock = null;
+      this.loadingRequestId = null;
+    }
+
+    // In-place loading: the label at once, the spinner only after 1s (a fast
+    // fix never shows a looping animation), seconds after 2s, Stop and Esc.
+    showLoadingToast(tone, { requestId, onDevice } = {}) {
+      this.toastAnchor = document.activeElement;
+      const t = this.renderToast('loading', `<span class="sr-toast-text">${this.workingLabel(tone)}</span><span class="sr-toast-meta" aria-hidden="true"></span><button type="button" class="sr-toast-stop">Stop</button><span class="sr-toast-hint" aria-hidden="true"></span>`);
+      this.loadingRequestId = requestId || null;
+      this.toastPct = null;
+      const started = Date.now();
+      this.spinTimer = setTimeout(() => {
+        const spin = document.createElement('span');
+        spin.className = 'sr-toast-spin';
+        t.prepend(spin);
+      }, 1000);
+      this.toastClock = setInterval(() => {
+        const secs = Math.floor((Date.now() - started) / 1000);
+        const meta = t.querySelector('.sr-toast-meta');
+        if (meta && this.toastPct == null && secs >= 2) meta.textContent = `${secs}s`;
+        const hint = t.querySelector('.sr-toast-hint');
+        if (hint && onDevice && secs >= 4 && !hint.textContent) { hint.textContent = 'On-device AI can take a while on the first run.'; this.placeToast(t); }
+      }, 250);
+      t.querySelector('.sr-toast-stop').addEventListener('click', () => this.stopRewrite());
+      this.bindToastKeys();
+    }
+
+    // Esc stops the in-place rewrite while its toast is loading, but only with
+    // focus still in that field, the toast, or nowhere: elsewhere Esc is the page's.
+    bindToastKeys() {
+      if (this.toastKeysBound) return;
+      this.toastKeysBound = true;
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !this.toastClock || this.isVisible) return;
+        const a = document.activeElement, t = document.getElementById('sr-toast');
+        if (a && a !== document.body && a !== this.toastAnchor && !(t && t.contains(a))) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.stopRewrite();
+      }, true);
+    }
+
+    stopRewrite() {
+      const requestId = this.loadingRequestId;
+      this.busy = false;
+      try { chrome.runtime.sendMessage({ action: 'stopRewrite', requestId }); } catch (_) {}
+      this.renderToast('success', '<span class="sr-success-text">Stopped.</span>');
+      this.dismissToast(1500);
     }
 
     hideLoadingToast() {
-      const toast = document.getElementById('sr-loading-toast');
-      if (toast) {
-        toast.classList.remove('sr-show');
-        setTimeout(() => toast.remove(), 200);
-      }
+      const t = document.getElementById('sr-toast');
+      if (t && t.classList.contains('sr-loading-toast')) this.removeToast();
     }
 
-    showLoading(originalText, tone, targetLang) {
+    // opts.requestId: sent back with Stop. opts.onDevice: show the first-run line.
+    showLoading(originalText, tone, targetLang, opts = {}) {
       this.currentText = originalText;
       this.currentTone = tone;
       this.currentRewrite = '';
@@ -146,7 +282,7 @@
 
       // Editable target → the result gets replaced in place, so skip the big modal
       // and show a light corner indicator instead.
-      if (this.isEditableTarget()) { this.showLoadingToast(tone); return; }
+      if (this.isEditableTarget()) { this.showLoadingToast(tone, opts); return; }
 
       if (!this.modal) this.createModal();
 
@@ -179,9 +315,18 @@
     // adds a primary button; run() returning true closes the dialog.
 
     // Partial answer while a rewrite streams (on-device): replaces the skeleton
-    // with the text so far. In-place edits show only the corner toast, so no-op.
+    // with the text so far. In place, Proofread shows a percent in the toast
+    // instead (its output is about as long as its input, so cap below 100).
     streamText(text) {
-      if (!this.busy || !this.modal || !this.isVisible) return;
+      if (!this.busy) return;
+      if (!this.isVisible) {
+        const meta = this.toastClock && document.querySelector('#sr-toast .sr-toast-meta');
+        if (!meta || this.currentTone !== 'grammar' || !this.currentText) return;
+        this.toastPct = Math.min(95, Math.round((String(text).length / this.currentText.length) * 100));
+        meta.textContent = `${this.toastPct}%`;
+        return;
+      }
+      if (!this.modal) return;
       let box = document.getElementById('sr-rewritten-text');
       if (!box) {
         const skeleton = document.querySelector('#sr-modal-content .sr-skeleton');
@@ -234,7 +379,7 @@
       document.getElementById('sr-modal-footer').innerHTML = `
         ${action ? `<button class="sr-btn sr-btn-primary" id="sr-action-btn">${this.escapeHtml(action.label)}</button>` : ''}
         <button class="sr-btn ${action ? 'sr-btn-secondary' : 'sr-btn-primary'}" id="sr-copy-btn">Copy</button>
-        <span class="sr-hint">Tap a tone to rewrite again · Esc to close</span>
+        <span class="sr-hint">Click a tone to rewrite again · Esc to close</span>
         ${engineTag}
       `;
 
@@ -299,9 +444,22 @@
       }
     }
 
-    showError(message, { title } = {}) {
+    // retry / alternative: { label, run } run here in the page; run() is called
+    // after the error closes. light: a short toast instead of the overlay, for
+    // errors that need no reading ("Select some text first").
+    showError(message, { title, retry, alternative, light } = {}) {
       this.busy = false;
-      this.hideLoadingToast();
+      const actions = [alternative, retry].filter(Boolean);
+      if (light) {
+        const t = this.renderToast('error', `<span class="sr-success-text">${this.escapeHtml(message)}</span>${actions.map((a, i) => `<button type="button" class="sr-success-review" data-i="${i}">${this.escapeHtml(a.label)}</button>`).join('')}`);
+        t.querySelectorAll('button[data-i]').forEach((btn) => btn.addEventListener('click', () => {
+          this.removeToast();
+          actions[Number(btn.dataset.i)].run();
+        }));
+        this.dismissToast(actions.length ? 8000 : 4000);
+        return;
+      }
+      this.removeToast();
       if (!this.modal) this.createModal();
 
       document.getElementById('sr-modal-content').innerHTML = `
@@ -314,72 +472,91 @@
 
       document.getElementById('sr-modal-footer').innerHTML = `
         <div class="sr-action-buttons">
+          ${retry ? `<button class="sr-btn sr-btn-primary" id="sr-error-retry">${this.escapeHtml(retry.label)}</button>` : ''}
+          ${alternative ? `<button class="sr-btn sr-btn-secondary" id="sr-error-alt">${this.escapeHtml(alternative.label)}</button>` : ''}
           <button class="sr-btn sr-btn-secondary" id="sr-error-close">Close</button>
         </div>
       `;
       // Not an inline onclick: that runs in the page's world, where SmartRewriteModal doesn't exist.
       document.getElementById('sr-error-close').addEventListener('click', () => this.hide());
+      // Close first, so focus is back in the text box the retry should land in.
+      const bind = (id, a) => a && document.getElementById(id).addEventListener('click', () => { this.hide(); a.run(); });
+      bind('sr-error-retry', retry);
+      bind('sr-error-alt', alternative);
 
       this.show();
     }
 
     // opts.review: { original, rewritten, tone, provider, where?, action? } adds a Review
-    // link that opens the result dialog (with the Proofread diff) for a replace already
+    // button that opens the result dialog (with the Proofread diff) for a replace already
     // done. opts.undo: a function that undoes the replace (Ctrl/Cmd+Z fails in some rich
-    // editors); truthy return → "Undone". A Proofread with nothing changed gets neither.
-    showSuccess(message, { review, undo } = {}) {
+    // editors); truthy return → "Undone". opts.apply: { label, run } for a result that
+    // wasn't inserted (the user moved to another box); truthy run() → "Applied."
+    // A Proofread with nothing changed gets no Review or Undo.
+    showSuccess(message, { review, undo, apply } = {}) {
       this.busy = false;
-      this.hideLoadingToast();
-      document.querySelectorAll('.sr-success-notification').forEach((n) => n.remove());
       const unchanged = !!(review && review.tone === 'grammar' && typeof SR_wordDiff === 'function'
         && SR_diffCount(SR_wordDiff(review.original, review.rewritten)) === 0);
       if (unchanged) { review = null; undo = null; }
-      const notification = document.createElement('div');
-      notification.className = 'sr-success-notification';
-      notification.setAttribute('role', 'status');
-      notification.setAttribute('aria-live', 'polite');
-      notification.innerHTML = `
+      const t = this.renderToast('success', `
         <div class="sr-success-content">
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
+          ${apply ? `<button type="button" class="sr-success-review sr-success-apply">${this.escapeHtml(apply.label)}</button>` : ''}
           ${review ? '<button type="button" class="sr-success-review">Review</button>' : ''}
           ${undo ? '<button type="button" class="sr-success-undo">Undo</button>' : ''}
         </div>
-      `;
-      let hideTimer;
-      const dismiss = (ms) => {
-        clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => {
-          notification.classList.remove('sr-show');
-          setTimeout(() => notification.remove(), 300);
-        }, ms);
+      `);
+      const gen = this.toastGen;
+      // Replaces the buttons with a one-line outcome, unless run() already showed a new toast.
+      const settle = (text, ms) => {
+        if (this.toastGen !== gen) return;
+        t.querySelectorAll('button').forEach((b) => b.remove());
+        t.querySelector('.sr-success-text').textContent = text;
+        this.toastHeld = false;
+        this.dismissToast(ms);
       };
       if (review) {
-        notification.querySelector('.sr-success-review').addEventListener('click', () => {
-          notification.remove();
-          this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where, action: review.action });
+        t.querySelector('.sr-success-review:not(.sr-success-apply)').addEventListener('click', () => this.showReview(review));
+      }
+      if (apply) {
+        t.querySelector('.sr-success-apply').addEventListener('click', async () => {
+          let ok = false;
+          try { ok = await apply.run(); } catch (_) { ok = false; }
+          settle(ok ? 'Applied.' : "Couldn't apply: that text box changed.", ok ? 1500 : 4000);
         });
       }
       if (undo) {
-        notification.querySelector('.sr-success-undo').addEventListener('click', async () => {
+        t.querySelector('.sr-success-undo').addEventListener('click', async () => {
           let ok = false;
           try { ok = await undo(); } catch (_) { ok = false; }
-          notification.querySelectorAll('button').forEach((b) => b.remove());
-          notification.querySelector('.sr-success-text').textContent = ok ? 'Undone.' : "Couldn't undo here. Try Ctrl/Cmd+Z.";
-          dismiss(ok ? 1500 : 4000);
+          settle(ok ? 'Undone.' : "Couldn't undo here. Try Ctrl/Cmd+Z.", ok ? 1500 : 4000);
         });
       }
-
-      document.body.appendChild(notification);
-      setTimeout(() => notification.classList.add('sr-show'), 100);
-      // Review and Undo need time to read and act on.
-      dismiss(/undo/i.test(message) || review || undo ? 6000 : 3000);
+      // Buttons need time to read and reach.
+      this.dismissToast(/undo/i.test(message) || review || undo || apply ? 8000 : 3000);
     }
 
+    // The result dialog for a replace already done (toast Review, or the
+    // "review last change" shortcut after the toast has gone).
+    showReview(review) {
+      this.removeToast();
+      this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where, action: review.action, notice: review.notice });
+    }
+
+    // Focus moves into the dialog (primary button) and comes back on hide.
     show() {
       if (this.modal) {
+        if (!this.isVisible) this.returnFocus = document.activeElement;
         this.modal.style.display = 'block';
         this.isVisible = true;
+        const primary = ['#sr-action-btn', '#sr-error-retry', '.sr-modal-footer .sr-btn-primary:not([disabled])', '#sr-error-close', '#sr-close-btn']
+          .map((q) => this.modal.querySelector(q)).find(Boolean);
+        // Not while the user is typing in some other box (a late result must not steal focus).
+        const a = document.activeElement;
+        const typingElsewhere = a && a !== this.toastAnchor && !this.modal.contains(a)
+          && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
+        if (primary && !typingElsewhere) primary.focus({ preventScroll: true });
 
         setTimeout(() => {
           this.modal.classList.add('sr-visible');
@@ -390,10 +567,13 @@
     hide() {
       if (this.modal) {
         this.modal.classList.remove('sr-visible');
+        this.isVisible = false;
+        const back = this.returnFocus;
+        this.returnFocus = null;
+        if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
         setTimeout(() => {
-          this.modal.style.display = 'none';
-          this.isVisible = false;
-        }, 300);
+          if (!this.isVisible) this.modal.style.display = 'none';
+        }, 120); // the exit transition's length
       }
     }
 

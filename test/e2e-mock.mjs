@@ -47,7 +47,10 @@ const requests = [];
 const PAGE = `<!doctype html><meta charset="utf-8"><title>e2e</title>
 <p id="para">Good morning team, the report is ready.</p>
 <textarea id="ta">teh quick brown fox</textarea>
-<div id="ce" contenteditable="true">teh lazy dog</div>`;
+<div id="ce" contenteditable="true">teh lazy dog</div>
+<input id="other">`;
+// Text containing SLOW answers after 3s; FAILONCE fails with 500 the first time it's seen.
+let failedOnce = false;
 const server = http.createServer((req, res) => {
   const cors = {
     'Access-Control-Allow-Origin': '*',
@@ -64,9 +67,18 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      requests.push(JSON.parse(body));
-      res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: OUT } }] }));
+      const parsed = JSON.parse(body);
+      requests.push(parsed);
+      const text = JSON.stringify(parsed.messages || '');
+      if (text.includes('FAILONCE') && !failedOnce) {
+        failedOnce = true;
+        res.writeHead(500, { ...cors, 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: { message: 'mock overloaded' } }));
+      }
+      setTimeout(() => {
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: OUT } }] }));
+      }, text.includes('SLOW') ? 3000 : 0);
     });
     return;
   }
@@ -248,6 +260,126 @@ try {
     check(r.none === 0, 'toast: nothing changed → no Review, no Undo');
   });
 
+
+  // 3d. Dialog semantics and focus (SATISFACTION §3 #4, K5).
+  await step('dialog focus', async () => {
+    // A dialog that opens while the user types in another box leaves focus there.
+    await page.evaluate(() => { const o = document.getElementById('other'); o.value = ''; o.focus(); });
+    const stay = await inModal(() => {
+      window.SmartRewriteModal.toastAnchor = document.getElementById('ta');
+      window.SmartRewriteModal.showResult('teh report', 'the report', 'grammar', 'custom');
+      return document.activeElement.id;
+    });
+    check(stay === 'other', `dialog: doesn't take focus from a box the user is typing in (got ${stay})`);
+    await page.keyboard.press('Escape');
+    // The usual case: focus in the field the rewrite came from.
+    await page.evaluate(() => document.getElementById('ta').focus());
+    const r = await inModal(() => {
+      const M = window.SmartRewriteModal;
+      M.showResult('teh report', 'the report', 'grammar', 'custom');
+      const c = document.querySelector('.sr-modal-container');
+      const label = document.getElementById(c.getAttribute('aria-labelledby'));
+      return {
+        role: c.getAttribute('role'), modal: c.getAttribute('aria-modal'), label: label && label.textContent,
+        close: document.getElementById('sr-close-btn').getAttribute('aria-label'),
+        focus: c.contains(document.activeElement) ? document.activeElement.id : `outside:${document.activeElement.tagName}`,
+      };
+    });
+    check(r.role === 'dialog' && r.modal === 'true' && r.label === 'Proofr', `dialog: role=dialog, aria-modal, labelled "Proofr" (got ${JSON.stringify(r)})`);
+    check(r.close === 'Close', 'dialog: ✕ is named "Close"');
+    check(r.focus === 'sr-copy-btn', `dialog: focus starts on the primary button (got ${r.focus})`);
+    let inside = true;
+    for (let i = 0; i < 25; i++) {
+      await page.keyboard.press('Tab');
+      inside = inside && await page.evaluate(() => document.querySelector('.sr-modal-container').contains(document.activeElement));
+    }
+    await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift');
+    inside = inside && await page.evaluate(() => document.querySelector('.sr-modal-container').contains(document.activeElement));
+    check(inside, 'dialog: Tab and Shift+Tab stay inside');
+    // Ctrl/Cmd+C: copies the rewrite only when nothing is selected.
+    const k5 = await inModal(() => {
+      const ev = () => { const e = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+      getSelection().removeAllRanges();
+      const empty = ev();
+      document.querySelector('.sr-original').open = true;
+      const r = document.createRange(); r.selectNodeContents(document.querySelector('.sr-original-text'));
+      getSelection().removeAllRanges(); getSelection().addRange(r);
+      const selected = ev();
+      getSelection().removeAllRanges();
+      return { empty, selected, hint: document.querySelector('#sr-modal-footer .sr-hint').textContent };
+    });
+    check(k5.empty && !k5.selected, `dialog: Ctrl/Cmd+C intercepted only with no selection (got ${JSON.stringify(k5)})`);
+    check(/^Click a tone/.test(k5.hint), `dialog: hint says "Click a tone" (got ${JSON.stringify(k5.hint)})`);
+    await page.keyboard.press('Escape');
+    const back = await inModal(() => ({ visible: window.SmartRewriteModal.isVisible, focus: document.activeElement.id }));
+    check(!back.visible && back.focus === 'ta', `dialog: Esc closes at once and gives focus back (got ${JSON.stringify(back)})`);
+  });
+
+  // 3e. One toast per action, near the field, held while hovered (§3 #5, #6, #7, #3).
+  await step('one toast', async () => {
+    await page.evaluate(() => { const el = document.getElementById('ta'); el.value = 'teh quick brown fox'; el.focus(); });
+    const r = await inModal(async () => {
+      const M = window.SmartRewriteModal;
+      const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      M.removeToast(); // start from no toast, as a fresh action does
+      await wait(200);
+      const made = [];
+      const obs = new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => n.classList && /sr-(loading-toast|success)/.test(n.className) && made.push(n))));
+      obs.observe(document.body, { childList: true });
+      M.showLoading('teh quick brown fox', 'grammar', null, { requestId: 'x1' });
+      const t = document.getElementById('sr-toast');
+      const early = { role: t.getAttribute('role'), text: t.querySelector('.sr-toast-text').textContent, spin: !!t.querySelector('.sr-toast-spin'), stop: !!t.querySelector('.sr-toast-stop') };
+      await wait(1200);
+      const spinLater = !!t.querySelector('.sr-toast-spin');
+      await wait(1300);
+      const secs = t.querySelector('.sr-toast-meta').textContent;
+      M.streamText('the quick');
+      const pct = t.querySelector('.sr-toast-meta').textContent;
+      const tr = t.getBoundingClientRect(), fr = document.getElementById('ta').getBoundingClientRect();
+      const dist = Math.max(0, tr.top - fr.bottom, fr.top - tr.bottom);
+      M.showSuccess('Fixed 1 thing.', { review: { original: 'teh', rewritten: 'the', tone: 'grammar' }, undo: () => true });
+      const same = document.getElementById('sr-toast') === t && /sr-success-notification/.test(t.className);
+      const holdMs = M.toastMs;
+      t.dispatchEvent(new MouseEvent('mouseenter'));
+      M.dismissToast(100);
+      await wait(400);
+      const held = t.isConnected;
+      t.dispatchEvent(new MouseEvent('mouseleave'));
+      await wait(500);
+      const goneAfterLeave = !t.isConnected;
+      await wait(50);
+      obs.disconnect();
+      return { early, spinLater, secs, pct, dist, same, holdMs, held, goneAfterLeave, made: made.length };
+    });
+    check(r.early.role === 'status' && r.early.text === 'Proofreading…' && r.early.stop, `toast: loading says "Proofreading…", role=status, has Stop (got ${JSON.stringify(r.early)})`);
+    check(!r.early.spin && r.spinLater, 'toast: spinner only after 1s');
+    check(/^\d+s$/.test(r.secs), `toast: elapsed seconds after 2s (got ${JSON.stringify(r.secs)})`);
+    check(r.pct === '47%', `toast: Proofread streaming shows percent (got ${JSON.stringify(r.pct)})`);
+    check(r.dist < 100, `toast: within 100px of the field (got ${r.dist}px)`);
+    check(r.same && r.made === 1, `toast: one element from loading to done (same: ${r.same}, created: ${r.made})`);
+    check(r.holdMs === 8000, `toast: Review/Undo stays 8s (got ${r.holdMs})`);
+    check(r.held && r.goneAfterLeave, `toast: held while hovered, goes after leave (held ${r.held}, gone ${r.goneAfterLeave})`);
+  });
+
+  // 3f. Errors: light ones in the toast, retry/alternative as buttons (§3 #8).
+  await step('error actions', async () => {
+    const r = await inModal(async () => {
+      const M = window.SmartRewriteModal;
+      const ran = [];
+      M.showError('Select some text first.', { light: true });
+      const light = { toast: !!document.querySelector('#sr-toast.sr-success-notification'), overlay: M.isVisible };
+      M.showError('The model timed out.', { title: 'Timed out', retry: { label: 'Try again', run: () => ran.push('retry') }, alternative: { label: 'Use Groq instead', run: () => ran.push('alt') } });
+      const focus = document.activeElement.id;
+      const buttons = [...document.querySelectorAll('#sr-modal-footer button')].map((b) => b.textContent);
+      document.getElementById('sr-error-retry').click();
+      return { light, focus, buttons, ran, closed: !M.isVisible, toastGone: !document.getElementById('sr-toast') };
+    });
+    check(r.light.toast && !r.light.overlay, `light error: a toast, not the overlay (got ${JSON.stringify(r.light)})`);
+    check(r.buttons.join() === 'Try again,Use Groq instead,Close', `error: Try again, alternative, Close (got ${r.buttons})`);
+    check(r.focus === 'sr-error-retry', `error: focus on Try again (got ${r.focus})`);
+    check(r.ran.join() === 'retry' && r.closed && r.toastGone, `error: Try again closes the error and runs the retry (got ${JSON.stringify(r)})`);
+  });
+
   // 4. In-place replace + undo.
   const undo = process.platform === 'darwin' ? 'Meta' : 'Control';
   for (const [sel, label] of [['#ta', 'textarea'], ['#ce', 'contenteditable']]) {
@@ -338,6 +470,79 @@ try {
     if (clicked === 'timeout') console.log('SKIP in-place toast: real mouse click (no painted frames: display asleep or screen locked)');
     else check(clicked, 'in-place toast: a real mouse click on Review opens the diff');
     await page.keyboard.press('Escape');
+  });
+
+
+  // 4e. Stop in place: Esc during a slow rewrite leaves the field alone (§3 #3).
+  await step('esc stops', async () => {
+    const slow = 'SLOW teh quick brown fox';
+    await selectField(slow);
+    const running = sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, slow); // resolves when the result lands
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast.sr-loading-toast')), 3000);
+    await sleep(1000);
+    await page.keyboard.press('Escape');
+    const said = await page.evaluate(() => (document.querySelector('#sr-toast .sr-success-text') || {}).textContent);
+    check(said === 'Stopped.', `Esc during a slow in-place rewrite: toast says Stopped (got ${JSON.stringify(said)})`);
+    await running;
+    await sleep(3000);
+    const v = await page.evaluate(() => document.querySelector('#ta').value);
+    check(v === slow, `Esc during a slow in-place rewrite: field unchanged after the result would have landed (got ${JSON.stringify(v)})`);
+  });
+
+  // 4f. No focus steal: move to another box mid-rewrite; the result waits for Apply (§3 #1).
+  await step('no focus steal', async () => {
+    const slow = 'SLOW Proofr mock result.'; // a small edit, so the change guard stays out of it
+    await selectField(slow);
+    const running = sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, slow); // resolves when the result lands
+    // Move only once the target is captured (the loading toast shows after that).
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast.sr-loading-toast')), 3000);
+    await page.evaluate(() => { const o = document.getElementById('other'); o.value = ''; o.focus(); });
+    await page.keyboard.type('abc');
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast .sr-success-apply')), 6000);
+    await running;
+    await page.keyboard.type('XYZ');
+    const r = await page.evaluate(() => ({ active: document.activeElement.id, other: document.getElementById('other').value, ta: document.getElementById('ta').value }));
+    check(r.active === 'other' && r.other === 'abcXYZ' && r.ta === slow, `result for a box you left: focus and keystrokes stay put (got ${JSON.stringify(r)})`);
+    await page.evaluate(() => document.querySelector('#sr-toast .sr-success-apply').click());
+    const applied = await waitFor(() => page.evaluate((out) => document.querySelector('#ta').value === out, OUT), 3000);
+    check(applied, 'result for a box you left: Apply inserts it');
+  });
+
+  // 4f2. A guarded result for a box the user left: Review only, and the dialog keeps the guard's notice.
+  await step('guarded, moved on', async () => {
+    const risky = 'SLOW I will not be there on Monday.';
+    await selectField(risky);
+    const running = sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, risky); // resolves when the result lands
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast.sr-loading-toast')), 3000);
+    await page.evaluate(() => { const o = document.getElementById('other'); o.value = ''; o.focus(); });
+    await running;
+    const t = await page.evaluate(() => ({
+      review: !!document.querySelector('#sr-toast .sr-success-review:not(.sr-success-apply)'),
+      apply: !!document.querySelector('#sr-toast .sr-success-apply'),
+      dialog: window.getComputedStyle(document.getElementById('smart-rewrite-modal')).display !== 'none' && !!document.querySelector('#smart-rewrite-modal.sr-visible'),
+    }));
+    check(t.review && !t.apply && !t.dialog, `guarded result for a box you left: toast with Review, no Apply, no dialog (got ${JSON.stringify(t)})`);
+    await page.evaluate(() => document.querySelector('#sr-toast .sr-success-review').click());
+    const d = await page.evaluate(() => ({
+      notice: (document.querySelector('#sr-modal-content .sr-notice') || {}).textContent || '',
+      action: (document.getElementById('sr-action-btn') || {}).textContent || '',
+      ta: document.querySelector('#ta').value,
+    }));
+    check(/not/.test(d.notice) && d.action === 'Replace anyway' && d.ta === risky, `guarded result for a box you left: Review shows the reason and Replace anyway, field untouched (got ${JSON.stringify(d)})`);
+    await page.keyboard.press('Escape');
+  });
+
+  // 4g. Try again after a provider error replaces the text (§3 #8).
+  await step('retry', async () => {
+    const t = 'FAILONCE Proofr mock result.'; // a small edit, so the change guard stays out of it
+    await selectField(t);
+    await sw.evaluate((id, s) => handleRewrite(id, s, 'grammar', { ensure: true }), tabId, t);
+    const retry = await waitFor(() => page.evaluate(() => !!document.getElementById('sr-error-retry')), 5000);
+    check(retry, 'provider error: offers Try again');
+    if (retry) await page.evaluate(() => document.getElementById('sr-error-retry').click());
+    const fixed = await waitFor(() => page.evaluate((out) => document.querySelector('#ta').value === out, OUT), 5000);
+    const state = fixed ? '' : await page.evaluate(() => JSON.stringify({ ta: document.querySelector('#ta').value, active: document.activeElement.id, dialog: (document.getElementById('sr-modal-content') || {}).textContent?.trim().slice(0, 80), toast: document.getElementById('sr-toast')?.textContent.trim() }));
+    check(fixed, `provider error: Try again replaces the text ${state}`);
   });
 
   // 5. Service worker stayed clean.
