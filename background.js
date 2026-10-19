@@ -88,6 +88,9 @@ function recordInsights(before, after) {
     // brings "mistakes per 100 words" down. Fixes are counted from the full
     // diff, not the stored pairs, so pairs dropped for privacy (names,
     // numbers) don't read as fewer mistakes.
+    // A result the change guard flagged rewrote more than it fixed; learning
+    // from it would teach the model's mistakes, not the user's.
+    if (typeof SR_changeGuard === 'function' && !SR_changeGuard(before, after).ok) return;
     const pairs = SR_extractCorrections(before, after);
     const words = (String(before).match(/[\p{L}\p{N}]+/gu) || []).length;
     const ops = SR_wordDiff(before, after);

@@ -112,6 +112,14 @@ assert.equal(view.trend, -3, 'fewer fixes per 100 words is the improvement');
 assert.deepEqual(view.mastered, [{ from: 'teh', to: 'the', n: 4, daysClean: 20 }]);
 assert.deepEqual(view.working, [{ from: 'was', to: 'were', n: 3, kind: 'grammar' }, { from: 'u', to: 'you', n: 2, kind: 'other' }]);
 assert.deepEqual(view.kinds, { spelling: 4, grammar: 3, apostrophe: 1, other: 2 });
+// A recent pair fixed once may be the model's mistake: it's never in working.
+{
+  const once = SR_insightsView({ v: 1, days: {}, pairs: {
+    'than→then': { n: 1, first: NOW - DAY, last: NOW - DAY, kind: 'grammar' },
+    'dont→don\'t': { n: 2, first: NOW - 2 * DAY, last: NOW - DAY, kind: 'apostrophe' },
+  } }, NOW);
+  assert.deepEqual(once.working.map((p) => p.from), ['dont'], 'a one-off fix is not taught');
+}
 // "Mastered" needs proofreading in between, not just time away.
 const idle = SR_insightsView({ v: 1, days: {}, pairs: { 'teh→the': { n: 4, first: NOW - 40 * DAY, last: NOW - 20 * DAY, kind: 'spelling' } } }, NOW);
 assert.deepEqual(idle.mastered, [], 'no words proofread since: not mastered');
@@ -200,6 +208,29 @@ assert.deepEqual(SR_checkPractice(item, "It’s fine, their sending it on Friday
   right: ["it's", 'Friday'], missed: [{ from: 'their', to: "they're", rule: "they're = they are." }],
 });
 assert.deepEqual(SR_checkPractice(item, "it's its, they're, friday").right, ["they're"], 'wrong form still there; lowercase day');
+
+// Habits: named only with 2 different pairs or 3 fixes behind them, never generic.
+{
+  const w = (from, to, n) => ({ from, to, n, kind: SR_classifyCorrection({ from, to }) });
+  const habits = (working) => SR_habits({ working });
+  assert.deepEqual(habits([w('dont', "don't", 3), w('its', "it's", 2), w('recieve', 'receive', 2), w('beleive', 'believe', 2), w('i', 'I', 2)]), [
+    { id: 'apostrophe', label: 'You leave out apostrophes in contractions', examples: ["don't", "it's"] },
+    { id: 'ie-ei', label: 'You swap "ie" and "ei"', examples: ['receive', 'believe'] },
+  ], 'lowercase i fixed twice is not yet a habit');
+  assert.deepEqual(habits([w('their', 'there', 3)]).map((h) => h.id), ['their'], 'one word pair fixed 3 times is a habit');
+  assert.deepEqual(habits([w('tomorow', 'tomorrow', 5)]), [], 'one misspelled word is that word, not a spelling habit');
+  assert.deepEqual(habits([w('tomorow', 'tomorrow', 2), w('ocasion', 'occasion', 2)]).map((h) => h.id), ['letters']);
+  assert.deepEqual(habits([w('teh', 'the', 2), w('adn', 'and', 2)]).map((h) => h.id), ['order']);
+  assert.deepEqual(habits([w('friday', 'Friday', 2), w('march', 'March', 2), w('the', 'The', 2), w('we', 'We', 2)]).map((h) => h.id), ['days', 'sentence-start']);
+  assert.deepEqual(habits([w('we was', 'we were', 2), w('was', 'were', 2), w('he have', 'he has', 1), w('is', 'are', 2)]).map((h) => h.id), ['agreement']);
+  assert.deepEqual(habits([w('then', 'than', 1), w('your', "you're", 1), w('a', 'an', 1)]), [], 'one-off fixes (the model may be wrong) never count');
+  assert.deepEqual(habits([w('rn', 'right now', 5), w('', ',', 9)]), [], 'nothing qualifies: nothing generic');
+  const many = habits([w('dont', "don't", 4), w('im', "I'm", 2), w('i', 'I', 3), w('their', 'there', 3), w('then', 'than', 3), w('your', "you're", 3)]);
+  assert.equal(many.length, 3, 'at most 3');
+  assert.deepEqual(many.map((h) => h.id), ['apostrophe', 'lowercase-i', 'their'], 'most fixes first, ties in a fixed order');
+  for (const h of many) assert.ok(!/—|–/.test(h.label) && /^(You|Your) /.test(h.label), h.label);
+  for (const v of [undefined, null, {}, { working: 'x' }, { working: [null, { from: 'dont', to: "don't", n: 'x' }] }]) assert.deepEqual(SR_habits(v), []);
+}
 
 // The tips prompt carries the pairs and counts and nothing else.
 {
