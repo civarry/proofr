@@ -26,7 +26,7 @@ const PORT = 8771;
 const server = http.createServer((req, res) => {
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization,content-type' };
   if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-  if (req.url === '/v1/models') { res.writeHead(200, cors); return res.end(JSON.stringify({ data: [{ id: 'mock' }] })); }
+  if (req.url === '/v1/models') { res.writeHead(200, cors); return res.end(JSON.stringify({ data: [{ id: 'llama3.2' }] })); }
   if (req.url === '/v1/chat/completions') {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -83,7 +83,7 @@ try {
 
   // From here on: a connected provider (shown in the panel as "Custom").
   await sw.evaluate(async (base) => {
-    await chrome.storage.sync.set({ srCloudService: 'custom', srCloudCustomBaseURL: base, srCloudModel_custom: 'mock', srEngine: 'cloud', srLastTone: 'professional' });
+    await chrome.storage.sync.set({ srCloudService: 'custom', srCloudCustomBaseURL: base, srCloudModel_custom: 'llama3.2', srEngine: 'cloud', srLastTone: 'professional' });
     await chrome.storage.local.set({ srCloudKey_custom: 'sk-mock-1234567890', srRateAsked: true });
   }, `${BASE}/v1`);
 
@@ -101,6 +101,31 @@ try {
   });
   await sleep(2500);
   await p.screenshot({ path: `${out}/panel-result.png` });
+  await p.close();
+
+  // Progress tab: 8 weeks of a writer improving, built with the same merge the
+  // extension runs on each proofread (mistakes early, the same words written
+  // right later). Sample data: no real user's text.
+  p = await panelShot();
+  await p.evaluate(async () => {
+    const DAY = 864e5, now = Date.now();
+    const wrong = [
+      ["i dont think its ready, their sending it tomorow.", "I don't think it's ready; they're sending it tomorrow."],
+      ['we was hoping to recieve it by friday', 'We were hoping to receive it by Friday.'],
+      ['thanks for you help, its on the drive', "Thanks for your help, it's on the drive."],
+    ];
+    const right = ["I don't think it's ready; they're sending it tomorrow.", 'We were hoping to receive it by Friday.', "Thanks for your help, it's on the drive."];
+    let st = null;
+    for (let d = 55; d >= 0; d--) {
+      const k = d > 35 ? 3 : d > 20 ? 2 : d > 8 ? 1 : (d % 3 === 0 ? 1 : 0);
+      for (let j = 0; j < k; j++) { const [a, b] = wrong[(d + j) % wrong.length]; st = SR_mergeInsights(st, SR_extractCorrections(a, b), now - d * DAY, 60, SR_diffCount(SR_wordDiff(a, b)), a); }
+      if (d < 30) st = SR_mergeInsights(st, [], now - d * DAY + 1000, 120, 0, right[d % right.length]);
+    }
+    await chrome.storage.local.set({ srInsights: st });
+    document.getElementById('tabProgress').click();
+  });
+  await sleep(1200);
+  await p.screenshot({ path: `${out}/panel-progress.png` });
   await p.close();
 
   // Proofread in a text box: before, then after the in-place replace.

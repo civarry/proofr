@@ -12,7 +12,7 @@ const { default: puppeteer } = await import(process.env.PUPPETEER || 'puppeteer'
 const store = path.resolve(new URL('.', import.meta.url).pathname);
 const frames = path.join(store, 'frames');
 
-const missing = ['field-before', 'field-after', 'page-selected', 'panel-result', 'panel-setup', 'review-diff']
+const missing = ['field-before', 'field-after', 'page-selected', 'panel-result', 'panel-progress', 'review-diff']
   .filter((n) => !fs.existsSync(path.join(store, 'captures', `${n}.png`)));
 if (missing.length) { console.error(`missing captures (run store/capture.mjs): ${missing.join(', ')}`); process.exit(1); }
 
