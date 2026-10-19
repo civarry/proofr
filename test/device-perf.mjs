@@ -1,5 +1,5 @@
 // What the on-device path asks of Gemini Nano, old code against new:
-//   node test/device-perf.mjs            (old = the last commit's constants.js)
+//   node test/device-perf.mjs            (old = the on-device path before base sessions, 19b80f2~1)
 //   OLD=path/to/constants.js node test/device-perf.mjs
 //
 // Chrome for Testing has no Gemini Nano, so the model here is an instrumented
@@ -15,7 +15,9 @@ import { execSync } from 'node:child_process';
 
 const NEW = fs.readFileSync(process.env.NEW || new URL('../constants.js', import.meta.url), 'utf8');
 const OLD = process.env.OLD ? fs.readFileSync(process.env.OLD, 'utf8')
-  : execSync('git show HEAD:constants.js', { cwd: new URL('..', import.meta.url).pathname }).toString();
+  // The baseline is the on-device path before base sessions (19b80f2's parent),
+  // not HEAD: once the change is committed, HEAD would compare new to new.
+  : execSync('git show 19b80f2~1:constants.js', { cwd: new URL('..', import.meta.url).pathname }).toString();
 
 // Cost model for the "model work" column only (stated, not measured):
 // create() loads instructions into a new session; prefill reads input;

@@ -1216,9 +1216,10 @@ function showTab(name) {
 // clears Write's history, so it only shows on Write.
 function syncChrome() {
   const settingsOpen = !refs.settingsPanel.classList.contains('hidden');
+  const practicing = !refs.practicePanel.classList.contains('hidden');
   const onWrite = refs.tabWrite.getAttribute('aria-selected') === 'true';
-  refs.tabBar.hidden = settingsOpen;
-  refs.btnClearHistory.hidden = settingsOpen || !onWrite;
+  refs.tabBar.hidden = settingsOpen || practicing;
+  refs.btnClearHistory.hidden = settingsOpen || practicing || !onWrite;
 }
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -1415,73 +1416,186 @@ function showTips(tips) {
 }
 
 // === Practice ===
-// A round of 3 sentences from SR_buildPractice, checked on this computer.
-const practice = { items: [], i: 0, right: 0, total: 0, checked: false };
+// A round of 3 sentences from SR_buildPractice. The user taps each mistake,
+// then picks the fix from SR_practiceChoices; feedback rises in a sheet with
+// the rule. Checked on this computer and never counted toward mastery, which
+// only real writing earns.
+const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const RING_C = 2 * Math.PI * 50;
+const practice = { items: [], i: 0, tokens: [], selected: -1, seed: 0, total: 0, solved: 0, firstTry: 0, combo: 0, best: 0, words: [], sheetOpen: false };
 
 function startPractice() {
   const view = progressView;
   if (!view || typeof SR_buildPractice !== 'function') return;
-  const items = SR_buildPractice(view, 3, Math.floor(Math.random() * 1e6));
+  const seed = Math.floor(Math.random() * 1e6);
+  const items = SR_buildPractice(view, 3, seed);
   if (!items.length) return;
-  Object.assign(practice, { items, i: 0, right: 0, total: 0, checked: false });
+  const total = items.reduce((n, it) => n + SR_practiceTokens(it).filter((t) => t.target).length, 0);
+  Object.assign(practice, { items, i: 0, seed, total, solved: 0, firstTry: 0, combo: 0, best: 0, words: [], selected: -1, sheetOpen: false });
   refs.progressPanel.classList.add('hidden');
   refs.practicePanel.classList.remove('hidden');
+  syncChrome(); // Practice is its own screen: no tabs above it
+  refs.prDone.hidden = true;
+  refs.prStage.hidden = false;
+  refs.prCombo.hidden = true;
+  closeSheet();
+  setBar();
   showPracticeItem();
 }
 
+function setBar() {
+  const pct = practice.total ? Math.round((practice.solved / practice.total) * 100) : 0;
+  refs.prBarFill.style.width = `${pct}%`;
+  refs.prBar.setAttribute('aria-valuenow', String(pct));
+}
+
+// Restart a one-shot animation class; a flash class comes off when it ends.
+function replay(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+  if (cls === 'nope') el.addEventListener('animationend', () => el.classList.remove('nope'), { once: true });
+}
+
+function leftInSentence() {
+  return practice.tokens.filter((t) => t.target && !t.done).length;
+}
+
 function showPracticeItem() {
-  const item = practice.items[practice.i];
-  refs.practiceTitle.textContent = `Practice · ${practice.i + 1} of ${practice.items.length}`;
-  refs.practiceCard.hidden = false;
-  refs.practiceDone.hidden = true;
-  refs.practiceResult.hidden = true;
-  refs.practicePrompt.textContent = item.prompt;
-  refs.practiceInput.value = item.prompt;
-  refs.practiceInput.readOnly = false;
-  refs.btnPracticeCheck.textContent = 'Check';
-  refs.btnPracticeSkip.hidden = false;
-  practice.checked = false;
-  refs.practiceInput.focus();
-  refs.practiceInput.setSelectionRange(item.prompt.length, item.prompt.length);
+  practice.tokens = SR_practiceTokens(practice.items[practice.i]);
+  practice.selected = -1;
+  // Punctuation hugs the word before it; words get a space between them.
+  refs.prSentence.innerHTML = practice.tokens.map((t, k) => (t.punct
+    ? `<span class="pr-punct">${escapeHtml(t.text)}</span>`
+    : `${k ? ' ' : ''}<button type="button" class="pr-chip" data-k="${k}">${escapeHtml(t.text)}</button>`)).join('');
+  refs.prChoices.hidden = true;
+  refs.prAsk.textContent = 'Tap the mistake';
+  updateLeft();
+  replay(refs.prStage, 'enter');
+  const first = refs.prSentence.querySelector('.pr-chip');
+  if (first) first.focus();
 }
 
-function checkPractice() {
-  if (practice.checked) { nextPractice(); return; }
-  const item = practice.items[practice.i];
-  const res = SR_checkPractice(item, refs.practiceInput.value);
-  practice.checked = true;
-  practice.right += res.right.length;
-  practice.total += res.right.length + res.missed.length;
-  const n = res.right.length + res.missed.length;
-  refs.practiceScore.textContent = `${res.right.length} of ${n} right`;
-  refs.practiceList.innerHTML = [
-    ...res.right.map((to) => `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(to)}</span></div>`),
-    ...res.missed.map((m) => `<div class="prog-row"><span class="prog-icon miss" aria-hidden="true">!</span><div>${pairHtml(m)}${m.rule ? `<div class="rule">${escapeHtml(m.rule)}</div>` : ''}</div></div>`),
-  ].join('');
-  refs.practiceResult.hidden = false;
-  refs.practiceInput.readOnly = true;
-  refs.btnPracticeSkip.hidden = true;
-  refs.btnPracticeCheck.textContent = practice.i + 1 < practice.items.length ? 'Next sentence' : 'Finish';
-  refs.btnPracticeCheck.focus();
+function updateLeft() {
+  const n = leftInSentence();
+  refs.prLeft.textContent = `${n} to find · sentence ${practice.i + 1} of ${practice.items.length}`;
 }
 
-function nextPractice() {
+function chipFor(k) { return refs.prSentence.querySelector(`.pr-chip[data-k="${k}"]`); }
+
+function onChip(k) {
+  if (practice.sheetOpen) return;
+  const tok = practice.tokens[k];
+  const chip = chipFor(k);
+  if (!tok || !chip || tok.done) return;
+  if (practice.selected >= 0) chipFor(practice.selected)?.classList.remove('selected');
+  if (!tok.target) {
+    practice.selected = -1;
+    refs.prChoices.hidden = true;
+    refs.prAsk.textContent = 'That one\'s fine. Look again.';
+    replay(chip, 'nope');
+    return;
+  }
+  practice.selected = k;
+  chip.classList.add('selected');
+  refs.prAsk.textContent = 'Pick the right word';
+  const opts = SR_practiceChoices(tok.target, practice.seed + k + practice.i * 31);
+  refs.prChoices.innerHTML = opts.map((w, n) =>
+    `<button type="button" class="pr-choice" data-word="${escapeHtml(w)}"><span class="key" aria-hidden="true">${n + 1}</span>${escapeHtml(w)}</button>`).join('');
+  refs.prChoices.hidden = false;
+  refs.prChoices.querySelector('.pr-choice')?.focus();
+}
+
+function onChoice(word) {
+  const k = practice.selected;
+  const tok = practice.tokens[k];
+  if (!tok || !tok.target || tok.done || practice.sheetOpen) return;
+  const right = word === tok.target.to;
+  tok.done = true;
+  practice.solved++;
+  practice.words.push({ to: tok.target.to, right });
+  if (right) { practice.firstTry++; practice.combo++; practice.best = Math.max(practice.best, practice.combo); } else practice.combo = 0;
+  const chip = chipFor(k);
+  chip.classList.remove('selected');
+  chip.textContent = tok.target.to;
+  chip.disabled = true;
+  replay(chip, right ? 'fixed' : 'missed');
+  refs.prChoices.hidden = true;
+  practice.selected = -1;
+  setBar();
+  updateLeft();
+  if (practice.combo >= 2) {
+    refs.prCombo.hidden = false;
+    refs.prCombo.textContent = `${practice.combo} in a row`;
+    replay(refs.prCombo, 'bump');
+  } else refs.prCombo.hidden = true;
+  const rule = tok.target.rule || '';
+  openSheet(right,
+    right ? 'Correct' : 'Not quite',
+    right ? (rule || `"${tok.target.to}" it is.`) : `The right word is "${tok.target.to}". ${rule}`.trim());
+}
+
+function openSheet(good, title, text) {
+  practice.sheetOpen = true;
+  refs.prSheet.className = `pr-sheet open ${good ? 'good' : 'bad'}`;
+  refs.prSheetIcon.innerHTML = good ? ICON_CHECK : ICON_X;
+  refs.prSheetTitle.textContent = title;
+  refs.prSheetText.textContent = text;
+  const last = !leftInSentence() && practice.i + 1 >= practice.items.length;
+  refs.prContinue.textContent = last ? 'See results' : 'Continue';
+  refs.prContinue.focus();
+}
+
+function closeSheet() {
+  practice.sheetOpen = false;
+  refs.prSheet.className = 'pr-sheet';
+}
+
+function onContinue() {
+  if (!practice.sheetOpen) return;
+  closeSheet();
+  if (leftInSentence()) {
+    refs.prAsk.textContent = 'Tap the next mistake';
+    refs.prSentence.querySelector('.pr-chip:not(:disabled)')?.focus();
+    return;
+  }
   if (practice.i + 1 < practice.items.length) { practice.i++; showPracticeItem(); return; }
-  refs.practiceTitle.textContent = 'Practice';
-  refs.practiceCard.hidden = true;
-  refs.practiceResult.hidden = true;
-  refs.practiceDone.hidden = false;
-  refs.practiceDoneTitle.textContent = practice.total ? `${practice.right} of ${practice.total} fixed` : 'Round done';
-  refs.practiceDoneText.textContent = practice.total && practice.right === practice.total
-    ? 'All of them. Your progress shows in your real writing: the rate on the Progress tab.'
-    : 'The ones you missed come back in your next round. Your progress shows in your real writing: the rate on the Progress tab.';
+  finishPractice();
+}
+
+function finishPractice() {
+  refs.prStage.hidden = true;
+  refs.prCombo.hidden = true;
+  refs.prDone.hidden = false;
+  const { firstTry, total, best } = practice;
+  const pct = total ? Math.round((firstTry / total) * 100) : 0;
+  refs.prRing.style.strokeDasharray = `${RING_C}`;
+  refs.prRingSvg.setAttribute('aria-label', `${firstTry} of ${total} right`);
+  // The ring fills and the score counts up together, frame by frame (both at
+  // once with reduced motion). Ends exactly on the final values.
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const start = performance.now();
+  const paint = (p) => {
+    const e = 1 - (1 - p) ** 3;
+    refs.prRing.style.strokeDashoffset = `${RING_C * (1 - (pct / 100) * e)}`;
+    refs.prScore.textContent = `${Math.round(firstTry * e)}/${total}`;
+  };
+  const tick = (t) => { const p = reduce ? 1 : Math.min(1, (t - start) / 800); paint(p); if (p < 1) requestAnimationFrame(tick); };
+  paint(reduce ? 1 : 0);
+  requestAnimationFrame(tick);
+  refs.prDoneTitle.textContent = pct === 100 ? 'Perfect round' : pct >= 70 ? 'Nice work' : 'Good practice';
+  refs.prDoneText.textContent = (best >= 2 ? `Best run: ${best} in a row. ` : '')
+    + (pct === 100 ? 'Your progress shows in your real writing, on the Progress tab.' : 'The ones you missed come back in your next round.');
+  refs.prWords.innerHTML = practice.words.map((w) => `<span class="pr-word ${w.right ? 'ok' : 'again'}">${escapeHtml(w.to)}</span>`).join('');
   refs.btnPracticeAgain.focus();
 }
 
 function closePractice() {
+  closeSheet();
   refs.practicePanel.classList.add('hidden');
   showTab('progress');
 }
+
 
 // === One-time rating ask ===
 // Shown once, under a successful result, after 5 successful rewrites (the
@@ -1569,9 +1683,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     'progRate', 'progTrend', 'progSpark', 'progAxis', 'progBasis', 'progFocus', 'progFocusTitle', 'progFocusText', 'btnPractice',
     'progHabitsCard', 'progHabits', 'progKinds', 'progKindsNote', 'progLegend', 'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
     'btnTips', 'insTipsStatus', 'insTips', 'btnClearInsights', 'insightsToggle', 'coachToggle',
-    'practicePanel', 'btnPracticeBack', 'practiceTitle', 'practiceCard', 'practicePrompt', 'practiceInput',
-    'btnPracticeCheck', 'btnPracticeSkip', 'practiceResult', 'practiceScore', 'practiceList',
-    'practiceDone', 'practiceDoneTitle', 'practiceDoneText', 'btnPracticeAgain', 'btnPracticeDone',
+    'practicePanel', 'btnPracticeBack', 'prBar', 'prBarFill', 'prCombo', 'prStage', 'prAsk', 'prLeft', 'prSentence', 'prChoices',
+    'prDone', 'prRing', 'prRingSvg', 'prScore', 'prDoneTitle', 'prDoneText', 'prWords', 'btnPracticeAgain', 'btnPracticeDone',
+    'prSheet', 'prSheetIcon', 'prSheetTitle', 'prSheetText', 'prContinue',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
@@ -1887,10 +2001,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSavedToast();
   });
   refs.btnPractice.addEventListener('click', startPractice);
-  refs.btnPracticeCheck.addEventListener('click', checkPractice);
-  refs.btnPracticeSkip.addEventListener('click', nextPractice);
-  refs.practiceInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); checkPractice(); }
+  refs.prSentence.addEventListener('click', (e) => { const chip = e.target.closest('.pr-chip'); if (chip) onChip(Number(chip.dataset.k)); });
+  refs.prChoices.addEventListener('click', (e) => { const b = e.target.closest('.pr-choice'); if (b) onChoice(b.dataset.word); });
+  refs.prContinue.addEventListener('click', onContinue);
+  // Keyboard: 1-3 picks a choice, Enter continues, Escape closes.
+  refs.practicePanel.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closePractice(); return; }
+    if (practice.sheetOpen && e.key === 'Enter') { e.preventDefault(); onContinue(); return; }
+    if (!refs.prChoices.hidden && /^[1-3]$/.test(e.key)) {
+      const b = refs.prChoices.querySelectorAll('.pr-choice')[Number(e.key) - 1];
+      if (b) { e.preventDefault(); onChoice(b.dataset.word); }
+    }
   });
   refs.btnPracticeBack.addEventListener('click', closePractice);
   refs.btnPracticeDone.addEventListener('click', closePractice);
