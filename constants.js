@@ -1651,6 +1651,75 @@ function SR_checkPractice(item, userText) {
   return { right, missed };
 }
 
+// === Practice as a game: tap the mistake, then pick the fix ===
+// Words people mix up: a choice set uses only real words from the same set.
+const SR_CONFUSION_SETS = [
+  ['their', 'there', "they're"], ['its', "it's"], ['your', "you're"], ['then', 'than'], ['to', 'too'],
+  ['a', 'an'], ['was', 'were'], ['is', 'are'], ['has', 'have'], ["who's", 'whose'], ['lose', 'loose'], ['affect', 'effect'],
+];
+
+function SR_seededOrder(list, seed) {
+  let s = ((Number(seed) || 0) * 2654435761 + 1) >>> 0;
+  const rand = () => { s = (Math.imul(s, 1103515245) + 12345) >>> 0; return s / 4294967296; };
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; }
+  return out;
+}
+
+// 2-3 options for one mistake: the right word, the user's own wrong form, and
+// at most one more plausible wrong one. Deterministic per seed, shuffled by it.
+function SR_practiceChoices(target, seed = 0) {
+  const clean = (w) => String(w ?? '').replace(/[<>&"]/g, '').trim();
+  const from = clean(target && target.from), to = clean(target && target.to);
+  if (!from || !to || from === to) return [];
+  const opts = [to, from];
+  const add = (w) => { w = clean(w); if (w && opts.length < 3 && !opts.includes(w)) opts.push(w); };
+  const multiWord = /\s/.test(from) || /\s/.test(to);
+  if (!multiWord && target.kind !== 'capitalization') {
+    const set = SR_CONFUSION_SETS.find((g) => g.includes(to.toLowerCase()) && g.includes(from.toLowerCase()));
+    if (set) {
+      for (const w of set) add(w);
+    } else if (to.includes("'")) {
+      // A misplaced apostrophe: "don't" -> "do'nt".
+      const at = to.indexOf("'");
+      const bare = to.replace("'", '');
+      for (const k of [at - 1, at + 1, at - 2]) if (k > 0 && k < bare.length) add(bare.slice(0, k) + "'" + bare.slice(k));
+    } else if (/^[a-z]+$/i.test(to) && to.length >= 4) {
+      // One more single-edit misspelling: swap, drop, or double a letter.
+      const edits = [];
+      for (let i = 1; i < to.length - 1; i++) edits.push(to.slice(0, i) + to[i + 1] + to[i] + to.slice(i + 2));
+      for (let i = 1; i < to.length; i++) edits.push(to.slice(0, i) + to.slice(i + 1));
+      for (let i = 1; i < to.length; i++) edits.push(to.slice(0, i) + to[i] + to.slice(i));
+      for (const w of SR_seededOrder(edits, seed)) { if (w.toLowerCase() !== to.toLowerCase() && w.toLowerCase() !== from.toLowerCase()) { add(w); break; } }
+    }
+  }
+  return SR_seededOrder(opts, seed);
+}
+
+// The prompt as tappable chips: words, and punctuation (punct: true, drawn
+// without a space before it). Each target's wrong form becomes one chip
+// carrying its target, first match, case-sensitive only for capitalization.
+function SR_practiceTokens(item) {
+  const prompt = String((item && item.prompt) || '');
+  if (!prompt) return [];
+  const raw = (prompt.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]+/gu) || [])
+    .map((text) => ({ text, punct: !/[\p{L}\p{N}]/u.test(text) }));
+  const targets = Array.isArray(item.targets) ? item.targets : [];
+  for (const t of targets) {
+    if (!t || !t.from) continue;
+    const keepCase = t.kind === 'capitalization';
+    const norm = (w) => (keepCase ? w : w.toLowerCase());
+    const words = String(t.from).split(/\s+/).filter(Boolean).map(norm);
+    for (let i = 0; i + words.length <= raw.length; i++) {
+      const span = raw.slice(i, i + words.length);
+      if (span.some((c) => c.punct || c.target) || span.some((c, k) => norm(c.text) !== words[k])) continue;
+      raw.splice(i, words.length, { text: span.map((c) => c.text).join(' '), punct: false, target: { from: t.from, to: t.to, kind: t.kind, rule: typeof SR_ruleFor === 'function' ? SR_ruleFor(t) : null } });
+      break;
+    }
+  }
+  return raw;
+}
+
 // The only thing "Get tips" sends: the user's top pairs and the counts by kind.
 // topPairs: [{ from, to, n }]; kindCounts: { kind: n }. Returns { system, user, fence }.
 // Pairs came from page text, so each side is cut to one short line and fenced.
@@ -1683,6 +1752,8 @@ function SR_checkTips(reply, pairs) {
 
 if (typeof self !== 'undefined') {
   self.SR_maxTokens = SR_maxTokens;
+  self.SR_practiceChoices = SR_practiceChoices;
+  self.SR_practiceTokens = SR_practiceTokens;
   self.SR_isSmallModel = SR_isSmallModel;
   self.SR_examplesFor = SR_examplesFor;
   self.SR_checkTips = SR_checkTips;

@@ -525,23 +525,66 @@ check('no pattern is claimed from too little evidence', await panel.evaluate(() 
 check('progress says what the rate is based on', /Based on 2 proofreads, 24 words/.test(prog.basis), prog.basis);
 await shot(panel, '9-progress.png');
 
-// Practice: the right answer scores all right, the unchanged sentence none.
+// Practice: tap the mistake, pick the fix, feedback in a sheet, a scored round.
 await clk(panel, '#btnPractice'); await sleep(300);
-const p1 = await panel.evaluate(() => ({ open: !document.getElementById('practicePanel').classList.contains('hidden'), prompt: document.getElementById('practicePrompt').textContent, input: document.getElementById('practiceInput').value, spell: document.getElementById('practiceInput').spellcheck }));
-check('practice opens with the sentence ready to edit, spellcheck off', p1.open && p1.prompt && p1.input === p1.prompt && p1.spell === false, JSON.stringify(p1));
-await panel.evaluate(() => { document.getElementById('practiceInput').value = practice.items[practice.i].answer; });
-await clk(panel, '#btnPracticeCheck'); await sleep(200);
-const s1 = await panel.evaluate(() => ({ score: document.getElementById('practiceScore').textContent, n: practice.items[0].targets.length }));
-check('practice: the right answer scores all right', s1.score === `${s1.n} of ${s1.n} right`, JSON.stringify(s1));
+const p1 = await panel.evaluate(() => ({
+  open: !document.getElementById('practicePanel').classList.contains('hidden'),
+  tabsHidden: document.getElementById('tabBar').hidden,
+  chips: document.querySelectorAll('#prSentence .pr-chip').length,
+  targets: practice.tokens.filter((t) => t.target).length,
+}));
+check('practice opens as its own screen with tappable words', p1.open && p1.tabsHidden && p1.chips > 3 && p1.targets > 0, JSON.stringify(p1));
+// A word that's fine: a shake and a hint, no progress, no choices.
+const p2 = await panel.evaluate(async () => {
+  const fine = [...document.querySelectorAll('.pr-chip')].find((c) => !practice.tokens[c.dataset.k].target);
+  fine.click();
+  await new Promise((r) => setTimeout(r, 50));
+  return { nope: fine.classList.contains('nope'), solved: practice.solved, choices: document.getElementById('prChoices').getClientRects().length };
+});
+check('practice: tapping a correct word shakes it and counts nothing', p2.nope && p2.solved === 0 && p2.choices === 0, JSON.stringify(p2));
+// A mistake: choices appear, the right one fixes the word and says why.
+const p3 = await panel.evaluate(async () => {
+  const k = practice.tokens.findIndex((t) => t.target);
+  document.querySelector(`.pr-chip[data-k="${k}"]`).click();
+  const t = practice.tokens[k].target;
+  const opts = [...document.querySelectorAll('.pr-choice')].map((b) => b.dataset.word);
+  document.querySelector(`.pr-choice[data-word="${CSS.escape(t.to)}"]`).click();
+  await new Promise((r) => setTimeout(r, 50));
+  const chip = document.querySelector(`.pr-chip[data-k="${k}"]`);
+  return { opts, to: t.to, chip: chip.textContent, fixed: chip.classList.contains('fixed'), sheet: document.getElementById('prSheet').className, title: document.getElementById('prSheetTitle').textContent, bar: document.getElementById('prBar').getAttribute('aria-valuenow'), choicesShown: document.getElementById('prChoices').getClientRects().length };
+});
+check('practice: a mistake offers 2-3 choices including the fix', p3.opts.length >= 2 && p3.opts.length <= 3 && p3.opts.includes(p3.to), JSON.stringify(p3.opts));
+check('practice: the right pick fixes the word, says so, and moves the bar', p3.fixed && p3.chip === p3.to && /open good/.test(p3.sheet) && p3.title === 'Correct' && Number(p3.bar) > 0 && p3.choicesShown === 0, JSON.stringify(p3));
 await shot(panel, '9-practice.png');
-if (await panel.evaluate(() => practice.items.length > 1)) {
-  await clk(panel, '#btnPracticeCheck'); await sleep(200); // Next sentence
-  await clk(panel, '#btnPracticeCheck'); await sleep(200); // check it unchanged
-  const s2 = await panel.evaluate(() => ({ score: document.getElementById('practiceScore').textContent, list: document.getElementById('practiceList').innerText }));
-  check('practice: an unchanged sentence scores none right and explains', /^0 of \d+ right$/.test(s2.score) && /→/.test(s2.list), JSON.stringify(s2));
-}
+// Keyboard: Enter continues; a wrong pick (by number key) shows the right answer.
+const p4 = await panel.evaluate(async () => {
+  document.getElementById('prContinue').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  if (!practice.tokens.some((t) => t.target && !t.done)) { return { skipped: true }; }
+  const k = practice.tokens.findIndex((t) => t.target && !t.done);
+  document.querySelector(`.pr-chip[data-k="${k}"]`).click();
+  const t = practice.tokens[k].target;
+  const wrongIdx = [...document.querySelectorAll('.pr-choice')].findIndex((b) => b.dataset.word !== t.to);
+  document.getElementById('practicePanel').dispatchEvent(new KeyboardEvent('keydown', { key: String(wrongIdx + 1), bubbles: true }));
+  await new Promise((r) => setTimeout(r, 50));
+  return { sheet: document.getElementById('prSheet').className, text: document.getElementById('prSheetText').textContent, to: t.to, chip: document.querySelector(`.pr-chip[data-k="${k}"]`).className };
+});
+check('practice: a wrong pick shows the right word and marks it to review', p4.skipped || (/open bad/.test(p4.sheet) && p4.text.includes(`"${p4.to}"`) && /missed/.test(p4.chip)), JSON.stringify(p4));
+// Play out the round; the result counts first-try answers and lists every word.
+const p5 = await panel.evaluate(async () => {
+  for (let guard = 0; guard < 60 && document.getElementById('prDone').hidden; guard++) {
+    if (practice.sheetOpen) { document.getElementById('prContinue').click(); await new Promise((r) => setTimeout(r, 280)); continue; }
+    const k = practice.tokens.findIndex((t) => t.target && !t.done);
+    document.querySelector(`.pr-chip[data-k="${k}"]`).click();
+    document.querySelector(`.pr-choice[data-word="${CSS.escape(practice.tokens[k].target.to)}"]`).click();
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  await new Promise((r) => setTimeout(r, 1000));
+  return { done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') };
+});
+check('practice: the round ends with the first-try score and every word', p5.done && p5.score === `${p5.first}/${p5.total}` && p5.words === p5.total && p5.bar === '100', JSON.stringify(p5));
 await clk(panel, '#btnPracticeBack'); await sleep(300);
-check('practice back returns to Progress', await panel.evaluate(() => !document.getElementById('progressPanel').classList.contains('hidden') && document.getElementById('practicePanel').classList.contains('hidden')));
+check('practice back returns to Progress', await panel.evaluate(() => !document.getElementById('progressPanel').classList.contains('hidden') && document.getElementById('practicePanel').classList.contains('hidden') && !document.getElementById('tabBar').hidden));
 
 // Tips send the word list, nothing else.
 mockRequests.length = 0;
