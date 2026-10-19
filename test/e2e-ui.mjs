@@ -525,63 +525,57 @@ check('no pattern is claimed from too little evidence', await panel.evaluate(() 
 check('progress says what the rate is based on', /Based on 2 proofreads, 24 words/.test(prog.basis), prog.basis);
 await shot(panel, '9-progress.png');
 
-// Practice: tap the mistake, pick the fix, feedback in a sheet, a scored round.
+// Practice: one question per mistake, one tap to answer, feedback in a sheet.
 await clk(panel, '#btnPractice'); await sleep(300);
+const q = () => panel.evaluate(() => { const { tokens, k } = practice.questions[practice.q]; return { to: tokens[k].target.to, opts: [...document.querySelectorAll('.pr-choice')].map((b) => b.dataset.word) }; });
 const p1 = await panel.evaluate(() => ({
   open: !document.getElementById('practicePanel').classList.contains('hidden'),
   tabsHidden: document.getElementById('tabBar').hidden,
-  chips: document.querySelectorAll('#prSentence .pr-chip').length,
-  targets: practice.tokens.filter((t) => t.target).length,
+  blank: !!document.getElementById('prBlank') && document.getElementById('prBlank').textContent === '',
+  choicesShown: document.getElementById('prChoices').getClientRects().length > 0,
+  total: practice.total,
+  // No question shows an answer early: the sentence text never contains a later blank's fix where it should be blank.
+  later: document.querySelectorAll('#prSentence .pr-blank.later').length,
 }));
-check('practice opens as its own screen with tappable words', p1.open && p1.tabsHidden && p1.chips > 3 && p1.targets > 0, JSON.stringify(p1));
-// A word that's fine: a shake and a hint, no progress, no choices.
-const p2 = await panel.evaluate(async () => {
-  const fine = [...document.querySelectorAll('.pr-chip')].find((c) => !practice.tokens[c.dataset.k].target);
-  fine.click();
+check('practice opens with the mistake as a blank and the choices showing', p1.open && p1.tabsHidden && p1.blank && p1.choicesShown && p1.total > 0, JSON.stringify(p1));
+const q1 = await q();
+check('practice: 2-3 choices including the fix', q1.opts.length >= 2 && q1.opts.length <= 3 && q1.opts.includes(q1.to), JSON.stringify(q1));
+const p3 = await panel.evaluate(async (to) => {
+  document.querySelector(`.pr-choice[data-word="${CSS.escape(to)}"]`).click();
   await new Promise((r) => setTimeout(r, 50));
-  return { nope: fine.classList.contains('nope'), solved: practice.solved, choices: document.getElementById('prChoices').getClientRects().length };
-});
-check('practice: tapping a correct word shakes it and counts nothing', p2.nope && p2.solved === 0 && p2.choices === 0, JSON.stringify(p2));
-// A mistake: choices appear, the right one fixes the word and says why.
-const p3 = await panel.evaluate(async () => {
-  const k = practice.tokens.findIndex((t) => t.target);
-  document.querySelector(`.pr-chip[data-k="${k}"]`).click();
-  const t = practice.tokens[k].target;
-  const opts = [...document.querySelectorAll('.pr-choice')].map((b) => b.dataset.word);
-  document.querySelector(`.pr-choice[data-word="${CSS.escape(t.to)}"]`).click();
-  await new Promise((r) => setTimeout(r, 50));
-  const chip = document.querySelector(`.pr-chip[data-k="${k}"]`);
-  return { opts, to: t.to, chip: chip.textContent, fixed: chip.classList.contains('fixed'), sheet: document.getElementById('prSheet').className, title: document.getElementById('prSheetTitle').textContent, bar: document.getElementById('prBar').getAttribute('aria-valuenow'), choicesShown: document.getElementById('prChoices').getClientRects().length };
-});
-check('practice: a mistake offers 2-3 choices including the fix', p3.opts.length >= 2 && p3.opts.length <= 3 && p3.opts.includes(p3.to), JSON.stringify(p3.opts));
-check('practice: the right pick fixes the word, says so, and moves the bar', p3.fixed && p3.chip === p3.to && /open good/.test(p3.sheet) && p3.title === 'Correct' && Number(p3.bar) > 0 && p3.choicesShown === 0, JSON.stringify(p3));
+  return { blank: document.getElementById('prBlank').textContent, right: document.getElementById('prBlank').classList.contains('right'), sheet: document.getElementById('prSheet').className, title: document.getElementById('prSheetTitle').textContent, bar: document.getElementById('prBar').getAttribute('aria-valuenow'), locked: [...document.querySelectorAll('.pr-choice')].every((b) => b.disabled) };
+}, q1.to);
+check('practice: one tap fills the blank, says Correct, moves the bar, locks the choices', p3.blank === q1.to && p3.right && /open good/.test(p3.sheet) && p3.title === 'Correct' && Number(p3.bar) > 0 && p3.locked, JSON.stringify(p3));
 await shot(panel, '9-practice.png');
-// Keyboard: Enter continues; a wrong pick (by number key) shows the right answer.
-const p4 = await panel.evaluate(async () => {
-  document.getElementById('prContinue').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  await new Promise((r) => setTimeout(r, 300));
-  if (!practice.tokens.some((t) => t.target && !t.done)) { return { skipped: true }; }
-  const k = practice.tokens.findIndex((t) => t.target && !t.done);
-  document.querySelector(`.pr-chip[data-k="${k}"]`).click();
-  const t = practice.tokens[k].target;
-  const wrongIdx = [...document.querySelectorAll('.pr-choice')].findIndex((b) => b.dataset.word !== t.to);
-  document.getElementById('practicePanel').dispatchEvent(new KeyboardEvent('keydown', { key: String(wrongIdx + 1), bubbles: true }));
-  await new Promise((r) => setTimeout(r, 50));
-  return { sheet: document.getElementById('prSheet').className, text: document.getElementById('prSheetText').textContent, to: t.to, chip: document.querySelector(`.pr-chip[data-k="${k}"]`).className };
-});
-check('practice: a wrong pick shows the right word and marks it to review', p4.skipped || (/open bad/.test(p4.sheet) && p4.text.includes(`"${p4.to}"`) && /missed/.test(p4.chip)), JSON.stringify(p4));
-// Play out the round; the result counts first-try answers and lists every word.
+if (p1.total > 1) {
+  await panel.evaluate(() => document.getElementById('prContinue').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  await sleep(300);
+  const q2 = await q();
+  const wrongIdx = q2.opts.findIndex((w) => w !== q2.to);
+  const p4 = await panel.evaluate(async (n) => {
+    document.getElementById('practicePanel').dispatchEvent(new KeyboardEvent('keydown', { key: String(n), bubbles: true }));
+    await new Promise((r) => setTimeout(r, 50));
+    return { sheet: document.getElementById('prSheet').className, text: document.getElementById('prSheetText').textContent, answer: document.querySelector('.pr-choice.is-answer')?.dataset.word, wrong: !!document.querySelector('.pr-choice.picked-wrong') };
+  }, wrongIdx + 1);
+  check('practice: a wrong pick (key 1-3) shows the right word and marks both buttons', /open bad/.test(p4.sheet) && p4.text.includes(`"${q2.to}"`) && p4.answer === q2.to && p4.wrong, JSON.stringify(p4));
+}
 const p5 = await panel.evaluate(async () => {
-  for (let guard = 0; guard < 60 && document.getElementById('prDone').hidden; guard++) {
+  const leaks = [];
+  for (let guard = 0; guard < 40 && document.getElementById('prDone').hidden; guard++) {
     if (practice.sheetOpen) { document.getElementById('prContinue').click(); await new Promise((r) => setTimeout(r, 280)); continue; }
-    const k = practice.tokens.findIndex((t) => t.target && !t.done);
-    document.querySelector(`.pr-chip[data-k="${k}"]`).click();
-    document.querySelector(`.pr-choice[data-word="${CSS.escape(practice.tokens[k].target.to)}"]`).click();
+    const { tokens, k } = practice.questions[practice.q];
+    // Nothing still to be asked in this sentence may already show its fix.
+    const shown = document.getElementById('prSentence').textContent;
+    for (const t of tokens.slice(k).filter((x) => x.target)) {
+      if (new RegExp(`(^|[^\\p{L}'])${t.target.to.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}'])`, 'u').test(shown)) leaks.push(`${t.target.to} in: ${shown}`);
+    }
+    document.querySelector(`.pr-choice[data-word="${CSS.escape(tokens[k].target.to)}"]`).click();
     await new Promise((r) => setTimeout(r, 30));
   }
   await new Promise((r) => setTimeout(r, 1000));
-  return { done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') };
+  return { leaks, done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') };
 });
+check('practice: no question shows a later answer early', p5.leaks.length === 0, JSON.stringify(p5.leaks));
 check('practice: the round ends with the first-try score and every word', p5.done && p5.score === `${p5.first}/${p5.total}` && p5.words === p5.total && p5.bar === '100', JSON.stringify(p5));
 await clk(panel, '#btnPracticeBack'); await sleep(300);
 check('practice back returns to Progress', await panel.evaluate(() => !document.getElementById('progressPanel').classList.contains('hidden') && document.getElementById('practicePanel').classList.contains('hidden') && !document.getElementById('tabBar').hidden));

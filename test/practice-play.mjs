@@ -40,6 +40,10 @@ const valid = (opts, from, to) => {
   assert.equal(o.length, 3);
   const extra = o.find((w) => w !== 'recieve' && w !== 'receive');
   assert.ok(extra && Math.abs(extra.length - 'receive'.length) <= 1, `a near miss: ${extra}`);
+  for (let seed = 0; seed < 30; seed++) {
+    const x = choices('recieve', 'receive', 'spelling', seed).find((w) => w !== 'recieve' && w !== 'receive');
+    assert.ok(x[0] === 'r' && x.at(-1) === 'e', `the first and last letters stay: ${x}`);
+  }
 }
 // Capitalization and multi-word: just the two forms.
 assert.deepEqual([...choices('friday', 'Friday', 'capitalization')].sort(), ['Friday', 'friday']);

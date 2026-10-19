@@ -1416,22 +1416,28 @@ function showTips(tips) {
 }
 
 // === Practice ===
-// A round of 3 sentences from SR_buildPractice. The user taps each mistake,
-// then picks the fix from SR_practiceChoices; feedback rises in a sheet with
-// the rule. Checked on this computer and never counted toward mastery, which
-// only real writing earns.
+// One question per mistake, one tap per question: the sentence comes from
+// SR_buildPractice (the user's own repeated mistakes), the mistake is a blank,
+// and the fix is picked from SR_practiceChoices. Feedback rises in a sheet
+// with the rule. Checked on this computer and never counted toward mastery,
+// which only real writing earns.
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const RING_C = 2 * Math.PI * 50;
-const practice = { items: [], i: 0, tokens: [], selected: -1, seed: 0, total: 0, solved: 0, firstTry: 0, combo: 0, best: 0, words: [], sheetOpen: false };
+const PRACTICE_MAX = 8;
+const practice = { questions: [], q: 0, seed: 0, total: 0, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false };
 
 function startPractice() {
   const view = progressView;
   if (!view || typeof SR_buildPractice !== 'function') return;
   const seed = Math.floor(Math.random() * 1e6);
-  const items = SR_buildPractice(view, 3, seed);
-  if (!items.length) return;
-  const total = items.reduce((n, it) => n + SR_practiceTokens(it).filter((t) => t.target).length, 0);
-  Object.assign(practice, { items, i: 0, seed, total, solved: 0, firstTry: 0, combo: 0, best: 0, words: [], selected: -1, sheetOpen: false });
+  const questions = [];
+  for (const item of SR_buildPractice(view, 3, seed)) {
+    const tokens = SR_practiceTokens(item);
+    tokens.forEach((t, k) => { if (t.target) questions.push({ tokens, k }); });
+  }
+  if (!questions.length) return;
+  questions.length = Math.min(questions.length, PRACTICE_MAX);
+  Object.assign(practice, { questions, q: 0, seed, total: questions.length, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false });
   refs.progressPanel.classList.add('hidden');
   refs.practicePanel.classList.remove('hidden');
   syncChrome(); // Practice is its own screen: no tabs above it
@@ -1439,100 +1445,73 @@ function startPractice() {
   refs.prStage.hidden = false;
   refs.prCombo.hidden = true;
   closeSheet();
-  setBar();
-  showPracticeItem();
+  setBar(0);
+  showQuestion();
 }
 
-function setBar() {
-  const pct = practice.total ? Math.round((practice.solved / practice.total) * 100) : 0;
+function setBar(done) {
+  const pct = practice.total ? Math.round((done / practice.total) * 100) : 0;
   refs.prBarFill.style.width = `${pct}%`;
   refs.prBar.setAttribute('aria-valuenow', String(pct));
 }
 
-// Restart a one-shot animation class; a flash class comes off when it ends.
+// Restart a one-shot animation class.
 function replay(el, cls) {
   el.classList.remove(cls);
   void el.offsetWidth;
   el.classList.add(cls);
-  if (cls === 'nope') el.addEventListener('animationend', () => el.classList.remove('nope'), { once: true });
 }
 
-function leftInSentence() {
-  return practice.tokens.filter((t) => t.target && !t.done).length;
-}
-
-function showPracticeItem() {
-  practice.tokens = SR_practiceTokens(practice.items[practice.i]);
-  practice.selected = -1;
-  // Punctuation hugs the word before it; words get a space between them.
-  refs.prSentence.innerHTML = practice.tokens.map((t, k) => (t.punct
-    ? `<span class="pr-punct">${escapeHtml(t.text)}</span>`
-    : `${k ? ' ' : ''}<button type="button" class="pr-chip" data-k="${k}">${escapeHtml(t.text)}</button>`)).join('');
-  refs.prChoices.hidden = true;
-  refs.prAsk.textContent = 'Tap the mistake';
-  updateLeft();
-  replay(refs.prStage, 'enter');
-  const first = refs.prSentence.querySelector('.pr-chip');
-  if (first) first.focus();
-}
-
-function updateLeft() {
-  const n = leftInSentence();
-  refs.prLeft.textContent = `${n} to find · sentence ${practice.i + 1} of ${practice.items.length}`;
-}
-
-function chipFor(k) { return refs.prSentence.querySelector(`.pr-chip[data-k="${k}"]`); }
-
-function onChip(k) {
-  if (practice.sheetOpen) return;
-  const tok = practice.tokens[k];
-  const chip = chipFor(k);
-  if (!tok || !chip || tok.done) return;
-  if (practice.selected >= 0) chipFor(practice.selected)?.classList.remove('selected');
-  if (!tok.target) {
-    practice.selected = -1;
-    refs.prChoices.hidden = true;
-    refs.prAsk.textContent = 'That one\'s fine. Look again.';
-    replay(chip, 'nope');
-    return;
-  }
-  practice.selected = k;
-  chip.classList.add('selected');
-  refs.prAsk.textContent = 'Pick the right word';
-  const opts = SR_practiceChoices(tok.target, practice.seed + k + practice.i * 31);
+function showQuestion() {
+  const { tokens, k } = practice.questions[practice.q];
+  practice.answered = false;
+  // The sentence with this mistake as the blank to fill: one thing to decide.
+  refs.prSentence.innerHTML = tokens.map((t, j) => {
+    if (t.punct) return `<span class="pr-punct">${escapeHtml(t.text)}</span>`;
+    const lead = j ? ' ' : '';
+    if (j === k) return `${lead}<span class="pr-blank" id="prBlank" aria-label="blank"></span>`;
+    // Mistakes already asked show fixed; ones still to come are faded
+    // blanks, so a later question's answer is never shown early.
+    if (t.target) return j < k ? lead + escapeHtml(t.target.to) : `${lead}<span class="pr-blank later" aria-label="another blank"></span>`;
+    return lead + escapeHtml(t.text);
+  }).join('');
+  refs.prAsk.textContent = 'Which word is right?';
+  refs.prLeft.textContent = `${practice.q + 1} of ${practice.total}`;
+  const opts = SR_practiceChoices(tokens[k].target, practice.seed + practice.q * 7);
   refs.prChoices.innerHTML = opts.map((w, n) =>
     `<button type="button" class="pr-choice" data-word="${escapeHtml(w)}"><span class="key" aria-hidden="true">${n + 1}</span>${escapeHtml(w)}</button>`).join('');
   refs.prChoices.hidden = false;
+  replay(refs.prStage, 'enter');
   refs.prChoices.querySelector('.pr-choice')?.focus();
 }
 
 function onChoice(word) {
-  const k = practice.selected;
-  const tok = practice.tokens[k];
-  if (!tok || !tok.target || tok.done || practice.sheetOpen) return;
-  const right = word === tok.target.to;
-  tok.done = true;
-  practice.solved++;
-  practice.words.push({ to: tok.target.to, right });
+  if (practice.answered || practice.sheetOpen) return;
+  const { tokens, k } = practice.questions[practice.q];
+  const target = tokens[k].target;
+  const right = word === target.to;
+  practice.answered = true;
+  practice.words.push({ to: target.to, right });
   if (right) { practice.firstTry++; practice.combo++; practice.best = Math.max(practice.best, practice.combo); } else practice.combo = 0;
-  const chip = chipFor(k);
-  chip.classList.remove('selected');
-  chip.textContent = tok.target.to;
-  chip.disabled = true;
-  replay(chip, right ? 'fixed' : 'missed');
-  refs.prChoices.hidden = true;
-  practice.selected = -1;
-  setBar();
-  updateLeft();
+  // The blank fills with the right word; the buttons show what was picked.
+  const blank = document.getElementById('prBlank');
+  blank.textContent = target.to;
+  replay(blank, right ? 'right' : 'wrong');
+  for (const b of refs.prChoices.querySelectorAll('.pr-choice')) {
+    b.disabled = true;
+    if (b.dataset.word === target.to) b.classList.add('is-answer');
+    else if (b.dataset.word === word) b.classList.add('picked-wrong');
+  }
+  setBar(practice.q + 1);
   if (practice.combo >= 2) {
     refs.prCombo.hidden = false;
     refs.prCombo.textContent = `${practice.combo} in a row`;
     replay(refs.prCombo, 'bump');
   } else refs.prCombo.hidden = true;
-  const rule = tok.target.rule || '';
+  const rule = target.rule || '';
   openSheet(right,
     right ? 'Correct' : 'Not quite',
-    right ? (rule || `"${tok.target.to}" it is.`) : `The right word is "${tok.target.to}". ${rule}`.trim());
+    right ? (rule || `"${target.to}" it is.`) : `The right word is "${target.to}". ${rule}`.trim());
 }
 
 function openSheet(good, title, text) {
@@ -1541,8 +1520,7 @@ function openSheet(good, title, text) {
   refs.prSheetIcon.innerHTML = good ? ICON_CHECK : ICON_X;
   refs.prSheetTitle.textContent = title;
   refs.prSheetText.textContent = text;
-  const last = !leftInSentence() && practice.i + 1 >= practice.items.length;
-  refs.prContinue.textContent = last ? 'See results' : 'Continue';
+  refs.prContinue.textContent = practice.q + 1 >= practice.total ? 'See results' : 'Continue';
   refs.prContinue.focus();
 }
 
@@ -1554,12 +1532,7 @@ function closeSheet() {
 function onContinue() {
   if (!practice.sheetOpen) return;
   closeSheet();
-  if (leftInSentence()) {
-    refs.prAsk.textContent = 'Tap the next mistake';
-    refs.prSentence.querySelector('.pr-chip:not(:disabled)')?.focus();
-    return;
-  }
-  if (practice.i + 1 < practice.items.length) { practice.i++; showPracticeItem(); return; }
+  if (practice.q + 1 < practice.total) { practice.q++; showQuestion(); return; }
   finishPractice();
 }
 
@@ -2001,7 +1974,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSavedToast();
   });
   refs.btnPractice.addEventListener('click', startPractice);
-  refs.prSentence.addEventListener('click', (e) => { const chip = e.target.closest('.pr-chip'); if (chip) onChip(Number(chip.dataset.k)); });
   refs.prChoices.addEventListener('click', (e) => { const b = e.target.closest('.pr-choice'); if (b) onChoice(b.dataset.word); });
   refs.prContinue.addEventListener('click', onContinue);
   // Keyboard: 1-3 picks a choice, Enter continues, Escape closes.
