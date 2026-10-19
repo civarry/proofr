@@ -245,6 +245,67 @@ async function refreshProviderPill() {
   return { deviceReady, hasKey, runnable };
 }
 
+// === Quick engine switcher (the status pill) ===
+// Lists only what can run right now: on-device if this Chrome has it, every
+// provider that's connected, and Auto when both exist. One click switches;
+// setting up something new still goes through Settings.
+function closeEngineMenu() {
+  refs.engineMenu.classList.add('hidden');
+  refs.providerPill.setAttribute('aria-expanded', 'false');
+}
+
+async function engineChoices() {
+  const { engine } = await Settings.get();
+  const active = await CloudProvider.getActiveService();
+  const choices = [];
+  if (deviceReady) {
+    choices.push({ id: 'device', title: 'On this computer', sub: deviceNeedsSetup ? 'Chrome\'s AI, needs a one-time setup' : 'Chrome\'s built-in AI, private', current: engine === 'device' });
+  }
+  const ready = [];
+  for (const svc of SR_CLOUD_SERVICES) {
+    const cfg = await CloudProvider.getConfig(svc.id);
+    if (providerReady(cfg)) ready.push(cfg);
+  }
+  for (const cfg of ready) {
+    choices.push({ id: `cloud:${cfg.id}`, title: cfg.displayName, sub: cfg.model, current: engine === 'cloud' && active === cfg.id });
+  }
+  if (deviceReady && ready.length) {
+    const fallback = ready.find((c) => c.id === active) || ready[0];
+    choices.push({ id: `auto:${fallback.id}`, title: 'Auto', sub: `On this computer first, then ${fallback.displayName}`, current: engine === 'auto' });
+  }
+  return choices;
+}
+
+async function openEngineMenu() {
+  const choices = await engineChoices();
+  refs.engineMenu.innerHTML = choices.map((c) => `
+    <button type="button" class="engine-item" role="menuitemradio" aria-checked="${c.current}" data-choice="${escapeHtml(c.id)}">
+      <b>${escapeHtml(c.title)}</b><span>${escapeHtml(c.sub || '')}</span>
+    </button>`).join('')
+    + (choices.length ? '<div class="engine-sep" role="separator"></div>' : '')
+    + '<button type="button" class="engine-item" role="menuitem" data-choice="settings"><b>Add or change a provider…</b></button>';
+  refs.engineMenu.classList.remove('hidden');
+  refs.providerPill.setAttribute('aria-expanded', 'true');
+  (refs.engineMenu.querySelector('[aria-checked="true"]') || refs.engineMenu.querySelector('.engine-item')).focus();
+}
+
+async function chooseEngine(choice) {
+  closeEngineMenu();
+  if (choice === 'settings') { toggleSettingsPanel(true); return; }
+  if (choice === 'device') {
+    await Settings.set({ srEngine: 'device' });
+  } else {
+    const [kind, id] = choice.split(':');
+    await CloudProvider.setActiveService(id);
+    await Settings.set({ srEngine: kind === 'auto' ? 'auto' : 'cloud' });
+  }
+  await refreshProviderPill();
+  if (!refs.settingsPanel.classList.contains('hidden')) await refreshSettingsPanel();
+  // On-device picked but the model isn't downloaded yet: show the setup card.
+  if (choice === 'device' && deviceNeedsSetup) toggleSettingsPanel(true);
+  showSavedToast();
+}
+
 // === "Saved" confirmation toast (engine control + key save) ===
 function showSavedToast() {
   if (!refs.savedToast) return;
@@ -1099,7 +1160,7 @@ const InfoOverlays = {
 // === Wire up ===
 document.addEventListener('DOMContentLoaded', async () => {
   [
-    'mark', 'providerPill', 'providerPillText', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
+    'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut',
@@ -1349,6 +1410,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     refs.supportRow.href = SUPPORT_URL;
     refs.supportRow.classList.remove('hidden');
   }
+
+  refs.providerPill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    refs.engineMenu.classList.contains('hidden') ? openEngineMenu() : closeEngineMenu();
+  });
+  refs.engineMenu.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-choice]');
+    if (item) chooseEngine(item.dataset.choice);
+  });
+  refs.engineMenu.addEventListener('keydown', (e) => {
+    const items = [...refs.engineMenu.querySelectorAll('.engine-item')];
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); items[Math.min(i + 1, items.length - 1)].focus(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); items[Math.max(i - 1, 0)].focus(); }
+    if (e.key === 'Escape') { closeEngineMenu(); refs.providerPill.focus(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!refs.engineMenu.contains(e.target) && !refs.providerPill.contains(e.target)) closeEngineMenu();
+  });
 
   refs.btnChangeShortcut.addEventListener('click', () => {
     chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
