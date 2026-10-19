@@ -14,7 +14,8 @@ The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-d
 
 - **Modes:** Proofread, Professional, Friendly, Concise, Plain English, Summarize, LinkedIn, Marketing, Executive, Academic, News, Translate
 - **Translate:** English, Spanish, French, German, and Japanese on-device. With a cloud key, also Filipino, Chinese (Simplified and Traditional), Korean, Portuguese, Italian, Vietnamese, Indonesian, Arabic, Hindi, and Thai.
-- **On any page:** select text, then right-click → Proofr → pick a mode, or press Alt+Shift+P to proofread it (rebind at `chrome://extensions/shortcuts`). In editable fields the selection is replaced in place, and Ctrl/Cmd+Z undoes it. Elsewhere the result opens in a dialog with a Copy button. Proofread results in the dialog mark each change (removed words struck through, added words highlighted), with a toggle back to plain text.
+- **On any page:** select text, then right-click → Proofr → pick a mode, or press Alt+Shift+P (Option+Shift+P on a Mac) to proofread it (rebind at `chrome://extensions/shortcuts`). In editable fields the selection is replaced in place, and Ctrl/Cmd+Z undoes it. Elsewhere the result opens in a dialog with a Copy button. Proofread results in the dialog mark each change (removed words struck through, added words highlighted), with a toggle back to plain text. After an in-place replace, the confirmation has a Review link to the same view. Each result says where the text went: "On this computer" (on-device), "On your computer or network" (a local server), or "Sent to <provider>".
+- **Change guard:** a Proofread is not pasted in if it changed more than half the words (in text of 6 words or more), or removed a number, a likely name, a hedge like "maybe" or "I think", or added or removed a negation like "not". It opens in the dialog instead, with the reason and a "Replace anyway" button. The 50% line is the 95th percentile of how much human correctors changed in the [JFLEG](https://github.com/keisks/jfleg) corpus.
 - **Side panel:** click the toolbar icon to paste or type text, pick a mode with `/`, and keep a local history of results. If your Chrome can run on-device AI but hasn't downloaded the model yet, the panel has a one-time setup button.
 - **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate. With a cloud key there is also an "Ask about this…" box for a freeform instruction. Results open in a dialog; the page text is never changed.
 
@@ -38,6 +39,9 @@ node test/device-langs.mjs
 
 # Proofread word diff: round trips, change count, size cap (no browser needed)
 node test/diff.mjs
+
+# Proofread change guard: normal fixes pass, meaning changes are caught (no browser needed)
+node test/guard.mjs
 
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
@@ -64,7 +68,7 @@ Each script exits non-zero if any check fails. On macOS, Chrome stops painting w
 
 - Side panel replaces the popup. On first install a setup tab explains whether on-device AI works on your computer and, if not, how to connect a free Groq key.
 - No access to any website by default. Proofr reaches a page only when you use it there. Updating from 1.2.4 gives back the old "all websites" access unless you turn on hover actions.
-- Shortcut is now Alt+Shift+P (proofread), changeable at chrome://extensions/shortcuts. Replacing text in a text box can be undone with Ctrl/Cmd+Z.
+- Shortcut is now Alt+Shift+P, or Option+Shift+P on a Mac. It proofreads the selection, or the whole text box when nothing is selected. Change it from Proofr's settings, which opens chrome://extensions/shortcuts. Replacing text in a text box can be undone with Ctrl/Cmd+Z.
 - API keys are stored on this computer only. If you used Proofr on several computers signed in to the same Chrome profile, re-enter your key on the others.
 - Groq's old default model was retired; the new default is `openai/gpt-oss-120b`, and Proofr moves off a retired model automatically.
 

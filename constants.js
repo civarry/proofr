@@ -644,6 +644,69 @@ function SR_diffCount(ops) {
   return n;
 }
 
+// === Change guard (Proofread replaces text in place, so it must not change meaning) ===
+// Threshold, measured: on JFLEG (6,004 learner sentences x human fluency
+// corrections, github.com/keisks/jfleg), the share of words a human corrector
+// changed is 17% at the median, 43% at p90 and 50% at p95; 20% would flag 41% of
+// genuine corrections. Above 50% is more than 95% of human corrections change, so
+// it's a rewrite, not a proofread. Short texts are exempt: one fix in "thx c u" is 50%.
+const SR_GUARD_MAX_SHARE = 0.5;
+const SR_GUARD_MIN_WORDS = 6;
+const SR_NEGATIONS = new Set(['not', 'no', 'never', 'without', 'nor', 'none', 'nobody', 'nothing', 'nowhere', 'cannot']);
+const SR_HEDGES = ['maybe', 'might', 'perhaps', 'possibly', 'probably', 'i think', 'i guess', 'i believe', 'i feel', 'it seems'];
+
+// Returns { ok, reasons }, reasons being short phrases for the dialog.
+function SR_changeGuard(before, after) {
+  const reasons = [];
+  const isWord = (t) => /[\p{L}\p{N}]/u.test(t);
+  const words = (text) => SR_diffTokens(text).filter(isWord);
+  const a = words(before);
+  const b = words(after);
+  const lower = (list) => list.map((w) => w.toLowerCase());
+  const count = (list, pred) => list.filter(pred).length;
+
+  const ops = SR_wordDiff(before, after);
+  if (!ops) {
+    reasons.push('too long to check');
+  } else if (a.length >= SR_GUARD_MIN_WORDS) {
+    const kept = ops.filter((o) => o.type === 'same').reduce((n, o) => n + words(o.text).length, 0);
+    const share = 1 - kept / Math.max(a.length, b.length);
+    if (share > SR_GUARD_MAX_SHARE) reasons.push(`changed ${Math.round(share * 100)}% of the words`);
+  }
+
+  // Numbers, dates and amounts: every digit run in the original must survive.
+  const digits = (text) => String(text || '').match(/\d+/g) || [];
+  const left = digits(after);
+  const lost = digits(before).filter((d) => { const k = left.indexOf(d); if (k < 0) return true; left.splice(k, 1); return false; });
+  if (lost.length) reasons.push(`removed the number ${lost[0]}`);
+
+  // Also the apostrophe-less forms people type ("dont"), which a fix turns into "don't".
+  const isNeg = (w) => SR_NEGATIONS.has(w) || /n['’]t$/.test(w) || /^(don|doesn|didn|isn|aren|wasn|weren|can|won|couldn|shouldn|wouldn|haven|hasn|hadn)t$/.test(w);
+  if (count(lower(a), isNeg) !== count(lower(b), isNeg)) reasons.push('added or removed a "not"');
+
+  // A capitalized word mid-sentence is likely a name; it must still be there.
+  // A capitalized word starting with the same 3 letters counts (a fixed typo: "Jennife" → "Jennifer").
+  const afterLower = new Set(lower(b));
+  const nameKept = (t) => afterLower.has(t.toLowerCase()) || b.some((w) => /^\p{Lu}/u.test(w) && w.slice(0, 3).toLowerCase() === t.slice(0, 3).toLowerCase());
+  const toks = SR_diffTokens(before);
+  let sentenceStart = true;
+  for (const t of toks) {
+    if (/^\s+$/.test(t)) continue;
+    if (isWord(t)) {
+      if (!sentenceStart && t !== 'I' && /^\p{Lu}/u.test(t) && !nameKept(t)) { reasons.push(`removed the name ${t}`); break; }
+      sentenceStart = false;
+    } else if (/[.!?:\n]/.test(t)) sentenceStart = true;
+  }
+
+  const phrase = (list) => ` ${lower(list).join(' ')} `;
+  const pa = phrase(a), pb = phrase(b);
+  const occurrences = (hay, h) => hay.split(` ${h} `).length - 1;
+  const hedge = SR_HEDGES.find((h) => occurrences(pa, h) > occurrences(pb, h));
+  if (hedge) reasons.push(`removed "${hedge}"`);
+
+  return { ok: reasons.length === 0, reasons };
+}
+
 if (typeof self !== 'undefined') {
   self.SR_TONES = SR_TONES;
   self.SR_getTone = SR_getTone;
@@ -679,5 +742,7 @@ if (typeof self !== 'undefined') {
   self.SR_rewriteOnDevice = SR_rewriteOnDevice;
   self.SR_rewriteAuto = SR_rewriteAuto;
   self.SR_wordDiff = SR_wordDiff;
+  self.SR_diffTokens = SR_diffTokens;
   self.SR_diffCount = SR_diffCount;
+  self.SR_changeGuard = SR_changeGuard;
 }

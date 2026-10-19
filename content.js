@@ -154,6 +154,7 @@
       const working = tone === 'translate' ? 'Translating' : `Rewriting to ${toneName}`;
 
       document.getElementById('sr-modal-content').innerHTML = `
+        ${notice ? `<p class="sr-notice" role="alert">${this.escapeHtml(notice)}</p>` : ''}
         ${this.toneChipsHtml(tone)}
         ${this.langRowHtml(tone, this.currentLang)}
         <div class="sr-skeleton" role="status" aria-label="${working}">
@@ -174,7 +175,10 @@
       this.show();
     }
 
-    showResult(originalText, rewrittenText, tone, provider, targetLang) {
+    // opts.notice: one line shown above the result (e.g. the Proofread change guard).
+    // opts.where: a ready-made "where the text went" label. opts.action: { label, run }
+    // adds a primary button; run() returning true closes the dialog.
+    showResult(originalText, rewrittenText, tone, provider, targetLang, { notice, where, action } = {}) {
       this.currentText = originalText;
       this.currentRewrite = rewrittenText;
       this.currentTone = tone;
@@ -190,6 +194,7 @@
       const plainHtml = this.escapeHtml(rewrittenText);
 
       document.getElementById('sr-modal-content').innerHTML = `
+        ${notice ? `<p class="sr-notice" role="alert">${this.escapeHtml(notice)}</p>` : ''}
         ${this.toneChipsHtml(tone)}
         ${this.langRowHtml(tone, targetLang)}
         <div class="sr-result-box sr-scrollable" id="sr-rewritten-text">${diffHtml || plainHtml}</div>
@@ -200,10 +205,13 @@
         </details>
       `;
 
+      // Say where the text went, in plain words.
       const engineName = this.providerLabel(provider);
-      const engineTag = engineName ? `<span class="sr-engine">${engineName}</span>` : '';
+      where = where || (provider === 'device' ? 'On this computer' : engineName ? `Sent to ${engineName}` : '');
+      const engineTag = where ? `<span class="sr-engine">${this.escapeHtml(where)}</span>` : '';
       document.getElementById('sr-modal-footer').innerHTML = `
-        <button class="sr-btn sr-btn-primary" id="sr-copy-btn">Copy</button>
+        ${action ? `<button class="sr-btn sr-btn-primary" id="sr-action-btn">${this.escapeHtml(action.label)}</button>` : ''}
+        <button class="sr-btn ${action ? 'sr-btn-secondary' : 'sr-btn-primary'}" id="sr-copy-btn">Copy</button>
         <span class="sr-hint">Tap a tone to rewrite again · Esc to close</span>
         ${engineTag}
       `;
@@ -211,6 +219,11 @@
       document.getElementById('sr-copy-btn').addEventListener('click', () => {
         this.copyToClipboard(rewrittenText);
       });
+      if (action) {
+        document.getElementById('sr-action-btn').addEventListener('click', async () => {
+          if (await action.run()) this.hide();
+        });
+      }
 
       const toggle = document.getElementById('sr-diff-toggle');
       if (toggle) {
@@ -272,7 +285,9 @@
       this.show();
     }
 
-    showSuccess(message) {
+    // opts.review: { original, rewritten, tone, provider, where? } adds a Review link that
+    // opens the result dialog (with the Proofread diff) for a replace already done.
+    showSuccess(message, { review } = {}) {
       this.busy = false;
       this.hideLoadingToast();
       const notification = document.createElement('div');
@@ -283,8 +298,15 @@
         <div class="sr-success-content">
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
+          ${review ? '<button type="button" class="sr-success-review">Review</button>' : ''}
         </div>
       `;
+      if (review) {
+        notification.querySelector('.sr-success-review').addEventListener('click', () => {
+          notification.remove();
+          this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where });
+        });
+      }
       
       document.body.appendChild(notification);
       
@@ -294,7 +316,7 @@
       setTimeout(() => {
         notification.classList.remove('sr-show');
         setTimeout(() => notification.remove(), 300);
-      }, /undo/i.test(message) ? 6000 : 3000);
+      }, /undo/i.test(message) || review ? 6000 : 3000);
     }
 
     show() {

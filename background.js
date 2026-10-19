@@ -116,6 +116,14 @@ function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup 
   return null;
 }
 
+// Where the text went, in plain words, for result labels. A server on the
+// user's own machine or network isn't "sent" anywhere they'd worry about.
+function whereLabel(providerId, cfg) {
+  if (providerId === 'device') return 'On this computer';
+  if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return 'On your computer or network';
+  return `Sent to ${SR_providerDisplayLabel(providerId)}`;
+}
+
 // Rewrite with whatever is ready: on-device only when already downloaded,
 // otherwise the cloud key.
 function rewriteNow(text, tone, status, targetLang) {
@@ -315,7 +323,14 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
       target: { tabId: tab.id },
       func: readSelectionText,
     });
-    await handleRewrite(tab.id, text, 'grammar', { ensure: true });
+    if (text && text.trim()) {
+      await handleRewrite(tab.id, text, 'grammar', { ensure: true });
+      return;
+    }
+    // Nothing selected: proofread the whole text box the cursor is in, with
+    // the same plain-field-only replace rule as the context menu.
+    const [{ result: field } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: selectWholeField });
+    await handleRewrite(tab.id, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain) });
   } catch (error) {
     console.warn('Proofr shortcut could not run on this page:', error?.message || error);
     explainBlockedPage(tab.id, false);
@@ -411,7 +426,7 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang);
     await StatsManager.updateStats(tone);
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider)]);
   } catch (error) {
     console.warn('Rewrite failed:', error?.message || error);
     let message = error.message || 'Something went wrong.';
@@ -503,7 +518,7 @@ function showLoadingModal(originalText, tone, targetLang) {
 // so the page's editor (React, Lexical, ProseMirror…) sees a normal input
 // event and Ctrl+Z restores the original. Only replaces when the captured
 // text is still there; otherwise the result opens in the modal instead.
-function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId) {
+function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where) {
   const targets = window.__srTargets;
   const target = targets && targets.get(requestId);
   if (targets) targets.delete(requestId);
@@ -511,27 +526,44 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   let replaced = false;
   let undoable = false;
 
-  try {
-    if (target && target.kind === 'field' && target.el.isConnected
-        && norm(target.el.value.slice(target.start, target.end)) === norm(target.original)) {
-      target.el.focus();
-      target.el.setSelectionRange(target.start, target.end);
-      undoable = replaced = document.execCommand('insertText', false, rewrittenText);
-      if (!replaced) {
-        // Not undoable, so the toast below doesn't promise undo for this path.
-        target.el.setRangeText(rewrittenText, target.start, target.end, 'end');
-        target.el.dispatchEvent(new Event('input', { bubbles: true }));
-        replaced = true;
-      }
-    } else if (target && target.kind === 'editable' && target.el.isConnected
-        && target.range.startContainer.isConnected
-        && norm(target.range.toString()) === norm(target.original)) {
-      target.el.focus();
+  // Proofread should only fix mistakes. If it changed much more, or dropped a
+  // number, name, or "not", don't paste it in silently: show it for review.
+  const insertInto = (t) => {
+    if (t.kind === 'field' && t.el.isConnected
+        && norm(t.el.value.slice(t.start, t.end)) === norm(t.original)) {
+      t.el.focus();
+      t.el.setSelectionRange(t.start, t.end);
+      if (document.execCommand('insertText', false, rewrittenText)) return 'undoable';
+      t.el.setRangeText(rewrittenText, t.start, t.end, 'end');
+      t.el.dispatchEvent(new Event('input', { bubbles: true }));
+      return 'replaced';
+    }
+    if (t.kind === 'editable' && t.el.isConnected && t.range.startContainer.isConnected
+        && norm(t.range.toString()) === norm(t.original)) {
+      t.el.focus();
       const sel = window.getSelection();
       sel.removeAllRanges();
-      sel.addRange(target.range);
-      undoable = replaced = document.execCommand('insertText', false, rewrittenText);
+      sel.addRange(t.range);
+      return document.execCommand('insertText', false, rewrittenText) ? 'undoable' : null;
     }
+    return null;
+  };
+
+  const guard = (tone === 'grammar' && typeof SR_changeGuard === 'function') ? SR_changeGuard(originalText, rewrittenText) : null;
+  if (guard && !guard.ok) {
+    if (window.SmartRewriteModal) {
+      const opts = { notice: `Check this before using it: ${guard.reasons.join(', ')}.`, where };
+      // The user can still accept it: same target, same safety re-check.
+      if (target) opts.action = { label: 'Replace anyway', run: () => { try { return !!insertInto(target); } catch (_) { return false; } } };
+      window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, opts);
+    }
+    return;
+  }
+
+  try {
+    const how = target ? insertInto(target) : null;
+    replaced = !!how;
+    undoable = how === 'undoable';
   } catch (_) {
     replaced = false;
   }
@@ -543,13 +575,14 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
       const ops = (tone === 'grammar' && typeof SR_wordDiff === 'function') ? SR_wordDiff(originalText, rewrittenText) : null;
       const fixes = ops && typeof SR_diffCount === 'function' ? SR_diffCount(ops) : null;
       const what = fixes === 0 ? 'No changes needed.' : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
-      window.SmartRewriteModal.showSuccess(undoable && fixes !== 0 ? `${what} ${undoKey} to undo.` : what);
+      window.SmartRewriteModal.showSuccess(undoable && fixes !== 0 ? `${what} ${undoKey} to undo.` : what,
+        { review: { original: originalText, rewritten: rewrittenText, tone, provider, where } });
     }
     return;
   }
 
   if (window.SmartRewriteModal) {
-    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang);
+    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, { where });
   } else {
     navigator.clipboard.writeText(rewrittenText)
       .then(() => alert('Rewritten text copied to clipboard:\n\n' + rewrittenText))
