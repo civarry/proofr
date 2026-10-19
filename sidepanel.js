@@ -1008,9 +1008,10 @@ async function runTurn(turn, opts = {}) {
       ? 'cloud' : settings.engine;
     turn.onDevice = engine === 'device' || (engine === 'auto' && availability !== 'unavailable');
     repaint();
-    const { text: rewritten, provider: providerId } = await SR_rewriteAuto(turn.inputText, turn.mode, {
+    const { text: rewritten, provider: providerId, engine: engineName } = await SR_rewriteAuto(turn.inputText, turn.mode, {
       provider,
       engine,
+      allowDownload: true, // Send is a click, so a translation language pack may download
       targetLang: turn.targetLang,
       temperatureBoost: opts.boost ? 0.15 : 0,
       signal: controller.signal,
@@ -1021,9 +1022,11 @@ async function runTurn(turn, opts = {}) {
     turn.provider = providerId;
     // Same wording as background.js whereLabel: a server on this machine or
     // network isn't "sent" anywhere a user would worry about.
-    turn.where = providerId === 'device' ? 'On this computer'
-      : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? 'On your computer or network'
-      : `Sent to ${SR_providerDisplayLabel(providerId)}`;
+    // Also which model answered, like the page's result label.
+    const model = provider && provider.model ? ` · ${String(provider.model).split('/').pop()}` : '';
+    turn.where = providerId === 'device' ? `On this computer · ${engineName || 'Gemini Nano'}`
+      : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? `On your computer or network${model}`
+      : `Sent to ${SR_providerDisplayLabel(providerId)}${model}`;
     turn.latencyMs = Math.round(performance.now() - start);
     turn.status = 'done';
     delete turn.errorMessage;

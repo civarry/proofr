@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofr on-device bench</title>
+<style>
+  :root { --paper:#FAF9F7; --card:#FFF; --ink:#23221E; --soft:#5E5B53; --line:#E6E3DC; --accent:#1D64D8; --good:#276B41; --bad:#B4443A; }
+  @media (prefers-color-scheme: dark) { :root { --paper:#1B1A17; --card:#24231F; --ink:#EDEBE5; --soft:#C2BEB3; --line:#34322C; --accent:#7EA8F8; --good:#8FD3A6; --bad:#E58A80; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: var(--paper); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  h1 { font-size: 18px; margin: 0; }
+  p { margin: 0; color: var(--soft); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--soft); margin: 0 0 8px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--soft); font-weight: 600; border-top: none; }
+  .good { color: var(--good); font-weight: 600; } .bad { color: var(--bad); font-weight: 600; }
+  button { font: 600 13px inherit; padding: 9px 14px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: progress; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  pre { white-space: pre-wrap; font-size: 12px; margin: 0; }
+  #status { min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Proofr on-device bench</h1>
+  <p>Measures real Gemini Nano, Translator and Summarizer timings in this Chrome: the old way (a new session per request, instructions inline) against the new way (one base session, cloned). Nothing is sent anywhere.</p>
+  <section><h2>This Chrome</h2><table id="env"></table></section>
+  <div class="row"><button id="run" type="button">Run the bench</button><button id="copy" type="button" class="ghost" disabled>Copy results (JSON)</button><span id="status" role="status"></span></div>
+  <section><h2>Results</h2><table id="results"><tr><th>Test</th><th>Old</th><th>New</th><th>Change</th></tr></table></section>
+  <section><h2>Outputs</h2><pre id="outputs"></pre></section>
+</main>
+<script src="../constants.js"></script>
+<script src="nano-bench.js"></script>
+</body>
+</html>
