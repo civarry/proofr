@@ -25,6 +25,54 @@
   --sr-card-border: #e6e3dc;
   --sr-shadow-lg: 0 12px 24px -8px rgba(38, 37, 31, 0.14);
   --sr-shadow-xl: 0 18px 44px -14px rgba(38, 37, 31, 0.22);
+  --sr-on-primary: #faf9f7;   /* text on ink fills: primary buttons, the toast */
+  --sr-on-primary-line: rgba(255, 255, 255, 0.55);
+  --sr-on-primary-hover: rgba(255, 255, 255, 0.15);
+  --sr-scrim: rgba(38, 37, 31, 0.28);
+  --sr-ins-bg: #e3f1e7;
+  --sr-ins-fg: #1f5c36;
+  --sr-del-fg: #6b6960;
+  --sr-notice-bg: #fbf3e4;
+  --sr-notice-border: #ecd9b5;
+  --sr-notice-fg: #6b4a12;
+}
+
+/* Dark: the same warm paper, at night. Ink fills turn light, so text on them
+   (--sr-on-primary) turns dark. Follows the system setting. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sr-primary: #edebe5;
+    --sr-primary-dark: #ffffff;
+    --sr-secondary: #edebe5;
+    --sr-white: #1b1a17;
+    --sr-gray-50: #24231f;
+    --sr-gray-100: #2a2925;
+    --sr-gray-200: #34322c;
+    --sr-gray-300: #4a473f;
+    --sr-gray-400: #6b675e;
+    --sr-gray-500: #a8a498;
+    --sr-gray-600: #c2beb3;
+    --sr-gray-700: #d6d3cb;
+    --sr-gray-800: #e5e2db;
+    --sr-gray-900: #edebe5;
+    --sr-success: #edebe5;
+    --sr-error: #e58a80;
+    --sr-card-bg: #1b1a17;
+    --sr-card-border: #34322c;
+    --sr-shadow-lg: 0 12px 24px -8px rgba(0, 0, 0, 0.5);
+    --sr-shadow-xl: 0 18px 44px -14px rgba(0, 0, 0, 0.6);
+    --sr-on-primary: #1b1a17;
+    --sr-on-primary-line: rgba(27, 26, 23, 0.45);
+    --sr-on-primary-hover: rgba(27, 26, 23, 0.1);
+    --sr-scrim: rgba(0, 0, 0, 0.5);
+    --sr-ins-bg: #1f3326;
+    --sr-ins-fg: #8fd3a6;
+    --sr-del-fg: #a8a498;
+    --sr-notice-bg: #3a2c18;
+    --sr-notice-border: #5a4424;
+    --sr-notice-fg: #e8bd7d;
+  }
+  #smart-rewrite-modal { color-scheme: dark; }
 }
 
 #smart-rewrite-modal {
@@ -53,7 +101,7 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(38, 37, 31, 0.28);
+  background: var(--sr-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -106,7 +154,7 @@
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  color: var(--sr-white);
+  color: var(--sr-on-primary);
   font-size: 12px;
   letter-spacing: -0.5px;
 }
@@ -180,13 +228,13 @@
 .sr-chip-active:hover {
   background: var(--sr-gray-900);
   border-color: var(--sr-gray-900);
-  color: var(--sr-white);
+  color: var(--sr-on-primary);
   font-weight: 600;
 }
 
 .sr-chip-ic { display: inline-flex; flex-shrink: 0; color: var(--sr-gray-500); }
 .sr-chip:hover .sr-chip-ic { color: var(--sr-gray-700); }
-.sr-chip-active .sr-chip-ic { color: var(--sr-white); }
+.sr-chip-active .sr-chip-ic { color: var(--sr-on-primary); }
 .sr-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-ic { width: 16px; height: 16px; display: block; }
 
@@ -333,15 +381,15 @@
 
 /* Proofread result: what changed, inline. Real <ins>/<del> for screen readers. */
 .sr-diff-ins {
-  background: #e3f1e7;
-  color: #1f5c36;
+  background: var(--sr-ins-bg);
+  color: var(--sr-ins-fg);
   text-decoration: none;
   border-radius: 4px;
   padding: 0 1px;
 }
 .sr-diff-del {
   margin-right: 3px; /* keeps "was" and "were" from reading as one word */
-  color: #6b6960; /* 4.9:1 on the result box; gray-500 was too faint for AA */
+  color: var(--sr-del-fg); /* 4.5:1+ on the result box in both themes */
   text-decoration: line-through;
 }
 .sr-diff-toggle {
@@ -359,9 +407,9 @@
   margin: 0 0 10px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fbf3e4;
-  border: 1px solid #ecd9b5;
-  color: #6b4a12;
+  background: var(--sr-notice-bg);
+  border: 1px solid var(--sr-notice-border);
+  color: var(--sr-notice-fg);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -371,13 +419,13 @@
   margin-left: 4px;
   padding: 3px 9px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--sr-on-primary-line);
   background: transparent;
   color: inherit;
   font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer;
 }
-.sr-success-review:hover { background: rgba(255, 255, 255, 0.15); }
+.sr-success-review:hover { background: var(--sr-on-primary-hover); }
 
 /* Keyboard focus in our own UI: visible, in the product's ink instead of
    the browser's blue ring (which clashes with the warm palette). */
@@ -484,7 +532,7 @@
 
 .sr-btn-primary {
   background: var(--sr-gray-900);
-  color: var(--sr-white);
+  color: var(--sr-on-primary);
 }
 
 .sr-btn-primary:hover {
@@ -512,7 +560,7 @@
   right: 20px;
   z-index: 2147483647; /* the maximum; 2147483648 was invalid and ignored */
   background: var(--sr-success);
-  color: white;
+  color: var(--sr-on-primary);
   border-radius: 12px;
   padding: 16px 20px;
   box-shadow: var(--sr-shadow-lg);
@@ -679,7 +727,7 @@
   width: 26px; height: 26px;
   border: none; border-radius: 50%;
   background: var(--sr-primary);
-  color: var(--sr-white);
+  color: var(--sr-on-primary);
   padding: 0;
   display: flex; align-items: center; justify-content: center;
 }
@@ -763,13 +811,13 @@
   margin-left: 4px;
   padding: 3px 9px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--sr-on-primary-line);
   background: transparent;
   color: inherit;
   font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer;
 }
-.sr-success-undo:hover { background: rgba(255, 255, 255, 0.15); }
+.sr-success-undo:hover { background: var(--sr-on-primary-hover); }
 /* The one toast (#sr-toast): loading state's Stop, seconds/percent, first-run line. */
 #sr-toast.sr-loading-toast { flex-wrap: wrap; max-width: min(380px, calc(100vw - 16px)); }
 .sr-toast-meta { color: var(--sr-gray-500); font-variant-numeric: tabular-nums; }
