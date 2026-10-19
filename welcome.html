@@ -14,6 +14,14 @@
       --mono: "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace;
       --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #1B1A17; --card: #24231F; --ink: #EDEBE5; --ink-soft: #C2BEB3; --ink-faint: #A8A498;
+        --line: #34322C; --line-soft: #2A2925; --accent: #EDEBE5; --accent-fg: #1B1A17;
+        --live: #4CC173; --live-bg: #1F3326; --live-ink: #8FD3A6; --error: #E58A80;
+        color-scheme: dark;
+      }
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--sans); color: var(--ink); background: var(--paper); -webkit-font-smoothing: antialiased; }
     .wrap { max-width: 640px; margin: 0 auto; padding: 48px 16px 64px; }

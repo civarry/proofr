@@ -32,32 +32,49 @@ for (const [file, css] of Object.entries(surfaces)) {
   if (/font-family:[^;]*Inter/.test(css)) fail(`${file}: names Inter, which is never loaded`);
 }
 
-// Shared palette: panel and welcome declare the same token values.
-const tokens = (css) => Object.fromEntries([...css.matchAll(/(--[\w-]+):\s*(#[0-9a-fA-F]{3,8})/g)].map((m) => [m[1], m[2].toLowerCase()]));
-const panel = tokens(surfaces['sidepanel.html']);
-const welcome = tokens(surfaces['welcome.html']);
-for (const [k, v] of Object.entries(welcome)) {
-  if (panel[k] && panel[k] !== v) fail(`welcome ${k} ${v} differs from the side panel's ${panel[k]}`);
-}
-const page = tokens(surfaces['modal.css']);
-for (const [panelKey, pageKey] of [['--paper', '--sr-white'], ['--ink', '--sr-primary'], ['--ink-faint', '--sr-gray-500'], ['--ink-soft', '--sr-gray-600'], ['--line', '--sr-gray-200']]) {
-  if (panel[panelKey] !== page[pageKey]) fail(`in-page ${pageKey} ${page[pageKey]} differs from the panel's ${panelKey} ${panel[panelKey]}`);
-}
-
-// Contrast: every text token passes AA on the paper and card backgrounds.
+// Light and dark palettes are read separately: the dark set lives in the
+// file's prefers-color-scheme: dark block.
+const tokensIn = (css) => Object.fromEntries([...css.matchAll(/(--[\w-]+):\s*(#[0-9a-fA-F]{3,8})/g)].map((m) => [m[1], m[2].toLowerCase()]));
+const split = (css) => {
+  const i = css.indexOf('@media (prefers-color-scheme: dark)');
+  if (i < 0) return { light: tokensIn(css), dark: null };
+  // the dark block: from its opening brace to the matching close
+  let depth = 0, j = css.indexOf('{', i), start = j;
+  for (; j < css.length; j++) { if (css[j] === '{') depth++; else if (css[j] === '}' && --depth === 0) break; }
+  return { light: tokensIn(css.slice(0, i) + css.slice(j + 1)), dark: tokensIn(css.slice(start, j)) };
+};
 const lum = (hex) => {
   let h = hex.replace('#', '');
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
   const c = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
   return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 };
-const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-const backgrounds = [panel['--paper'], panel['--card']];
-for (const k of ['--ink', '--ink-soft', '--ink-faint', '--live-ink', '--error']) {
-  for (const bg of backgrounds) if (ratio(panel[k], bg) < 4.5) fail(`panel ${k} ${panel[k]} is ${ratio(panel[k], bg).toFixed(2)}:1 on ${bg} (needs 4.5)`);
-}
-for (const k of ['--sr-gray-500', '--sr-gray-600', '--sr-gray-900', '--sr-error']) {
-  for (const bg of [page['--sr-white'], page['--sr-gray-50']]) if (ratio(page[k], bg) < 4.5) fail(`in-page ${k} ${page[k]} is ${ratio(page[k], bg).toFixed(2)}:1 on ${bg} (needs 4.5)`);
+// A missing token counts as failing (ratio 0), so the check reports it.
+const ratio = (a, b) => { if (!a || !b) return 0; const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+
+const P = split(surfaces['sidepanel.html']);
+const W = split(surfaces['welcome.html']);
+const G = split(surfaces['modal.css']);
+for (const theme of ['light', 'dark']) {
+  const panel = P[theme], welcome = W[theme], page = G[theme];
+  if (!panel || !welcome || !page) { fail(`${theme}: a surface has no ${theme} palette`); continue; }
+  // Shared palette: panel and welcome declare the same values.
+  for (const [k, v] of Object.entries(welcome)) {
+    if (panel[k] && panel[k] !== v) fail(`${theme}: welcome ${k} ${v} differs from the side panel's ${panel[k]}`);
+  }
+  for (const [panelKey, pageKey] of [['--paper', '--sr-white'], ['--ink', '--sr-primary'], ['--ink-faint', '--sr-gray-500'], ['--ink-soft', '--sr-gray-600']]) {
+    if (panel[panelKey] !== page[pageKey]) fail(`${theme}: in-page ${pageKey} ${page[pageKey]} differs from the panel's ${panelKey} ${panel[panelKey]}`);
+  }
+  // Contrast: every text token passes AA on the backgrounds it sits on.
+  for (const k of ['--ink', '--ink-soft', '--ink-faint', '--live-ink', '--error']) {
+    for (const bg of [panel['--paper'], panel['--card']]) if (ratio(panel[k], bg) < 4.5) fail(`${theme}: panel ${k} ${panel[k]} is ${ratio(panel[k], bg).toFixed(2)}:1 on ${bg}`);
+  }
+  if (ratio(panel['--accent-fg'], panel['--accent']) < 4.5) fail(`${theme}: button text on accent is ${ratio(panel['--accent-fg'], panel['--accent']).toFixed(2)}:1`);
+  for (const k of ['--sr-gray-500', '--sr-gray-600', '--sr-gray-900', '--sr-error', '--sr-del-fg', '--sr-notice-fg']) {
+    for (const bg of [page['--sr-white'], page['--sr-gray-50']]) if (ratio(page[k], bg) < 4.5) fail(`${theme}: in-page ${k} ${page[k]} is ${ratio(page[k], bg).toFixed(2)}:1 on ${bg}`);
+  }
+  if (ratio(page['--sr-ins-fg'], page['--sr-ins-bg']) < 4.5) fail(`${theme}: inserted-word text is ${ratio(page['--sr-ins-fg'], page['--sr-ins-bg']).toFixed(2)}:1 on its highlight`);
+  if (ratio(page['--sr-on-primary'], page['--sr-primary']) < 4.5) fail(`${theme}: text on ink fills is ${ratio(page['--sr-on-primary'], page['--sr-primary']).toFixed(2)}:1`);
 }
 // Grays too faint for text must only be used for borders and fills.
 if (/(?<![-\w])color:\s*var\(--sr-gray-(300|400)\)/.test(surfaces['modal.css'])) fail('modal.css uses gray-300/400 as a text color (fails AA)');
