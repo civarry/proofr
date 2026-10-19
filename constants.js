@@ -1687,9 +1687,10 @@ function SR_practiceChoices(target, seed = 0) {
     } else if (/^[a-z]+$/i.test(to) && to.length >= 4) {
       // One more single-edit misspelling: swap, drop, or double a letter.
       const edits = [];
-      for (let i = 1; i < to.length - 1; i++) edits.push(to.slice(0, i) + to[i + 1] + to[i] + to.slice(i + 2));
-      for (let i = 1; i < to.length; i++) edits.push(to.slice(0, i) + to.slice(i + 1));
-      for (let i = 1; i < to.length; i++) edits.push(to.slice(0, i) + to[i] + to.slice(i));
+      // Inside the word only: a changed first or last letter fools nobody.
+      for (let i = 1; i < to.length - 2; i++) edits.push(to.slice(0, i) + to[i + 1] + to[i] + to.slice(i + 2));
+      for (let i = 1; i < to.length - 1; i++) edits.push(to.slice(0, i) + to.slice(i + 1));
+      for (let i = 1; i < to.length - 1; i++) edits.push(to.slice(0, i) + to[i] + to.slice(i));
       for (const w of SR_seededOrder(edits, seed)) { if (w.toLowerCase() !== to.toLowerCase() && w.toLowerCase() !== from.toLowerCase()) { add(w); break; } }
     }
   }

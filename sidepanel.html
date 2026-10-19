@@ -493,19 +493,16 @@
     .pr-ask { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 6px 0 14px; }
     .pr-ask b { font-size: 18px; font-weight: 700; color: var(--ink); }
     .pr-left { font-size: 12px; font-weight: 600; color: var(--ink-faint); white-space: nowrap; }
-    .pr-sentence { font-size: 18px; line-height: 2.1; color: var(--ink); margin-bottom: 20px; }
-    .pr-chip {
-      font: inherit; color: inherit; background: none; border: none; cursor: pointer;
-      padding: 2px 5px; margin: 0 1px; border-radius: 8px; box-shadow: inset 0 -2px 0 var(--line);
-      transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+    .pr-sentence { font-size: 18px; line-height: 1.9; color: var(--ink); margin-bottom: 24px; }
+    .pr-blank {
+      display: inline-block; min-width: 72px; padding: 0 8px; margin: 0 2px; text-align: center; vertical-align: baseline;
+      line-height: 1.6; border-radius: 8px; background: var(--accent-tint); box-shadow: inset 0 -3px 0 var(--accent);
     }
-    .pr-chip:hover:not(:disabled) { background: var(--line-soft); }
-    .pr-chip.selected { background: var(--accent-tint); box-shadow: inset 0 0 0 2px var(--accent); transform: translateY(-2px); }
-    .pr-chip.fixed { background: var(--live-bg); color: var(--live-ink); font-weight: 600; box-shadow: none; animation: pr-pop 280ms cubic-bezier(0, 0, 0, 1); }
-    .pr-chip.missed { background: var(--warn-bg); color: var(--warn-ink); font-weight: 600; box-shadow: none; animation: pr-pop 280ms cubic-bezier(0, 0, 0, 1); }
-    .pr-chip.nope { animation: pr-shake 300ms ease, pr-flash 600ms ease; }
-    .pr-chip:disabled { cursor: default; }
-    .pr-punct { margin-left: -4px; margin-right: 2px; }
+    .pr-blank:empty::after { content: "\00a0"; }
+    .pr-blank.later { min-width: 48px; background: var(--line-soft); box-shadow: inset 0 -3px 0 var(--line); }
+    .pr-blank.right { background: var(--live-bg); color: var(--live-ink); font-weight: 600; box-shadow: inset 0 -3px 0 var(--live); animation: pr-pop 280ms cubic-bezier(0, 0, 0, 1); }
+    .pr-blank.wrong { background: var(--warn-bg); color: var(--warn-ink); font-weight: 600; box-shadow: inset 0 -3px 0 var(--dot-fixed); animation: pr-shake 300ms ease; }
+    .pr-punct { margin-left: 0; }
     .pr-choices { display: flex; flex-direction: column; gap: 10px; }
     .pr-choice {
       display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; text-align: left;
@@ -515,6 +512,9 @@
     }
     .pr-choice:hover { border-color: var(--line-focus); }
     .pr-choice:active { transform: translateY(2px); border-bottom-width: 2px; }
+    .pr-choice:disabled { cursor: default; }
+    .pr-choice.is-answer { border-color: var(--live); background: var(--live-bg); color: var(--live-ink); }
+    .pr-choice.picked-wrong { border-color: var(--error); background: var(--error-bg); color: var(--error); animation: pr-shake 300ms ease; }
     .pr-choice .key { flex: none; width: 24px; height: 24px; border-radius: 8px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--ink-faint); }
     .pr-sheet {
       position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 16px 18px 18px;
@@ -558,7 +558,6 @@
     .practice-actions { display: flex; gap: 8px; margin-top: 12px; }
     @keyframes pr-pop { 0% { transform: scale(.9); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
     @keyframes pr-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
-    @keyframes pr-flash { 0%, 40% { background: var(--error-bg); } 100% { background: transparent; } }
     @keyframes pr-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
       .practice *, .practice *::before { animation: none !important; transition: none !important; }
