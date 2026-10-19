@@ -46,6 +46,9 @@ node test/guard.mjs
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
 
+# One design system: type scale, corner radii, shared palette, AA text contrast
+node test/design-tokens.mjs
+
 # UI end-to-end: welcome tab, key save, side panel, rating ask, translate,
 # in-place replace + undo, hover permission, setup errors
 PUPPETEER=/path/to/puppeteer.js NO_SHOTS=1 node test/e2e-ui.mjs
