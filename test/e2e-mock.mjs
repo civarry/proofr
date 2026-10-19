@@ -507,7 +507,8 @@ try {
     check(reviewed, 'in-place toast: Review opens the result with the diff');
     const where = await page.evaluate(() => (document.querySelector('#sr-modal-footer .sr-engine') || {}).textContent);
     // The mock is on localhost, so nothing left this computer.
-    check(where === 'On your computer or network', `result dialog: says where the text went (got ${JSON.stringify(where)})`);
+    check(where === 'On your computer or network · mock-model', // the label names the model too (CJ asked which model answered)
+      `result dialog: says where the text went (got ${JSON.stringify(where)})`);
     await page.keyboard.press('Escape');
   });
 

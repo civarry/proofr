@@ -375,7 +375,7 @@
       // Say where the text went, in plain words.
       const engineName = this.providerLabel(provider);
       where = where || (provider === 'device' ? 'On this computer' : engineName ? `Sent to ${engineName}` : '');
-      const engineTag = where ? `<span class="sr-engine">${this.escapeHtml(where)}</span>` : '';
+      const engineTag = where ? `<span class="sr-engine" title="${this.escapeHtml(where)}">${this.escapeHtml(where)}</span>` : '';
       document.getElementById('sr-modal-footer').innerHTML = `
         ${action ? `<button class="sr-btn sr-btn-primary" id="sr-action-btn">${this.escapeHtml(action.label)}</button>` : ''}
         <button class="sr-btn ${action ? 'sr-btn-secondary' : 'sr-btn-primary'}" id="sr-copy-btn">Copy</button>
@@ -589,7 +589,7 @@
         <div class="sr-result-box sr-scrollable" id="sr-coach-text">${html}</div>
         <p class="sr-coach-count" id="sr-coach-count">${count}</p>
       `;
-      const engineTag = where ? `<span class="sr-engine">${this.escapeHtml(where)}</span>` : '';
+      const engineTag = where ? `<span class="sr-engine" title="${this.escapeHtml(where)}">${this.escapeHtml(where)}</span>` : '';
       document.getElementById('sr-modal-footer').innerHTML = spots || !ops
         ? `<button class="sr-btn sr-btn-primary" id="sr-coach-self">I'll fix them</button>
            <button class="sr-btn sr-btn-secondary" id="sr-coach-reveal">Show fixes</button>${engineTag}`

@@ -555,6 +555,11 @@ check('coach on: spots marked, fixes not shown', coachState.spots.includes('reci
 await clk(demo, '#sr-coach-reveal'); await sleep(400);
 await clk(demo, '#sr-action-btn'); await sleep(500);
 check('coach: Show fixes then Apply fixes the box', (await boxValue('coach')) === FIXED, await boxValue('coach'));
+// Coach with nothing to mark: the usual small toast, not a dialog.
+await putBox('coach', CLEAN);
+await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, CLEAN); await sleep(1200);
+const cleanCoach = await demo.evaluate(() => ({ dialog: !!document.querySelector('#smart-rewrite-modal.sr-visible #sr-coach-text, #sr-coach-text'), toast: document.getElementById('sr-toast')?.innerText || '' }));
+check('coach with nothing to fix shows the toast, not a dialog', !cleanCoach.dialog && /Nothing to fix/.test(cleanCoach.toast), JSON.stringify(cleanCoach));
 await sw.evaluate(() => chrome.storage.sync.set({ srCoach: false }));
 
 // Patterns appear once this writer's own fixes support one.
@@ -582,6 +587,9 @@ await demo.evaluate(() => {
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
 });
 await sw.evaluate((id) => handleRewrite(id, 'teh article was writen by someone else', 'grammar', { ensure: true }), tabId); await sleep(1500);
+const engineTag = await demo.evaluate(() => { const e = document.querySelector('#smart-rewrite-modal .sr-engine'); return e ? { text: e.textContent, border: getComputedStyle(e).borderTopWidth } : null; });
+check('the result names the provider and the model', /^(Sent to .+|On your computer or network) · other-model$/.test(engineTag?.text || ''), JSON.stringify(engineTag));
+check('the where-label is plain text, not a pill', engineTag && engineTag.border === '0px', JSON.stringify(engineTag));
 await demo.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
 check('page text someone else wrote is not recorded', JSON.stringify(await insights()) === snapshot);
 
