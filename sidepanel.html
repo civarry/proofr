@@ -488,7 +488,7 @@
     .pr-bar i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--live); transition: width 320ms cubic-bezier(0, 0, 0, 1); }
     .pr-combo { flex: none; font-size: 12px; font-weight: 700; color: var(--accent-ink); background: var(--accent-tint); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
     .pr-combo.bump { animation: pr-pop 260ms cubic-bezier(0, 0, 0, 1); }
-    .pr-stage { flex: 1 1 auto; overflow-y: auto; padding: 8px 18px 160px; }
+    .pr-stage { flex: 1 1 auto; overflow-y: auto; padding: 8px 18px 24px; }
     .pr-stage.enter { animation: pr-slide 240ms cubic-bezier(0, 0, 0, 1); }
     .pr-ask { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 6px 0 14px; }
     .pr-ask b { font-size: 18px; font-weight: 700; color: var(--ink); }
@@ -499,7 +499,6 @@
       line-height: 1.6; border-radius: 8px; background: var(--accent-tint); box-shadow: inset 0 -3px 0 var(--accent);
     }
     .pr-blank:empty::after { content: "\00a0"; }
-    .pr-blank.later { min-width: 48px; background: var(--line-soft); box-shadow: inset 0 -3px 0 var(--line); }
     .pr-blank.right { background: var(--live-bg); color: var(--live-ink); font-weight: 600; box-shadow: inset 0 -3px 0 var(--live); animation: pr-pop 280ms cubic-bezier(0, 0, 0, 1); }
     .pr-blank.wrong { background: var(--warn-bg); color: var(--warn-ink); font-weight: 600; box-shadow: inset 0 -3px 0 var(--dot-fixed); animation: pr-shake 300ms ease; }
     .pr-punct { margin-left: 0; }
@@ -516,14 +515,11 @@
     .pr-choice.is-answer { border-color: var(--live); background: var(--live-bg); color: var(--live-ink); }
     .pr-choice.picked-wrong { border-color: var(--error); background: var(--error-bg); color: var(--error); animation: pr-shake 300ms ease; }
     .pr-choice .key { flex: none; width: 24px; height: 24px; border-radius: 8px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--ink-faint); }
-    .pr-sheet {
-      position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 16px 18px 18px;
-      background: var(--card); border-top: 1px solid var(--line);
-      transform: translateY(105%); transition: transform 200ms cubic-bezier(0, 0, 0, 1);
-    }
-    .pr-sheet.open { transform: translateY(0); }
-    .pr-sheet.good { background: var(--live-bg); border-top-color: var(--live-border); }
-    .pr-sheet.bad { background: var(--error-bg); border-top-color: var(--error-border); }
+    /* Feedback right under the choices: no trip to the bottom of a tall panel. */
+    .pr-sheet { display: none; margin-top: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); }
+    .pr-sheet.open { display: block; animation: pr-rise 200ms cubic-bezier(0, 0, 0, 1); }
+    .pr-sheet.good { background: var(--live-bg); border-color: var(--live-border); }
+    .pr-sheet.bad { background: var(--error-bg); border-color: var(--error-border); }
     .pr-sheet-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
     .pr-sheet-head b { font-size: 18px; }
     .pr-sheet.good .pr-sheet-head b { color: var(--live-ink); }
@@ -558,6 +554,7 @@
     .practice-actions { display: flex; gap: 8px; margin-top: 12px; }
     @keyframes pr-pop { 0% { transform: scale(.9); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
     @keyframes pr-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+    @keyframes pr-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
     @keyframes pr-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
       .practice *, .practice *::before { animation: none !important; transition: none !important; }
@@ -1057,6 +1054,11 @@
         <div class="pr-ask"><b id="prAsk">Tap the mistake</b><span class="pr-left" id="prLeft"></span></div>
         <p class="pr-sentence" id="prSentence"></p>
         <div class="pr-choices" id="prChoices" hidden></div>
+        <div class="pr-sheet" id="prSheet" role="status" aria-live="polite">
+          <div class="pr-sheet-head"><span class="pr-sheet-icon" id="prSheetIcon" aria-hidden="true"></span><b id="prSheetTitle"></b></div>
+          <p id="prSheetText"></p>
+          <button type="button" class="pr-continue" id="prContinue">Continue</button>
+        </div>
       </div>
       <div class="pr-done" id="prDone" hidden>
         <svg class="pr-ring" viewBox="0 0 120 120" role="img" id="prRingSvg"><circle class="track" cx="60" cy="60" r="50"/><circle class="fill" id="prRing" cx="60" cy="60" r="50"/><text x="60" y="68" text-anchor="middle" id="prScore">0</text></svg>
@@ -1067,11 +1069,6 @@
           <button type="button" class="btn-solid" id="btnPracticeAgain">Practice again</button>
           <button type="button" class="btn-outline" id="btnPracticeDone">Back to Progress</button>
         </div>
-      </div>
-      <div class="pr-sheet" id="prSheet" role="status" aria-live="polite">
-        <div class="pr-sheet-head"><span class="pr-sheet-icon" id="prSheetIcon" aria-hidden="true"></span><b id="prSheetTitle"></b></div>
-        <p id="prSheetText"></p>
-        <button type="button" class="pr-continue" id="prContinue">Continue</button>
       </div>
     </div>
 

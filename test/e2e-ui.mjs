@@ -68,7 +68,9 @@ const mock = http.createServer((req, res) => {
     const input = (String(parsed.messages?.at(-1)?.content || '').match(/<(text-[0-9a-f]{12})>\n([\s\S]*?)\n<\/\1>/) || [, , ''])[2].trim();
     // A real-looking Proofread for the Progress checks; LEAK makes the model
     // obey an injection and repeat its instructions.
-    const content = /Write exactly 3 tips/.test(prompt) ? TIPS
+    const words = /example sentences for a spelling/.test(prompt) ? input.split('\n').map((w) => w.trim()).filter(Boolean) : null;
+    const content = words ? words.flatMap((w) => [`${w} | We checked that ${w} fits here today.`, `${w} | Please make sure ${w} looks right in the email.`]).join('\n')
+      : /Write exactly 3 tips/.test(prompt) ? TIPS
       : FIXES[input] || (/LEAK/.test(input) ? parsed.messages[0].content : `R(${input})`);
     const reply = () => {
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
@@ -547,10 +549,11 @@ const p3 = await panel.evaluate(async (to) => {
 }, q1.to);
 check('practice: one tap fills the blank, says Correct, moves the bar, locks the choices', p3.blank === q1.to && p3.right && /open good/.test(p3.sheet) && p3.title === 'Correct' && Number(p3.bar) > 0 && p3.locked, JSON.stringify(p3));
 await shot(panel, '9-practice.png');
+let q2;
 if (p1.total > 1) {
   await panel.evaluate(() => document.getElementById('prContinue').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
   await sleep(300);
-  const q2 = await q();
+  q2 = await q();
   const wrongIdx = q2.opts.findIndex((w) => w !== q2.to);
   const p4 = await panel.evaluate(async (n) => {
     document.getElementById('practicePanel').dispatchEvent(new KeyboardEvent('keydown', { key: String(n), bubbles: true }));
@@ -560,10 +563,12 @@ if (p1.total > 1) {
   check('practice: a wrong pick (key 1-3) shows the right word and marks both buttons', /open bad/.test(p4.sheet) && p4.text.includes(`"${q2.to}"`) && p4.answer === q2.to && p4.wrong, JSON.stringify(p4));
 }
 const p5 = await panel.evaluate(async () => {
-  const leaks = [];
+  const leaks = [], answers = [practice.questions[0].tokens[practice.questions[0].k].target.to], positions = [];
   for (let guard = 0; guard < 40 && document.getElementById('prDone').hidden; guard++) {
     if (practice.sheetOpen) { document.getElementById('prContinue').click(); await new Promise((r) => setTimeout(r, 280)); continue; }
     const { tokens, k } = practice.questions[practice.q];
+    answers.push(tokens[k].target.to);
+    positions.push([...document.querySelectorAll('.pr-choice')].findIndex((b) => b.dataset.word === tokens[k].target.to));
     // Nothing still to be asked in this sentence may already show its fix.
     const shown = document.getElementById('prSentence').textContent;
     for (const t of tokens.slice(k).filter((x) => x.target)) {
@@ -573,10 +578,35 @@ const p5 = await panel.evaluate(async () => {
     await new Promise((r) => setTimeout(r, 30));
   }
   await new Promise((r) => setTimeout(r, 1000));
-  return { leaks, done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') };
+  return { leaks, answers: [...new Set(answers)].length === answers.length ? answers : answers, positions, done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') };
 });
 check('practice: no question shows a later answer early', p5.leaks.length === 0, JSON.stringify(p5.leaks));
+check('practice: every question in a round has a different answer', new Set(p5.answers).size === p5.answers.length, JSON.stringify(p5.answers));
+// Where the right answer sat, read from the screen for every question of the round.
+const shownAt = [q1.opts.indexOf(q1.to), ...(typeof q2 !== 'undefined' ? [q2.opts.indexOf(q2.to)] : []), ...p5.positions];
+check('practice: the right answer never sits in the same place twice in a row', shownAt.every((p, i) => i === 0 || p !== shownAt[i - 1]), JSON.stringify(shownAt));
 check('practice: the round ends with the first-try score and every word', p5.done && p5.score === `${p5.first}/${p5.total}` && p5.words === p5.total && p5.bar === '100', JSON.stringify(p5));
+// It adapts: results are kept per word pair, and the word missed comes first next round.
+const st = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticeStats'])).srPracticeStats || {});
+const missed = Object.entries(st).filter(([, v]) => v.wrongLast).map(([k]) => k.split('→')[1]);
+check('practice remembers each word pair (no sentences)', Object.keys(st).length > 0 && Object.entries(st).every(([k, v]) => /^[^ ]+→[^ ]+$/.test(k) && Object.keys(v).sort().join() === 'last,right,seen,wrongLast'), JSON.stringify(st).slice(0, 200));
+// Fresh sentences from the user's AI arrive for next time (mock provider), each one checked.
+await sleep(1500);
+const pool = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticePool'])).srPracticePool || {});
+const poolSentences = Object.values(pool).flat();
+check('practice gets fresh sentences from the AI for next time', poolSentences.length > 0 && poolSentences.every((x) => /^(We checked|Please make sure)/.test(x)), JSON.stringify(pool).slice(0, 200));
+await clk(panel, '#btnPracticeAgain'); await sleep(400);
+const r2 = await panel.evaluate(() => ({ first: practice.questions[0].target.to, sources: practice.questions.map((x) => x.source), sentences: practice.questions.map((x) => x.tokens.map((t) => t.text).join(' ')) }));
+check('practice: the word missed last round comes first', !missed.length || missed.includes(r2.first), JSON.stringify({ missed, first: r2.first }));
+check('practice: the next round uses the AI sentences', r2.sources.includes('ai'), JSON.stringify(r2.sources));
+const layout = await panel.evaluate(async () => {
+  const { tokens, k } = practice.questions[practice.q];
+  document.querySelector(`.pr-choice[data-word="${CSS.escape(tokens[k].target.to)}"]`).click();
+  await new Promise((r) => setTimeout(r, 300));
+  const c = document.getElementById('prChoices').getBoundingClientRect(), f = document.getElementById('prSheet').getBoundingClientRect();
+  return { gap: Math.round(f.top - c.bottom), continueVisible: document.getElementById('prContinue').getBoundingClientRect().bottom <= innerHeight };
+});
+check('practice: feedback sits right under the choices', layout.gap >= 0 && layout.gap <= 32 && layout.continueVisible, JSON.stringify(layout));
 await clk(panel, '#btnPracticeBack'); await sleep(300);
 check('practice back returns to Progress', await panel.evaluate(() => !document.getElementById('progressPanel').classList.contains('hidden') && document.getElementById('practicePanel').classList.contains('hidden') && !document.getElementById('tabBar').hidden));
 
