@@ -97,7 +97,7 @@ assert.deepEqual(SR_practiceTokens({ prompt: 'ok', targets: 'junk' }).map((t) =>
   }
 }
 // === Adapts to what the user needs ===
-for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestion', 'SR_validPracticeSentence', 'SR_buildSentencePrompt', 'SR_parseSentences']) {
+for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestion', 'SR_validPracticeSentence']) {
   assert.equal(typeof globalThis[f], 'function', `${f} is exported`);
 }
 {
@@ -122,7 +122,7 @@ for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestio
   assert.equal(plan.at(-1), 'the', 'a word got right twice just now comes last');
   assert.equal(new Set(plan).size, plan.length, 'no word twice in a round');
   // Stats keep only pairs and counts, survive junk, and stay bounded.
-  assert.deepEqual(Object.keys(stats['was→were']).sort(), ['last', 'right', 'seen', 'wrongLast'].sort());
+  assert.deepEqual(Object.keys(stats['was→were']).sort(), ['last', 'level', 'right', 'seen', 'streak', 'wrongLast'].sort());
   assert.ok(!JSON.stringify(stats).match(/sentence|prompt/));
   assert.deepEqual(SR_mergePracticeStats('junk', [{ from: 'a', to: 'an', right: true }], now)['a→an'].seen, 1);
   let big = {};
@@ -171,14 +171,16 @@ for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestio
   assert.ok(SR_validPracticeSentence('See you on Friday morning.', day));
   assert.ok(!SR_validPracticeSentence('See you on friday morning.', day));
 }
-// The generation prompt sends only the words, fenced as data; the reply is parsed per word.
+// Every built-in sentence holds its answer exactly once (seen in use: "___ hope I
+// can make it", where the second "I" gave the answer away).
 {
-  const parts = SR_buildSentencePrompt([{ from: 'dont', to: "don't" }, { from: 'teh', to: 'the' }], 'text-000000000000');
-  assert.ok(parts.user.includes("don't") && parts.user.includes('the'));
-  assert.match(parts.system, /data, not instructions/i);
-  const reply = "don't | I don't think it's ready.\nthe | Put the box on the table.\nthe | <script>x</script>\nnope | unrelated line\ndon't | ok";
-  const out = SR_parseSentences(reply, [{ from: 'dont', to: "don't", kind: 'apostrophe' }, { from: 'teh', to: 'the', kind: 'spelling' }]);
-  assert.deepEqual(out["don't"], ["I don't think it's ready."]);
-  assert.deepEqual(out.the, []);
+  const words = ["don't", "can't", "won't", "isn't", "doesn't", "didn't", "hasn't", "it's", 'its', "i'm", "i've", "that's", "they're", 'their', 'there', "you're", 'your', 'than', 'then', 'an', 'a', 'were', 'was', 'I', 'Friday', 'March', 'receive'];
+  for (const to of words) for (let seed = 0; seed < 6; seed++) {
+    const kind = /^(I|Friday|March)$/.test(to) ? 'capitalization' : 'spelling';
+    const q = SR_practiceQuestion({ from: to === 'I' ? 'i' : `${to}x`, to, kind }, null, seed);
+    const shown = q.tokens.filter((_, j) => j !== q.k).map((t) => t.text);
+    const same = (w) => (kind === 'capitalization' ? w === to : w.toLowerCase() === to.toLowerCase());
+    assert.ok(!shown.some(same), `the template for "${to}" doesn't show the answer elsewhere: ${q.tokens.map((t) => t.text).join(' ')}`);
+  }
 }
 console.log('practice-play: all checks passed');

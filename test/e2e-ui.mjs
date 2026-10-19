@@ -49,6 +49,9 @@ const FIXES = { [SENT]: FIXED, [CLEAN]: CLEAN, [REWRITE]: 'Kindly forward every 
 const TIPS = '1. You wrote "recieve" for receive: i before e, except after c.\n2. With we, use were, not "was".\n3. You also wrote "definately" for definitely.';
 // Mock provider: records request bodies, answers /models and /chat/completions.
 const mockRequests = [];
+// Practice batches answer after GEN_MS, so a question shown while one is pending proves nothing waited on it.
+let genPending = 0;
+const GEN_MS = 1500;
 const mock = http.createServer((req, res) => {
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type' };
   if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
@@ -68,15 +71,22 @@ const mock = http.createServer((req, res) => {
     const input = (String(parsed.messages?.at(-1)?.content || '').match(/<(text-[0-9a-f]{12})>\n([\s\S]*?)\n<\/\1>/) || [, , ''])[2].trim();
     // A real-looking Proofread for the Progress checks; LEAK makes the model
     // obey an injection and repeat its instructions.
-    const words = /example sentences for a spelling/.test(prompt) ? input.split('\n').map((w) => w.trim()).filter(Boolean) : null;
-    const content = words ? words.flatMap((w) => [`${w} | We checked that ${w} fits here today.`, `${w} | Please make sure ${w} looks right in the email.`]).join('\n')
+    // Practice: one full sentence per "word | topic" line as JSON (plus the first
+    // again, as small models do), and Proofread of the numbered batch returns it unchanged.
+    const gen = /For each line of the list/.test(prompt);
+    const lines = gen ? input.split('\n').map((l) => l.split(' | ')).filter(([w]) => w && w.trim()) : null;
+    const content = lines ? JSON.stringify({ questions: [...lines, lines[0]].map(([word, topic], i) => ({ word, topic,
+      sentence: i % 2 ? `Please make sure ${word} looks right in the email.` : `We checked that ${word} fits here today.` })) })
+      : /^1\. /.test(input) ? input
       : /Write exactly 3 tips/.test(prompt) ? TIPS
       : FIXES[input] || (/LEAK/.test(input) ? parsed.messages[0].content : `R(${input})`);
+    if (gen) genPending++;
     const reply = () => {
+      if (gen) genPending--;
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }] }));
     };
-    if (/SLOW/.test(input)) setTimeout(reply, 2500); else reply();
+    if (/SLOW/.test(input)) setTimeout(reply, 2500); else if (gen) setTimeout(reply, GEN_MS); else reply();
   });
 });
 await new Promise(r => mock.listen(8766, r));
@@ -527,21 +537,25 @@ check('no pattern is claimed from too little evidence', await panel.evaluate(() 
 check('progress says what the rate is based on', /Based on 2 proofreads, 24 words/.test(prog.basis), prog.basis);
 await shot(panel, '9-progress.png');
 
-// Practice: one question per mistake, one tap to answer, feedback in a sheet.
+// Practice: one question per mistake, one answer each, feedback inline.
+const isGen = (r) => /For each line of the list/.test(JSON.stringify(r));
+const isCheck = (r) => /<text-[0-9a-f]{12}>\\n1\. /.test(JSON.stringify(r));
+mockRequests.length = 0;
 await clk(panel, '#btnPractice'); await sleep(300);
-const q = () => panel.evaluate(() => { const { tokens, k } = practice.questions[practice.q]; return { to: tokens[k].target.to, opts: [...document.querySelectorAll('.pr-choice')].map((b) => b.dataset.word) }; });
+const cur = () => panel.evaluate(() => ({ to: practice.cur.target.to, level: practice.cur.level, again: !!practice.queue[practice.q].again, sentence: document.getElementById('prSentence').textContent, opts: [...document.querySelectorAll('#prChoices .pr-choice')].map((b) => b.dataset.word) }));
 const p1 = await panel.evaluate(() => ({
   open: !document.getElementById('practicePanel').classList.contains('hidden'),
   tabsHidden: document.getElementById('tabBar').hidden,
   blank: !!document.getElementById('prBlank') && document.getElementById('prBlank').textContent === '',
   choicesShown: document.getElementById('prChoices').getClientRects().length > 0,
   total: practice.total,
-  // No question shows an answer early: the sentence text never contains a later blank's fix where it should be blank.
-  later: document.querySelectorAll('#prSentence .pr-blank.later').length,
+  source: practice.cur?.source || 'none shown',
 }));
 check('practice opens with the mistake as a blank and the choices showing', p1.open && p1.tabsHidden && p1.blank && p1.choicesShown && p1.total > 0, JSON.stringify(p1));
-const q1 = await q();
-check('practice: 2-3 choices including the fix', q1.opts.length >= 2 && q1.opts.length <= 3 && q1.opts.includes(q1.to), JSON.stringify(q1));
+check('R4: the first question shows at once (a template) while the AI batch is still pending', p1.source === 'template' && genPending > 0 && mockRequests.filter(isGen).length === 1, JSON.stringify({ ...p1, genPending }));
+for (let i = 0; i < 50 && !(await panel.evaluate(() => !!practice.cur)); i++) await sleep(100);
+const q1 = await cur();
+check('practice: new words start at level 1, the fix and the user\'s own mistake', q1.level === 1 && q1.opts.length === 2 && q1.opts.includes(q1.to), JSON.stringify(q1));
 const p3 = await panel.evaluate(async (to) => {
   document.querySelector(`.pr-choice[data-word="${CSS.escape(to)}"]`).click();
   await new Promise((r) => setTimeout(r, 50));
@@ -549,59 +563,71 @@ const p3 = await panel.evaluate(async (to) => {
 }, q1.to);
 check('practice: one tap fills the blank, says Correct, moves the bar, locks the choices', p3.blank === q1.to && p3.right && /open good/.test(p3.sheet) && p3.title === 'Correct' && Number(p3.bar) > 0 && p3.locked, JSON.stringify(p3));
 await shot(panel, '9-practice.png');
-let q2;
+const shown = [q1];
+let missedAt = -1;
 if (p1.total > 1) {
   await panel.evaluate(() => document.getElementById('prContinue').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
   await sleep(300);
-  q2 = await q();
+  const q2 = await cur();
+  shown.push(q2);
   const wrongIdx = q2.opts.findIndex((w) => w !== q2.to);
   const p4 = await panel.evaluate(async (n) => {
     document.getElementById('practicePanel').dispatchEvent(new KeyboardEvent('keydown', { key: String(n), bubbles: true }));
     await new Promise((r) => setTimeout(r, 50));
-    return { sheet: document.getElementById('prSheet').className, text: document.getElementById('prSheetText').textContent, answer: document.querySelector('.pr-choice.is-answer')?.dataset.word, wrong: !!document.querySelector('.pr-choice.picked-wrong') };
+    return { sheet: document.getElementById('prSheet').className, text: document.getElementById('prSheetText').textContent, answer: document.querySelector('.pr-choice.is-answer')?.dataset.word, wrong: !!document.querySelector('.pr-choice.picked-wrong'), queue: practice.queue.length };
   }, wrongIdx + 1);
   check('practice: a wrong pick (key 1-3) shows the right word and marks both buttons', /open bad/.test(p4.sheet) && p4.text.includes(`"${q2.to}"`) && p4.answer === q2.to && p4.wrong, JSON.stringify(p4));
+  check('R5: a miss adds the word back to the round', p4.queue === p1.total + 1, JSON.stringify(p4));
+  missedAt = 1;
 }
-const p5 = await panel.evaluate(async () => {
-  const leaks = [], answers = [practice.questions[0].tokens[practice.questions[0].k].target.to], positions = [];
-  for (let guard = 0; guard < 40 && document.getElementById('prDone').hidden; guard++) {
-    if (practice.sheetOpen) { document.getElementById('prContinue').click(); await new Promise((r) => setTimeout(r, 280)); continue; }
-    const { tokens, k } = practice.questions[practice.q];
-    answers.push(tokens[k].target.to);
-    positions.push([...document.querySelectorAll('.pr-choice')].findIndex((b) => b.dataset.word === tokens[k].target.to));
-    // Nothing still to be asked in this sentence may already show its fix.
-    const shown = document.getElementById('prSentence').textContent;
-    for (const t of tokens.slice(k).filter((x) => x.target)) {
-      if (new RegExp(`(^|[^\\p{L}'])${t.target.to.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}'])`, 'u').test(shown)) leaks.push(`${t.target.to} in: ${shown}`);
-    }
-    document.querySelector(`.pr-choice[data-word="${CSS.escape(tokens[k].target.to)}"]`).click();
-    await new Promise((r) => setTimeout(r, 30));
-  }
-  await new Promise((r) => setTimeout(r, 1000));
-  return { leaks, answers: [...new Set(answers)].length === answers.length ? answers : answers, positions, done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') };
-});
-check('practice: no question shows a later answer early', p5.leaks.length === 0, JSON.stringify(p5.leaks));
-check('practice: every question in a round has a different answer', new Set(p5.answers).size === p5.answers.length, JSON.stringify(p5.answers));
-// Where the right answer sat, read from the screen for every question of the round.
-const shownAt = [q1.opts.indexOf(q1.to), ...(typeof q2 !== 'undefined' ? [q2.opts.indexOf(q2.to)] : []), ...p5.positions];
-check('practice: the right answer never sits in the same place twice in a row', shownAt.every((p, i) => i === 0 || p !== shownAt[i - 1]), JSON.stringify(shownAt));
-check('practice: the round ends with the first-try score and every word', p5.done && p5.score === `${p5.first}/${p5.total}` && p5.words === p5.total && p5.bar === '100', JSON.stringify(p5));
-// It adapts: results are kept per word pair, and the word missed comes first next round.
+// Answer the rest right, reading each question off the screen first.
+for (let guard = 0; guard < 40; guard++) {
+  const st = await panel.evaluate(() => ({ done: !document.getElementById('prDone').hidden, sheet: practice.sheetOpen }));
+  if (st.done) break;
+  if (st.sheet) { await clk(panel, '#prContinue'); await sleep(280); continue; }
+  const x = await cur();
+  shown.push(x);
+  await panel.evaluate((to) => document.querySelector(`.pr-choice[data-word="${CSS.escape(to)}"]`).click(), x.to);
+  await sleep(30);
+}
+// The score counts up over 800ms; wait for it to land.
+for (let i = 0; i < 30 && await panel.evaluate(() => document.getElementById('prScore').textContent !== `${practice.firstTry}/${practice.total}`); i++) await sleep(100);
+const p5 = await panel.evaluate(() => ({ done: !document.getElementById('prDone').hidden, score: document.getElementById('prScore').textContent, first: practice.firstTry, total: practice.total, words: document.querySelectorAll('#prWords .pr-word').length, bar: document.getElementById('prBar').getAttribute('aria-valuenow') }));
+const fresh = shown.filter((x) => !x.again);
+check('practice: every word comes up once, plus the ones missed', new Set(fresh.map((x) => x.to)).size === fresh.length && fresh.length === p1.total, JSON.stringify(shown.map((x) => x.to)));
+if (missedAt >= 0) {
+  const back = shown.findIndex((x) => x.again);
+  const gap = back - missedAt;
+  check('R5: the missed word comes back 3-5 questions later (or last, in a short round), with a different sentence',
+    back > missedAt && shown[back].to === shown[missedAt].to && (gap >= 3 && gap <= 5 || back === shown.length - 1) && shown[back].sentence !== shown[missedAt].sentence,
+    JSON.stringify({ missedAt, back, missed: shown[missedAt], again: shown[back] }));
+}
+check('practice: the round ends with the first-try score over the words', p5.done && p5.score === `${p5.first}/${p5.total}` && p5.words === p5.total && p5.bar === '100', JSON.stringify(p5));
+// It adapts: results are kept per word pair, with a level, and the word missed comes first next round.
 const st = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticeStats'])).srPracticeStats || {});
 const missed = Object.entries(st).filter(([, v]) => v.wrongLast).map(([k]) => k.split('→')[1]);
-check('practice remembers each word pair (no sentences)', Object.keys(st).length > 0 && Object.entries(st).every(([k, v]) => /^[^ ]+→[^ ]+$/.test(k) && Object.keys(v).sort().join() === 'last,right,seen,wrongLast'), JSON.stringify(st).slice(0, 200));
-// Fresh sentences from the user's AI arrive for next time (mock provider), each one checked.
-await sleep(1500);
+check('practice remembers each word pair and its level (no sentences)', Object.keys(st).length > 0 && Object.entries(st).every(([k, v]) => /^[^ ]+→[^ ]+$/.test(k) && Object.keys(v).sort().join() === 'last,level,right,seen,streak,wrongLast' && v.level >= 1 && v.level <= 4), JSON.stringify(st).slice(0, 200));
+check('R5: a word missed then got right on the retry still comes early next time', missedAt < 0 || missed.includes(shown[missedAt].to), JSON.stringify({ missed }));
+// The AI batch: words only, one generate and one Proofread call, kept for next time.
 const pool = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticePool'])).srPracticePool || {});
-const poolSentences = Object.values(pool).flat();
-check('practice gets fresh sentences from the AI for next time', poolSentences.length > 0 && poolSentences.every((x) => /^(We checked|Please make sure)/.test(x)), JSON.stringify(pool).slice(0, 200));
+const poolItems = Object.values(pool.words || {}).flat();
+check('R4: AI questions wait in the v2 pool, each one checked', pool.v === 2 && poolItems.length > 0 && poolItems.every((x) => /^(We checked that|Please make sure) ___ /.test(x.s) && x.c === true), JSON.stringify(pool).slice(0, 240));
+const kinds = mockRequests.map((r) => (isGen(r) ? 'gen' : isCheck(r) ? 'check' : 'other'));
+check('R3/R8: each batch is exactly 2 provider calls, generate then one Proofread', kinds.length >= 2 && kinds.length % 2 === 0 && kinds.every((k, i) => k === (i % 2 ? 'check' : 'gen')), JSON.stringify(kinds));
+// (Not "said": the built-in example sentences may use common words.)
+const genBodies = mockRequests.filter(isGen).map((r) => JSON.stringify(r));
+check('R8: the batch request holds the words and topics and none of the user\'s sentences', genBodies.length > 0 && genBodies.every((b) => /receive \| /.test(b) && !/hoping|Jane|3pm/.test(b)), genBodies[0]?.slice(0, 300));
+const seenStore = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticeSeen'])).srPracticeSeen || []);
 await clk(panel, '#btnPracticeAgain'); await sleep(400);
-const r2 = await panel.evaluate(() => ({ first: practice.questions[0].target.to, sources: practice.questions.map((x) => x.source), sentences: practice.questions.map((x) => x.tokens.map((t) => t.text).join(' ')) }));
+const r2 = await panel.evaluate(() => ({ first: practice.cur?.target.to, source: practice.cur?.source || 'none shown', text: document.getElementById('prSentence').textContent }));
+for (let i = 0; i < 50 && !(await panel.evaluate(() => !!practice.cur)); i++) await sleep(100);
 check('practice: the word missed last round comes first', !missed.length || missed.includes(r2.first), JSON.stringify({ missed, first: r2.first }));
-check('practice: the next round uses the AI sentences', r2.sources.includes('ai'), JSON.stringify(r2.sources));
+check('R4: the next round starts at once on a waiting AI question', r2.source === 'ai', JSON.stringify({ r2, pool, shown: shown.map((x) => x.sentence) }));
+const seen2 = await panel.evaluate(() => [...practice.seen]);
+check('R5: served AI questions are remembered as fingerprints only', seen2.length > seenStore.length && seen2.every((x) => /^[0-9a-f]{8}$/.test(x)), JSON.stringify(seen2));
 const layout = await panel.evaluate(async () => {
-  const { tokens, k } = practice.questions[practice.q];
-  document.querySelector(`.pr-choice[data-word="${CSS.escape(tokens[k].target.to)}"]`).click();
+  const { target } = practice.cur;
+  document.querySelector(`.pr-choice[data-word="${CSS.escape(target.to)}"]`).click();
   await new Promise((r) => setTimeout(r, 300));
   const c = document.getElementById('prChoices').getBoundingClientRect(), f = document.getElementById('prSheet').getBoundingClientRect();
   return { gap: Math.round(f.top - c.bottom), continueVisible: document.getElementById('prContinue').getBoundingClientRect().bottom <= innerHeight };
@@ -610,10 +636,117 @@ check('practice: feedback sits right under the choices', layout.gap >= 0 && layo
 await clk(panel, '#btnPracticeBack'); await sleep(300);
 check('practice back returns to Progress', await panel.evaluate(() => !document.getElementById('progressPanel').classList.contains('hidden') && document.getElementById('practicePanel').classList.contains('hidden') && !document.getElementById('tabBar').hidden));
 
+// R6/R9: higher levels. One word at each of 2, 3, 4 (served as is: under 5 answers, no R7 nudge).
+const levelOf = await panel.evaluate(async () => {
+  const plan = SR_practicePlan(progressView, (await chrome.storage.local.get(['srPracticeStats'])).srPracticeStats, 8, Date.now());
+  const { srPracticeStats: s = {} } = await chrome.storage.local.get(['srPracticeStats']);
+  const out = {};
+  plan.forEach((t, i) => { const k = `${t.from}→${t.to}`; s[k] = { ...(s[k] || { seen: 1, right: 1, last: 0, wrongLast: false, streak: 0 }), level: 2 + (i % 3) }; out[t.to] = 2 + (i % 3); });
+  await chrome.storage.local.set({ srPracticeStats: s });
+  return out;
+});
+await clk(panel, '#btnPractice'); await sleep(300);
+const lv = {};
+for (let guard = 0; guard < 30; guard++) {
+  const s = await panel.evaluate(() => ({ done: !document.getElementById('prDone').hidden, sheet: practice.sheetOpen, level: practice.cur.level, to: practice.cur.target.to, from: practice.cur.target.from, again: !!practice.queue[practice.q].again }));
+  if (s.done) break;
+  if (s.sheet) { await clk(panel, '#prContinue'); await sleep(280); continue; }
+  if (s.again || lv[s.level]) { // answer anything already covered, right
+    if (s.level <= 2) await panel.evaluate((to) => document.querySelector(`.pr-choice[data-word="${CSS.escape(to)}"]`).click(), s.to);
+    else if (s.level === 3) await panel.evaluate(() => document.querySelector(`.pr-chip[data-j="${practice.cur.k}"]`)?.click());
+    else await panel.evaluate((to) => { document.getElementById('prInput').value = to; document.getElementById('prType').requestSubmit(); }, s.to);
+    await sleep(30); continue;
+  }
+  if (s.level === 2) {
+    lv[2] = await panel.evaluate(() => ({ ask: document.getElementById('prAsk').textContent, opts: [...document.querySelectorAll('#prChoices .pr-choice')].map((b) => b.dataset.word), choices: SR_practiceChoices(practice.cur.target, 0).length }));
+    await panel.evaluate((to) => document.querySelector(`.pr-choice[data-word="${CSS.escape(to)}"]`).click(), s.to);
+  } else if (s.level === 3) {
+    lv[3] = await panel.evaluate(async () => {
+      const chips = [...document.querySelectorAll('#prSentence .pr-chip')];
+      const k = practice.cur.k, { from, to } = practice.cur.target;
+      const shownWrong = chips.find((c) => Number(c.dataset.j) === k)?.textContent;
+      const wrongChip = chips.find((c) => Number(c.dataset.j) !== k);
+      if (!wrongChip) return { chips: chips.length, error: 'no chips to tap' };
+      const before = { ask: document.getElementById('prAsk').textContent, chips: chips.length, choicesHidden: document.getElementById('prChoices').hidden, shownWrong, from, blank: !!document.getElementById('prBlank') };
+      wrongChip.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const fix = document.querySelector(`.pr-chip[data-j="${k}"]`);
+      const c = document.getElementById('prSentence').getBoundingClientRect(), f = document.getElementById('prSheet').getBoundingClientRect();
+      return { ...before, nope: wrongChip.classList.contains('nope'), fixText: fix.textContent, to, fixClass: fix.className, sheet: document.getElementById('prSheet').className, locked: chips.every((x) => x.disabled), gap: Math.round(f.top - c.bottom) };
+    });
+  } else if (s.level === 4) {
+    const attrs = await panel.evaluate(() => { const i = document.getElementById('prInput'); return { ask: document.getElementById('prAsk').textContent, focused: document.activeElement === i, spell: i.getAttribute('spellcheck'), auto: i.getAttribute('autocomplete'), choicesHidden: document.getElementById('prChoices').hidden, blank: !!document.getElementById('prBlank'), kind: practice.cur.target.kind }; });
+    // Typed with Enter, in the other case and a curly apostrophe (not for capitalization pairs, where case counts).
+    const typed = attrs.kind === 'capitalization' ? s.to : `  ${s.to.toUpperCase().replace(/'/g, '’')} `;
+    await panel.focus('#prInput');
+    await panel.keyboard.type(typed);
+    await panel.keyboard.press('Enter');
+    await sleep(80);
+    lv[4] = { ...attrs, typed, ...(await panel.evaluate(() => ({ sheet: document.getElementById('prSheet').className, blank: document.getElementById('prBlank').textContent, disabled: document.getElementById('prInput').disabled, gap: Math.round(document.getElementById('prSheet').getBoundingClientRect().top - document.getElementById('prType').getBoundingClientRect().bottom) }))) };
+  } else {
+    await panel.evaluate((to) => document.querySelector(`.pr-choice[data-word="${CSS.escape(to)}"]`).click(), s.to);
+  }
+  await sleep(30);
+}
+const levels = Object.values(levelOf);
+if (levels.includes(2)) check('R6/R9 level 2: pick from up to 3', lv[2] && lv[2].opts.length === lv[2].choices && /Which word/.test(lv[2].ask), JSON.stringify(lv[2]));
+if (levels.includes(3)) {
+  check('R9 level 3: every word a chip, the user\'s mistake in place, no choices', lv[3] && /Tap the mistake/.test(lv[3].ask) && lv[3].chips >= 4 && lv[3].shownWrong === lv[3].from && lv[3].choicesHidden && !lv[3].blank, JSON.stringify(lv[3]));
+  check('R9 level 3: a wrong tap shakes, the fix shows inline, feedback right under it', lv[3] && lv[3].nope && lv[3].fixText === lv[3].to && /missed/.test(lv[3].fixClass) && /open bad/.test(lv[3].sheet) && lv[3].locked && lv[3].gap >= 0 && lv[3].gap <= 32, JSON.stringify(lv[3]));
+}
+if (levels.includes(4)) {
+  check('R9 level 4: a text box (spellcheck and autocomplete off), focused, no choices', lv[4] && /Type/.test(lv[4].ask) && lv[4].focused && lv[4].spell === 'false' && lv[4].auto === 'off' && lv[4].choicesHidden && lv[4].blank, JSON.stringify(lv[4]));
+  check('R6/R9 level 4: Enter checks; case and curly apostrophes don\'t matter; feedback right under it', lv[4] && /open good/.test(lv[4].sheet) && lv[4].disabled && lv[4].gap >= 0 && lv[4].gap <= 32, JSON.stringify(lv[4]));
+}
+check('R6: levels 2-4 were all served', [2, 3, 4].every((l) => !levels.includes(l) || lv[l]), JSON.stringify({ levelOf, got: Object.keys(lv) }));
+await clk(panel, '#btnPracticeBack'); await sleep(300);
+
+// R8: the daily provider budget and the learning switch both stop generation.
+const genBefore = () => mockRequests.filter(isGen).length;
+const tryGen = async (prep) => {
+  await panel.evaluate(prep);
+  await panel.evaluate(() => chrome.storage.local.remove(['srPracticePool']));
+  const n = genBefore();
+  await clk(panel, '#btnPractice'); await sleep(GEN_MS + 800);
+  await clk(panel, '#btnPracticeBack'); await sleep(200);
+  return genBefore() - n;
+};
+check('R8: generation runs when under budget (control)', await tryGen(() => chrome.storage.local.set({ srPracticeGenDay: { date: SR_dayKey(Date.now()), count: 38 } })) === 1);
+check('R8: the daily cap stops calls', await tryGen(() => chrome.storage.local.set({ srPracticeGenDay: { date: SR_dayKey(Date.now()), count: 39 } })) === 0);
+check('R8: learning off: no generation', await tryGen(async () => { await chrome.storage.local.remove(['srPracticeGenDay']); await chrome.storage.sync.set({ srInsightsOn: false }); }) === 0);
+await panel.evaluate(() => chrome.storage.sync.set({ srInsightsOn: true }));
+
+// No giveaways: a waiting AI sentence that shows a later word's fix isn't served
+// before that word; a template is used and the sentence waits for another round.
+const give = await panel.evaluate(async () => {
+  const { srPracticeStats: st0 = {} } = await chrome.storage.local.get(['srPracticeStats']);
+  const words = SR_practicePlan(progressView, {}, 8, Date.now());
+  const day = words.find((t) => t.to === 'Friday'), a = words.find((t) => t.kind !== 'capitalization');
+  if (!day || !a) return { skipped: JSON.stringify(words) };
+  // a first (missed last time), Friday next (never practiced), the rest after (seen, right).
+  const st = {};
+  for (const t of words) st[`${t.from}→${t.to}`] = { seen: 1, right: 1, last: Date.now(), wrongLast: false, level: 1, streak: 0 };
+  st[`${a.from}→${a.to}`] = { ...st[`${a.from}→${a.to}`], wrongLast: true };
+  delete st[`${day.from}→${day.to}`];
+  const leak = 'We checked that ___ fits here on Friday.';
+  await chrome.storage.local.set({ srPracticeStats: st, srPracticeSeen: [], srPracticePool: { v: 2, words: { [a.to]: [{ s: leak, c: true }] } } });
+  await chrome.storage.sync.set({ srInsightsOn: false }); // no refill: only the pool above
+  document.getElementById('btnPractice').click();
+  await new Promise((r) => setTimeout(r, 400));
+  const out = { first: practice.cur.target.to, a: a.to, later: practice.queue.slice(1).map((x) => x.target.to), source: practice.cur.source, text: document.getElementById('prSentence').textContent, pool: practice.pool.words[a.to] };
+  document.getElementById('btnPracticeBack').click();
+  await chrome.storage.sync.set({ srInsightsOn: true });
+  await chrome.storage.local.set({ srPracticeStats: st0 });
+  return out;
+});
+check('no giveaway: a sentence showing a later word\'s fix is held back (template used, sentence kept)',
+  !give.skipped && give.first === give.a && give.later.includes('Friday') && give.source === 'template' && !/Friday/.test(give.text) && give.pool?.length === 1,
+  JSON.stringify(give));
+
 // Tips send the word list, nothing else.
 mockRequests.length = 0;
 await clk(panel, '#btnTips'); await sleep(1500);
-const tipsBody = JSON.stringify(mockRequests.at(-1) || {});
+const tipsBody = JSON.stringify(mockRequests.findLast((r) => /Write exactly 3 tips/.test(JSON.stringify(r))) || {});
 check('tips send the word list only', /recieve/.test(tipsBody) && !/hoping|Jane|3pm/.test(tipsBody), tipsBody.slice(0, 200));
 const tipsShown = await panel.evaluate(() => (document.getElementById('insTips').hidden ? '' : document.getElementById('insTips').textContent));
 check('tips show only advice about the user\'s own words', /recieve/.test(tipsShown) && !/definately/.test(tipsShown), tipsShown);

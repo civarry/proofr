@@ -1416,36 +1416,35 @@ function showTips(tips) {
 }
 
 // === Practice ===
-// One question per word, one tap to answer. SR_practicePlan picks the words
-// the user needs most (missed last time first, words just got right last),
-// each answer at most once per round. Sentences are fresh ones the user's own
-// AI wrote for those words (checked by SR_validPracticeSentence, each used
-// once), else local templates. Results are kept per word pair in
-// srPracticeStats; Practice never counts toward mastery, which only real
-// writing earns.
+// One question per word, one answer each. SR_practicePlan picks the words the
+// user needs most (missed last time first, words just got right last). Each
+// word has a level (srPracticeStats): 1 pick from 2, 2 pick from 3, 3 tap the
+// mistake, 4 type it; SR_servedLevel nudges it so about 4 in 5 land. A miss
+// brings the word back 3-5 questions later with a different sentence.
+// Sentences come from a pool of questions the user's AI wrote (checked by
+// code, then by Proofread) and are never shown twice (srPracticeSeen holds
+// fingerprints, not text); with none waiting, a local template is used at
+// once. Practice never counts toward mastery, which only real writing earns.
 const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 const RING_C = 2 * Math.PI * 50;
 const PRACTICE_MAX = 8;
-const POOL_PER_WORD = 4;
-const practice = { questions: [], q: 0, seed: 0, total: 0, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false, lastPos: -1 };
+const PRACTICE_READY = 5; // AI questions kept waiting for the round's words
+const PRACTICE_REQUEUE_MAX = 4;
+const PRACTICE_ASK = { 1: 'Which word is right?', 2: 'Which word is right?', 3: 'Tap the mistake', 4: 'Type the missing word' };
+const practice = { plan: [], queue: [], q: 0, cur: null, seed: 0, total: 0, firstTry: 0, combo: 0, best: 0, first: new Map(), recent: [], slots: [], requeued: 0, answered: false, sheetOpen: false, stats: {}, pool: { v: 2, words: {} }, seen: new Set(), seenList: [], session: new Set() };
 
 async function startPractice() {
   const view = progressView;
   if (!view || typeof SR_practicePlan !== 'function') return;
-  const { srPracticeStats, srPracticePool } = await chrome.storage.local.get(['srPracticeStats', 'srPracticePool']);
+  const { srPracticeStats, srPracticePool, srPracticeSeen } = await chrome.storage.local.get(['srPracticeStats', 'srPracticePool', 'srPracticeSeen']);
   const plan = SR_practicePlan(view, srPracticeStats, PRACTICE_MAX, Date.now());
   if (!plan.length) return;
-  const seed = Math.floor(Math.random() * 1e6);
-  // Each AI sentence is used once, so a round is never a repeat of the last.
-  const pool = srPracticePool && typeof srPracticePool === 'object' ? srPracticePool : {};
-  const questions = plan.map((t, i) => {
-    const list = Array.isArray(pool[t.to]) ? pool[t.to] : [];
-    const q = SR_practiceQuestion(t, list.shift() || null, seed + i);
-    pool[t.to] = list;
-    return { ...q, target: t };
+  const seenList = SR_addSeen(srPracticeSeen, []);
+  Object.assign(practice, {
+    plan, queue: plan.map((target) => ({ target })), q: 0, cur: null, seed: Math.floor(Math.random() * 1e6), total: plan.length,
+    firstTry: 0, combo: 0, best: 0, first: new Map(), recent: [], slots: [], requeued: 0, answered: false, sheetOpen: false,
+    stats: SR_mergePracticeStats(srPracticeStats, []), pool: SR_practicePoolRead(srPracticePool), seen: new Set(seenList), seenList, session: new Set(),
   });
-  await chrome.storage.local.set({ srPracticePool: pool });
-  Object.assign(practice, { questions, q: 0, seed, total: questions.length, firstTry: 0, combo: 0, best: 0, words: [], answered: false, sheetOpen: false, lastPos: -1 });
   refs.progressPanel.classList.add('hidden');
   refs.practicePanel.classList.remove('hidden');
   syncChrome(); // Practice is its own screen: no tabs above it
@@ -1454,49 +1453,92 @@ async function startPractice() {
   refs.prCombo.hidden = true;
   closeSheet();
   setBar(0);
-  showQuestion();
-  refillPracticePool(plan); // fresh sentences for next time, in the background
+  showQuestion(); // never waits on the AI: a waiting question or a template
+  refillPracticePool();
 }
 
-// Asks the user's AI (on-device first, else their provider) for new example
-// sentences for the planned words that are running low. Only the words are
-// sent. Quietly does nothing without an AI, with learning off, or on error.
+function savePractice() {
+  return chrome.storage.local.set({ srPracticeStats: practice.stats, srPracticePool: practice.pool, srPracticeSeen: practice.seenList }).catch(() => {});
+}
+
+// Built when shown, so a batch that just arrived is used: a waiting AI question
+// not seen before, else a template whose sentence hasn't come up this round;
+// either way, none that shows a later word's fix.
+function buildQuestion(target) {
+  // Words still to come this round: no sentence may show their fix early.
+  const later = practice.queue.slice(practice.q + 1).map((x) => x.target);
+  const ai = SR_poolTake(practice.pool, target, practice.seen, later);
+  let q = ai && SR_practiceQuestion(target, ai.filled, practice.seed + practice.q);
+  let print = ai && SR_questionPrint(ai);
+  if (!q || q.source !== 'ai') ({ q, print } = SR_freshTemplate(target, practice.seed + practice.q, practice.session, later));
+  else {
+    practice.seen.add(print);
+    practice.seenList = SR_addSeen(practice.seenList, [print]);
+  }
+  practice.session.add(print);
+  const level = SR_servedLevel(practice.stats[`${target.from}→${target.to}`]?.level, practice.recent);
+  return { ...q, target, level, checked: ai ? ai.checked : null };
+}
+
+// Keeps at least PRACTICE_READY AI questions waiting for the round's words.
+// On-device: one sentence per word (4 a refill), each on a rotating topic, then
+// a Proofread of each. A provider: one batched call for 8, then one Proofread
+// over the batch (2 calls, within the daily budget). Only the words and topics
+// are sent; code makes the blanks and keeps only what Proofread leaves alone.
+// Quietly does nothing with learning off, without an AI, past the budget, or
+// on error: templates still work. practice.lastDrops keeps why sentences were
+// dropped (counts only), for measuring on a real model.
 let refilling = false;
-async function refillPracticePool(plan) {
-  if (refilling || typeof SR_buildSentencePrompt !== 'function') return;
+async function refillPracticePool() {
+  const ready = () => practice.plan.reduce((n, t) => n + (practice.pool.words[t.to]?.length || 0), 0);
+  if (refilling || ready() >= PRACTICE_READY) return;
   refilling = true;
   try {
-    const { srPracticePool, } = await chrome.storage.local.get(['srPracticePool']);
     const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
     if (srInsightsOn === false) return;
-    const pool = srPracticePool && typeof srPracticePool === 'object' ? srPracticePool : {};
-    const need = plan.filter((t) => !Array.isArray(pool[t.to]) || pool[t.to].length < 2);
-    if (!need.length) return;
-    const parts = SR_buildSentencePrompt(need);
-    let text = '';
-    if ((await SR_deviceAvailability()) === 'available') {
-      const LM = SR_deviceModel();
-      const session = await LM.create({ expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] });
-      try { text = await session.prompt(SR_joinPrompt(parts)); } finally { try { session.destroy(); } catch { /* ignore */ } }
-    } else {
-      const provider = await CloudProvider.getConfig();
-      if (!providerReady(provider)) return;
-      text = await SR_callCloud(provider, parts, 0.9, 500);
+    const onDevice = (await SR_deviceAvailability()) === 'available';
+    const provider = onDevice ? null : await CloudProvider.getConfig();
+    if (!onDevice && !providerReady(provider)) return;
+    if (!onDevice) {
+      const { srPracticeGenDay } = await chrome.storage.local.get(['srPracticeGenDay']);
+      const budget = SR_practiceBudget(srPracticeGenDay, SR_dayKey(Date.now()), 2);
+      if (!budget.ok) return;
+      await chrome.storage.local.set({ srPracticeGenDay: budget.next });
     }
-    const fresh = SR_parseSentences(text, need);
-    const now = (await chrome.storage.local.get(['srPracticePool'])).srPracticePool || {};
-    for (const [to, list] of Object.entries(fresh)) {
-      const have = Array.isArray(now[to]) ? now[to] : [];
-      now[to] = [...have, ...list.filter((x) => !have.includes(x))].slice(-POOL_PER_WORD);
-    }
-    await chrome.storage.local.set({ srPracticePool: now });
+    const words = [...practice.plan].sort((a, b) => (practice.pool.words[a.to]?.length || 0) - (practice.pool.words[b.to]?.length || 0));
+    const items = SR_practiceItems(words, onDevice ? 4 : 8, Math.floor(Math.random() * SR_PRACTICE_TOPICS.length));
+    const proofread = async (text) => (await SR_rewriteAuto(text, 'grammar', { provider, engine: onDevice ? 'device' : 'cloud' })).text;
+    const { questions, drops } = onDevice
+      ? await SR_makeQuestionsEach(items, { write: writeOnDevice, proofread, seen: practice.seen })
+      : await SR_makeQuestions(items, { generate: (parts) => SR_callCloud(provider, parts, 0.9, 80 * items.length), proofread, seen: practice.seen });
+    practice.lastDrops = drops;
+    SR_practicePoolAdd(practice.pool, questions, practice.seen);
+    await savePractice();
   } catch (_) { /* templates still work */ } finally {
     refilling = false;
   }
 }
 
+// On-device sentence writer: a base session holding the rules and examples
+// (made once), cloned per word so each request starts clean.
+let practiceBase = null;
+async function writeOnDevice(item) {
+  if (!practiceBase) {
+    const parts = SR_buildSentenceParts();
+    const initialPrompts = [{ role: 'system', content: parts.system }, ...parts.shots.flatMap(([u, a]) => [{ role: 'user', content: u }, { role: 'assistant', content: a }])];
+    const opts = { expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }], initialPrompts };
+    practiceBase = { parts, opts, promise: SR_deviceModel().create(opts) };
+    practiceBase.promise.catch(() => { practiceBase = null; });
+  }
+  const { parts, opts, promise } = practiceBase;
+  const base = await promise;
+  // Without clone(), a fresh session with the same rules: slower, never shares history.
+  const session = typeof base.clone === 'function' ? await base.clone() : await SR_deviceModel().create(opts);
+  try { return await SR_within(session.prompt(parts.user(SR_practiceWord(item), item.topic)), SR_DEVICE_TIMEOUT_MS); } finally { try { session.destroy(); } catch (_) { /* ignore */ } }
+}
+
 function setBar(done) {
-  const pct = practice.total ? Math.round((done / practice.total) * 100) : 0;
+  const pct = practice.queue.length ? Math.round((done / practice.queue.length) * 100) : 0;
   refs.prBarFill.style.width = `${pct}%`;
   refs.prBar.setAttribute('aria-valuenow', String(pct));
 }
@@ -1509,56 +1551,110 @@ function replay(el, cls) {
 }
 
 function showQuestion() {
-  const { tokens, k } = practice.questions[practice.q];
+  const cur = practice.cur = buildQuestion(practice.queue[practice.q].target);
+  const { tokens, k, target, level } = cur;
   practice.answered = false;
-  // The sentence with this mistake as the blank to fill: one thing to decide.
+  // Level 3 shows the user's own mistake in place, every word a chip to tap;
+  // the others show the blank to fill.
   refs.prSentence.innerHTML = tokens.map((t, j) => {
     if (t.punct) return `<span class="pr-punct">${escapeHtml(t.text)}</span>`;
     const lead = j ? ' ' : '';
+    if (level === 3) return `${lead}<button type="button" class="pr-chip" data-j="${j}">${escapeHtml(j === k ? target.from : t.text)}</button>`;
     if (j === k) return `${lead}<span class="pr-blank" id="prBlank" aria-label="blank"></span>`;
-    if (t.target) return lead + escapeHtml(t.target.to);
     return lead + escapeHtml(t.text);
   }).join('');
-  refs.prAsk.textContent = 'Which word is right?';
-  refs.prLeft.textContent = `${practice.q + 1} of ${practice.total}`;
-  // The right answer never sits where it sat last question, so it can't be guessed by place.
-  const raw = SR_practiceChoices(tokens[k].target, practice.seed + practice.q * 7);
-  const slots = [...raw.keys()].filter((i) => i !== practice.lastPos);
-  const want = slots[Math.floor(Math.random() * slots.length)];
-  practice.lastPos = want;
-  const opts = raw.filter((w) => w !== tokens[k].target.to);
-  opts.splice(want, 0, tokens[k].target.to);
-  refs.prChoices.innerHTML = opts.map((w, n) =>
-    `<button type="button" class="pr-choice" data-word="${escapeHtml(w)}"><span class="key" aria-hidden="true">${n + 1}</span>${escapeHtml(w)}</button>`).join('');
-  refs.prChoices.hidden = false;
+  refs.prAsk.textContent = PRACTICE_ASK[level];
+  refs.prLeft.textContent = `${practice.q + 1} of ${practice.queue.length}`;
+  refs.prChoices.hidden = level > 2;
+  refs.prType.hidden = level !== 4;
+  if (level <= 2) {
+    const raw = SR_practiceChoices(target, practice.seed + practice.q * 7);
+    const own = String(target.from).replace(/[<>&"]/g, '').trim();
+    // Level 1: just the fix and the user's own mistake.
+    const wrong = raw.filter((w) => w !== target.to && (level === 2 || w === own));
+    // The right answer's place can't be guessed from the last questions (SR_answerSlot).
+    const want = SR_answerSlot(wrong.length + 1, practice.slots);
+    practice.slots.push(want);
+    wrong.splice(want, 0, target.to);
+    refs.prChoices.innerHTML = wrong.map((w, n) =>
+      `<button type="button" class="pr-choice" data-word="${escapeHtml(w)}"><span class="key" aria-hidden="true">${n + 1}</span>${escapeHtml(w)}</button>`).join('');
+  }
   replay(refs.prStage, 'enter');
-  refs.prChoices.querySelector('.pr-choice')?.focus();
+  if (level === 4) {
+    refs.prInput.value = '';
+    refs.prInput.disabled = false;
+    refs.prCheck.disabled = false;
+    refs.prInput.focus();
+  } else (level === 3 ? refs.prSentence.querySelector('.pr-chip') : refs.prChoices.querySelector('.pr-choice'))?.focus();
 }
 
 function onChoice(word) {
-  if (practice.answered || practice.sheetOpen) return;
-  const { tokens, k } = practice.questions[practice.q];
-  const target = tokens[k].target;
-  const right = word === target.to;
-  practice.answered = true;
-  practice.words.push({ from: target.from, to: target.to, right });
-  if (right) { practice.firstTry++; practice.combo++; practice.best = Math.max(practice.best, practice.combo); } else practice.combo = 0;
-  // The blank fills with the right word; the buttons show what was picked.
-  const blank = document.getElementById('prBlank');
-  blank.textContent = target.to;
-  replay(blank, right ? 'right' : 'wrong');
+  if (practice.answered || practice.sheetOpen || !practice.cur || practice.cur.level > 2) return;
+  const { target } = practice.cur;
   for (const b of refs.prChoices.querySelectorAll('.pr-choice')) {
     b.disabled = true;
     if (b.dataset.word === target.to) b.classList.add('is-answer');
     else if (b.dataset.word === word) b.classList.add('picked-wrong');
   }
+  fillBlank(word === target.to);
+  answer(word === target.to);
+}
+
+// Level 3: one tap. The mistake shows its fix in place; a wrong tap shakes.
+function onChip(j) {
+  if (practice.answered || practice.sheetOpen || !practice.cur || practice.cur.level !== 3) return;
+  const { k, target } = practice.cur;
+  const right = j === k;
+  for (const b of refs.prSentence.querySelectorAll('.pr-chip')) b.disabled = true;
+  const fix = refs.prSentence.querySelector(`.pr-chip[data-j="${k}"]`);
+  fix.textContent = target.to;
+  replay(fix, right ? 'fixed' : 'missed');
+  if (!right) replay(refs.prSentence.querySelector(`.pr-chip[data-j="${j}"]`), 'nope');
+  answer(right);
+}
+
+// Level 4: the typed word, checked by SR_typedRight.
+function onTyped() {
+  if (practice.answered || practice.sheetOpen || !practice.cur || practice.cur.level !== 4) return;
+  if (!refs.prInput.value.trim()) { refs.prInput.focus(); return; }
+  const right = SR_typedRight(refs.prInput.value, practice.cur.target);
+  refs.prInput.disabled = true;
+  refs.prCheck.disabled = true;
+  fillBlank(right);
+  answer(right);
+}
+
+function fillBlank(right) {
+  const blank = document.getElementById('prBlank');
+  if (!blank) return;
+  blank.textContent = practice.cur.target.to;
+  replay(blank, right ? 'right' : 'wrong');
+}
+
+// Records one answer (stats saved at once, so leaving mid-round keeps it),
+// brings a missed word back later in the round, and shows the feedback.
+function answer(right) {
+  const { target, level } = practice.cur;
+  const again = !!practice.queue[practice.q].again;
+  practice.answered = true;
+  practice.stats = SR_mergePracticeStats(practice.stats, [{ from: target.from, to: target.to, right, served: level, again }], Date.now());
+  practice.recent.push(right);
+  const key = `${target.from}→${target.to}`;
+  if (!practice.first.has(key)) { practice.first.set(key, { to: target.to, right }); if (right) practice.firstTry++; }
+  if (right) { practice.combo++; practice.best = Math.max(practice.best, practice.combo); } else practice.combo = 0;
+  if (!right && practice.requeued < PRACTICE_REQUEUE_MAX) {
+    practice.queue.splice(SR_requeueAt(practice.q, practice.queue.length), 0, { target, again: true });
+    practice.requeued++;
+  }
+  savePractice();
+  refillPracticePool();
   setBar(practice.q + 1);
   if (practice.combo >= 2) {
     refs.prCombo.hidden = false;
     refs.prCombo.textContent = `${practice.combo} in a row`;
     replay(refs.prCombo, 'bump');
   } else refs.prCombo.hidden = true;
-  const rule = target.rule || '';
+  const rule = practice.cur.tokens[practice.cur.k].target.rule || '';
   openSheet(right,
     right ? 'Correct' : 'Not quite',
     right ? (rule || `"${target.to}" it is.`) : `The right word is "${target.to}". ${rule}`.trim());
@@ -1570,7 +1666,7 @@ function openSheet(good, title, text) {
   refs.prSheetIcon.innerHTML = good ? ICON_CHECK : ICON_X;
   refs.prSheetTitle.textContent = title;
   refs.prSheetText.textContent = text;
-  refs.prContinue.textContent = practice.q + 1 >= practice.total ? 'See results' : 'Continue';
+  refs.prContinue.textContent = practice.q + 1 >= practice.queue.length ? 'See results' : 'Continue';
   refs.prContinue.focus();
 }
 
@@ -1582,14 +1678,11 @@ function closeSheet() {
 function onContinue() {
   if (!practice.sheetOpen) return;
   closeSheet();
-  if (practice.q + 1 < practice.total) { practice.q++; showQuestion(); return; }
+  if (practice.q + 1 < practice.queue.length) { practice.q++; showQuestion(); return; }
   finishPractice();
 }
 
 function finishPractice() {
-  // Remember how each word went, so the next round starts with what was missed.
-  chrome.storage.local.get(['srPracticeStats']).then(({ srPracticeStats }) =>
-    chrome.storage.local.set({ srPracticeStats: SR_mergePracticeStats(srPracticeStats, practice.words, Date.now()) })).catch(() => {});
   refs.prStage.hidden = true;
   refs.prCombo.hidden = true;
   refs.prDone.hidden = false;
@@ -1606,13 +1699,17 @@ function finishPractice() {
     refs.prRing.style.strokeDashoffset = `${RING_C * (1 - (pct / 100) * e)}`;
     refs.prScore.textContent = `${Math.round(firstTry * e)}/${total}`;
   };
-  const tick = (t) => { const p = reduce ? 1 : Math.min(1, (t - start) / 800); paint(p); if (p < 1) requestAnimationFrame(tick); };
+  let settled = false;
+  const tick = (t) => { if (settled) return; const p = reduce ? 1 : Math.min(1, (t - start) / 800); paint(p); if (p < 1) requestAnimationFrame(tick); else settled = true; };
   paint(reduce ? 1 : 0);
   requestAnimationFrame(tick);
+  // Frames don't run while the panel isn't painting (hidden, screen locked):
+  // the real score must still land, animation or not.
+  setTimeout(() => { if (!settled) { settled = true; paint(1); } }, 900);
   refs.prDoneTitle.textContent = pct === 100 ? 'Perfect round' : pct >= 70 ? 'Nice work' : 'Good practice';
   refs.prDoneText.textContent = (best >= 2 ? `Best run: ${best} in a row. ` : '')
     + (pct === 100 ? 'Your progress shows in your real writing, on the Progress tab.' : 'The ones you missed come back in your next round.');
-  refs.prWords.innerHTML = practice.words.map((w) => `<span class="pr-word ${w.right ? 'ok' : 'again'}">${escapeHtml(w.to)}</span>`).join('');
+  refs.prWords.innerHTML = [...practice.first.values()].map((w) => `<span class="pr-word ${w.right ? 'ok' : 'again'}">${escapeHtml(w.to)}</span>`).join('');
   refs.btnPracticeAgain.focus();
 }
 
@@ -1709,7 +1806,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'progRate', 'progTrend', 'progSpark', 'progAxis', 'progBasis', 'progFocus', 'progFocusTitle', 'progFocusText', 'btnPractice',
     'progHabitsCard', 'progHabits', 'progKinds', 'progKindsNote', 'progLegend', 'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
     'btnTips', 'insTipsStatus', 'insTips', 'btnClearInsights', 'insightsToggle', 'coachToggle',
-    'practicePanel', 'btnPracticeBack', 'prBar', 'prBarFill', 'prCombo', 'prStage', 'prAsk', 'prLeft', 'prSentence', 'prChoices',
+    'practicePanel', 'btnPracticeBack', 'prBar', 'prBarFill', 'prCombo', 'prStage', 'prAsk', 'prLeft', 'prSentence', 'prChoices', 'prType', 'prInput', 'prCheck',
     'prDone', 'prRing', 'prRingSvg', 'prScore', 'prDoneTitle', 'prDoneText', 'prWords', 'btnPracticeAgain', 'btnPracticeDone',
     'prSheet', 'prSheetIcon', 'prSheetTitle', 'prSheetText', 'prContinue',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
@@ -2014,7 +2111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   refs.btnProgEmpty.addEventListener('click', () => toggleSettingsPanel(true));
   refs.btnTips.addEventListener('click', getTips);
   refs.btnClearInsights.addEventListener('click', async () => {
-    await chrome.storage.local.remove(['srInsights', 'srTipsCache', 'srPracticeStats', 'srPracticePool']);
+    await chrome.storage.local.remove(['srInsights', 'srTipsCache', 'srPracticeStats', 'srPracticePool', 'srPracticeSeen']);
     refs.insTips.hidden = true;
     renderProgress();
   });
@@ -2028,6 +2125,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   refs.btnPractice.addEventListener('click', startPractice);
   refs.prChoices.addEventListener('click', (e) => { const b = e.target.closest('.pr-choice'); if (b) onChoice(b.dataset.word); });
+  refs.prSentence.addEventListener('click', (e) => { const b = e.target.closest('.pr-chip'); if (b) onChip(Number(b.dataset.j)); });
+  refs.prType.addEventListener('submit', (e) => { e.preventDefault(); onTyped(); });
   refs.prContinue.addEventListener('click', onContinue);
   // Keyboard: 1-3 picks a choice, Enter continues, Escape closes.
   refs.practicePanel.addEventListener('keydown', (e) => {
