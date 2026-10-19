@@ -27,6 +27,8 @@
       --live-border:  #CBE5D3;
       --live-ink:     #276B41;
       --select-bg:    #E6EEFB;
+      --dot-fixed:    #B26F0C;
+      --dot-right:    #2E8B4E;
       --warn-bg:      #FBF3E4;
       --warn-ink:     #6B4A12;
       --error:        #B4443A;
@@ -66,6 +68,8 @@
         --live-border:  #2E4A37;
         --live-ink:     #8FD3A6;
         --select-bg:    #1C2A44;
+        --dot-fixed:    #E0A84A;
+        --dot-right:    #5CC47E;
         --warn-bg:      #3A2E18;
         --warn-ink:     #F0C987;
         --error:        #E58A80;
@@ -448,6 +452,22 @@
     .prog-icon svg { width: 11px; height: 11px; display: block; }
     .prog-icon.ok { background: var(--live-bg); color: var(--live-ink); }
     .prog-icon.miss { background: var(--warn-bg); color: var(--warn-ink); font-size: 11px; font-weight: 700; }
+    .mastered-line { display: flex; align-items: center; gap: 8px; padding: 0 12px 10px; font-size: 13px; color: var(--live-ink); }
+    .mastered-line b { font-weight: 650; }
+    .prog-bars { display: flex; flex-direction: column; gap: 7px; }
+    .prog-bar { display: grid; grid-template-columns: 96px 1fr 36px; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); }
+    .prog-bar i { display: block; height: 8px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
+    .prog-bar i b { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+    .prog-bar em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
+    .prog-habits:not(:empty) { margin-top: 12px; border-top: 1px solid var(--line-soft); padding-top: 4px; }
+    .prog-bars:empty + .prog-note + .prog-habits { margin-top: 0; border-top: none; padding-top: 0; }
+    .prog-dots { margin-left: auto; padding-left: 10px; display: flex; gap: 4px; align-items: center; flex: none; align-self: center; }
+    .prog-dots i, .prog-legend i { width: 9px; height: 9px; border-radius: 50%; display: block; box-sizing: border-box; }
+    .prog-dots i.fixed, .prog-legend i.fixed { border: 2px solid var(--dot-fixed); }
+    .prog-dots i.right, .prog-legend i.right { background: var(--dot-right); }
+    .prog-dots i.empty { background: var(--line-soft); }
+    .prog-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--ink-faint); }
+    .prog-legend span { display: flex; align-items: center; gap: 5px; }
     .prog-tips-out { margin-top: 10px; font-size: 13px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; }
     .prog-tips-card p { font-size: 12px; line-height: 1.5; color: var(--ink-soft); margin-bottom: 10px; }
     .prog-empty { font-size: 13px; line-height: 1.55; color: var(--ink-soft); }
@@ -910,8 +930,10 @@
             <div class="prog-note" id="progBasis"></div>
           </section>
           <section class="prog-card" id="progHabitsCard" hidden>
-            <div class="prog-label">Your patterns</div>
-            <div class="prog-list" id="progHabits"></div>
+            <div class="prog-label">How you write</div>
+            <div class="prog-bars" id="progKinds"></div>
+            <div class="prog-note" id="progKindsNote" hidden></div>
+            <div class="prog-list prog-habits" id="progHabits"></div>
           </section>
           <section class="prog-card prog-focus" id="progFocus" hidden>
             <div class="prog-label">This week's focus</div>
@@ -924,8 +946,9 @@
             <div class="prog-list" id="progMastered"></div>
           </section>
           <section class="prog-card" id="progWorkingCard" hidden>
-            <div class="prog-label">Still working on</div>
+            <div class="prog-label">Words you're working on</div>
             <div class="prog-list" id="progWorking"></div>
+            <div class="prog-legend" id="progLegend" hidden><span><i class="fixed"></i>Proofr fixed it</span><span><i class="right"></i>You got it right</span></div>
           </section>
           <section class="prog-card prog-tips-card">
             <div class="prog-label">Writing tips</div>

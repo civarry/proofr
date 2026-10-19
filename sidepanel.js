@@ -1028,7 +1028,12 @@ async function runTurn(turn, opts = {}) {
     delete turn.errorMessage;
     delete turn.statusText;
     await StatsManager.updateStats(turn.mode);
-    if (turn.mode === 'grammar') recordInsights(turn.inputText, rewritten);
+    if (turn.mode === 'grammar') {
+      // Text pasted here is taken as the user's own draft. A word it masters
+      // is named on the card.
+      const res = await recordInsights(turn.inputText, rewritten);
+      if (res && Array.isArray(res.mastered) && res.mastered.length) turn.mastered = res.mastered.slice(0, 3).map(String);
+    }
   } catch (error) {
     turn.status = 'error';
     turn.errorMessage = controller.signal.aborted ? 'Stopped.' : (error.message || 'Something went wrong.');
@@ -1110,6 +1115,7 @@ function renderAssistantCard(turn) {
   return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
     <div class="assistant-head" title="${turn.latencyMs != null ? `Took ${formatLatency(turn.latencyMs)}` : ''}"><span><span class="tag">${modeName}</span> · ${engineName}</span></div>
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
+    ${turn.mastered ? `<div class="mastered-line"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span>${turn.mastered.map((w) => `<b>${escapeHtml(w)}</b>`).join(' and ')}: ${turn.mastered.length === 1 ? '3 right in a row. Mastered.' : 'mastered.'}</span></div>` : ''}
     <div class="assistant-actions">
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
       <div class="retone"><span class="retone-label">Try as</span>${SR_MENU_TOP.filter((m) => m !== turn.mode && m !== 'translate').slice(0, 3)
@@ -1214,6 +1220,19 @@ function sparkSvg(weeks) {
   return `<line class="axis" x1="0" y1="63" x2="320" y2="63"/><polyline class="line" points="${line}"/><circle class="dot" cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="4"/>`;
 }
 
+const KIND_NAMES = { apostrophe: 'Apostrophes', spelling: 'Spelling', capitalization: 'Capitals', grammar: 'Grammar', punctuation: 'Punctuation', other: 'Other' };
+
+// The last 6 times a word came up, oldest first: a ring when Proofr fixed it,
+// a filled dot when the user got it right. Shape, not only color, tells them apart.
+function dotsHtml(h) {
+  const events = String(h || '').slice(-6).split('').filter((c) => c === 'm' || c === 'g');
+  if (!events.length) return '';
+  const fixed = events.filter((c) => c === 'm').length;
+  const right = events.length - fixed;
+  const cells = [...events.map((c) => `<i class="${c === 'g' ? 'right' : 'fixed'}"></i>`), ...Array(6 - events.length).fill('<i class="empty"></i>')];
+  return `<span class="prog-dots" role="img" aria-label="Last ${events.length} times: fixed ${fixed}, right ${right}">${cells.join('')}</span>`;
+}
+
 function pairHtml(p) {
   return `<span class="from">${escapeHtml(p.from)}</span> <span aria-hidden="true">→</span><span class="visually-hidden"> to </span> <span class="to">${escapeHtml(p.to)}</span>`;
 }
@@ -1287,7 +1306,22 @@ async function renderProgress() {
   // Your patterns: habits read from this person's own repeated fixes
   // (SR_habits), so two people's Progress tabs read differently.
   const habits = typeof SR_habits === 'function' ? SR_habits(view) : [];
-  refs.progHabitsCard.hidden = !habits.length;
+  // What you fix: the share of each kind over the last 4 weeks, and the
+  // biggest shift from the 4 before (only with enough fixes in both).
+  const now = view.kindsNow || null, then = view.kindsThen || null;
+  const kinds = now ? Object.entries(now).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 5) : [];
+  refs.progKinds.innerHTML = kinds.map(([k, v]) =>
+    `<div class="prog-bar"><span>${escapeHtml(KIND_NAMES[k] || k)}</span><i role="img" aria-label="${v}%"><b style="width:${Math.max(2, Math.min(100, v))}%"></b></i><em>${v}%</em></div>`).join('');
+  let shift = null;
+  if (now && then) {
+    for (const k of Object.keys(then)) {
+      const d = (then[k] || 0) - (now[k] || 0);
+      if (Math.abs(d) >= 10 && (!shift || Math.abs(d) > Math.abs(shift.d))) shift = { k, d };
+    }
+  }
+  refs.progKindsNote.hidden = !shift;
+  refs.progKindsNote.textContent = shift ? `Four weeks ago, ${(KIND_NAMES[shift.k] || shift.k).toLowerCase()} was ${then[shift.k]}% of your fixes.` : '';
+  refs.progHabitsCard.hidden = !habits.length && !kinds.length;
   refs.progHabits.innerHTML = habits.map((h) => {
     // Examples the label already names ('You write "i" for "I"') add nothing.
     const eg = h.examples.slice(0, 3).filter((w) => !h.label.includes(`"${w}"`));
@@ -1298,12 +1332,19 @@ async function renderProgress() {
   const mastered = wordPairs(view.mastered), working = wordPairs(view.working);
   refs.progMasteredCard.hidden = !mastered.length;
   refs.progMastered.innerHTML = mastered.slice(0, 5).map((p) =>
-    `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(p.to)}</span><span class="meta">clean for ${p.daysClean} days</span></div>`).join('');
+    `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(p.to)}</span><span class="meta">${p.streak || 3} right in a row</span></div>`).join('');
   refs.progWorkingCard.hidden = !working.length;
   refs.progWorking.innerHTML = working.slice(0, 5).map((p) => {
     const rule = typeof SR_ruleFor === 'function' ? SR_ruleFor(p) : null;
-    return `<div class="prog-row"><div>${pairHtml(p)}${rule ? `<div class="rule">${escapeHtml(rule)}</div>` : ''}</div><span class="meta">${p.n}×</span></div>`;
+    const streak = p.streak || 0;
+    // Mastery needs right uses on 3 different days and 2 weeks with no fix,
+    // so the line never promises it sooner than that.
+    const sub = streak >= 3 ? `${streak} right in a row. Mastered after 2 weeks with no fix.`
+      : streak === 2 ? '2 right in a row.'
+        : streak === 1 ? 'Right once since the last fix.' : rule;
+    return `<div class="prog-row"><div>${pairHtml(p)}${sub ? `<div class="rule">${escapeHtml(sub)}</div>` : ''}</div>${dotsHtml(p.h)}</div>`;
   }).join('');
+  refs.progLegend.hidden = !working.some((p) => p.h);
   return view;
 }
 
@@ -1511,7 +1552,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'progBody',
     'progRate', 'progTrend', 'progSpark', 'progAxis', 'progBasis', 'progFocus', 'progFocusTitle', 'progFocusText', 'btnPractice',
-    'progHabitsCard', 'progHabits', 'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
+    'progHabitsCard', 'progHabits', 'progKinds', 'progKindsNote', 'progLegend', 'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
     'btnTips', 'insTipsStatus', 'insTips', 'btnClearInsights', 'insightsToggle', 'coachToggle',
     'practicePanel', 'btnPracticeBack', 'practiceTitle', 'practiceCard', 'practicePrompt', 'practiceInput',
     'btnPracticeCheck', 'btnPracticeSkip', 'practiceResult', 'practiceScore', 'practiceList',

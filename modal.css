@@ -846,6 +846,11 @@
   cursor: pointer;
 }
 .sr-toast-stop:hover { background: var(--sr-gray-50); }
+/* A word mastered by this Proofread: its own line under the message, before the buttons. */
+.sr-success-content:has(.sr-success-mastered) { flex-wrap: wrap; row-gap: 8px; max-width: min(380px, calc(100vw - 16px)); }
+.sr-success-mastered { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; }
+.sr-success-mastered svg { flex-shrink: 0; }
+.sr-success-mastered b { font-weight: 600; }
 
 @media (prefers-reduced-motion: no-preference) {
   /* The added words arrive once, so the eye finds what changed (under 200ms). */

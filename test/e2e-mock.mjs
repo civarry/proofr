@@ -403,6 +403,51 @@ try {
     check(r.held && r.goneAfterLeave, `toast: held while hovered, goes after leave (held ${r.held}, gone ${r.goneAfterLeave})`);
   });
 
+  // 3e2. A word mastered by this Proofread: one escaped line in the same toast, readable in both themes.
+  await step('mastered line', async () => {
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+      const r = await inModal(async () => {
+        const M = window.SmartRewriteModal;
+        const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+        M.removeToast();
+        M.showSuccess('Fixed 1 thing.', { review: { original: 'teh', rewritten: 'the', tone: 'grammar' }, undo: () => true, mastered: ['receive'] });
+        const t = document.getElementById('sr-toast');
+        const line = t.querySelector('.sr-success-mastered');
+        const box = (el) => el.getBoundingClientRect();
+        const rgb = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+        const lum = (c) => { const v = rgb(c).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+        const fg = getComputedStyle(line).color, bg = getComputedStyle(t).backgroundColor;
+        const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+        const one = {
+          text: line.textContent, bold: line.querySelector('b').textContent, icon: !!line.querySelector('svg'),
+          below: box(line).top >= box(t.querySelector('.sr-success-text')).bottom - 1,
+          above: box(t.querySelector('.sr-success-undo')).top >= box(line).bottom - 1,
+          contrast: (hi + 0.05) / (lo + 0.05), hold: M.toastMs, wide: box(t).right <= innerWidth,
+        };
+        M.showSuccess('Fixed 2 things.', { mastered: ['receive', "don't", '<img src=x onerror=alert(1)>'] });
+        const t2 = document.getElementById('sr-toast');
+        const many = { text: t2.querySelector('.sr-success-mastered').textContent, bolds: t2.querySelectorAll('.sr-success-mastered b').length, img: !!t2.querySelector('img'), hold: M.toastMs };
+        M.showSuccess('Fixed 1 thing.', { undo: () => true, mastered: [] });
+        const none = !document.querySelector('#sr-toast .sr-success-mastered');
+        M.showSuccess('Fixed 1 thing.', { undo: () => true, mastered: ['receive'] });
+        document.querySelector('#sr-toast .sr-success-undo').click();
+        await wait(50);
+        const afterUndo = { text: document.querySelector('#sr-toast .sr-success-text').textContent, line: !!document.querySelector('#sr-toast .sr-success-mastered') };
+        M.removeToast();
+        return { one, many, none, afterUndo };
+      });
+      check(r.one.text === 'receive: 3 right in a row. Mastered.' && r.one.bold === 'receive' && r.one.icon, `mastered (${scheme}): one word line (got ${JSON.stringify(r.one.text)})`);
+      check(r.one.below && r.one.above, `mastered (${scheme}): its own line between the message and the buttons`);
+      check(r.one.contrast >= 4.5, `mastered (${scheme}): readable, contrast ${r.one.contrast.toFixed(1)}:1`);
+      check(r.one.hold === 8000 && r.many.hold === 8000, `mastered (${scheme}): stays 8s even with no buttons (got ${r.one.hold}, ${r.many.hold})`);
+      check(r.many.text === "receive, don't and <img src=x onerror=alert(1)>: mastered." && r.many.bolds === 3 && !r.many.img, `mastered (${scheme}): several words, escaped (got ${JSON.stringify(r.many)})`);
+      check(r.none, `mastered (${scheme}): an empty list adds no line`);
+      check(r.afterUndo.text === 'Undone.' && !r.afterUndo.line, `mastered (${scheme}): Undo clears the line (got ${JSON.stringify(r.afterUndo)})`);
+    }
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  });
+
   // 3f. Errors: light ones in the toast, retry/alternative as buttons (§3 #8).
   await step('error actions', async () => {
     const r = await inModal(async () => {

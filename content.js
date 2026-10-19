@@ -492,8 +492,9 @@
     // done. opts.undo: a function that undoes the replace (Ctrl/Cmd+Z fails in some rich
     // editors); truthy return → "Undone". opts.apply: { label, run } for a result that
     // wasn't inserted (the user moved to another box); truthy run() → "Applied."
-    // A Proofread with nothing changed gets no Review or Undo.
-    showSuccess(message, { review, undo, apply } = {}) {
+    // A Proofread with nothing changed gets no Review or Undo. opts.mastered: [word]
+    // that this Proofread made mastered, shown as one extra line.
+    showSuccess(message, { review, undo, apply, mastered } = {}) {
       this.busy = false;
       const unchanged = !!(review && review.tone === 'grammar' && typeof SR_wordDiff === 'function'
         && SR_diffCount(SR_wordDiff(review.original, review.rewritten)) === 0);
@@ -502,6 +503,7 @@
         <div class="sr-success-content">
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
+          ${this.masteredLine(mastered)}
           ${apply ? `<button type="button" class="sr-success-review sr-success-apply">${this.escapeHtml(apply.label)}</button>` : ''}
           ${review ? '<button type="button" class="sr-success-review">Review</button>' : ''}
           ${undo ? '<button type="button" class="sr-success-undo">Undo</button>' : ''}
@@ -511,7 +513,7 @@
       // Replaces the buttons with a one-line outcome, unless run() already showed a new toast.
       const settle = (text, ms) => {
         if (this.toastGen !== gen) return;
-        t.querySelectorAll('button').forEach((b) => b.remove());
+        t.querySelectorAll('button, .sr-success-mastered').forEach((b) => b.remove());
         t.querySelector('.sr-success-text').textContent = text;
         this.toastHeld = false;
         this.dismissToast(ms);
@@ -533,8 +535,16 @@
           settle(ok ? 'Undone.' : "Couldn't undo here. Try Ctrl/Cmd+Z.", ok ? 1500 : 4000);
         });
       }
-      // Buttons need time to read and reach.
-      this.dismissToast(/undo/i.test(message) || review || undo || apply ? 8000 : 3000);
+      // Buttons and the mastered line need time to read and reach.
+      this.dismissToast(/undo/i.test(message) || review || undo || apply || t.querySelector('.sr-success-mastered') ? 8000 : 3000);
+    }
+
+    // "<b>receive</b>: 3 right in a row. Mastered." or "<b>a</b> and <b>b</b>: mastered."
+    masteredLine(words) {
+      const w = (Array.isArray(words) ? words : []).filter((x) => typeof x === 'string' && x).map((x) => `<b>${this.escapeHtml(x)}</b>`);
+      if (!w.length) return '';
+      const text = w.length === 1 ? `${w[0]}: 3 right in a row. Mastered.` : `${w.slice(0, -1).join(', ')} and ${w[w.length - 1]}: mastered.`;
+      return `<span class="sr-success-mastered"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>${text}</span></span>`;
     }
 
     // The result dialog for a replace already done (toast Review, or the

@@ -131,13 +131,13 @@ const words = (t) => String(t).match(/[\p{L}\p{N}]+/gu) || [];
 function record(store, before, after, now) {
   const pairs = SR_extractCorrections(before, after);
   const ops = SR_wordDiff(before, after);
-  return SR_mergeInsights(store, pairs, now, words(before).length, ops ? SR_diffCount(ops) : pairs.length);
+  return SR_mergeInsights(store, pairs, now, words(before).length, ops ? SR_diffCount(ops) : pairs.length, before);
 }
 
 function simulate(name, profile, seed) {
   const r = rng(seed);
   let store;
-  const ledger = []; // { day, words, slots: ['wrong|right'] } per Proofread
+  const ledger = []; // { day, t, words, before, slots: ['wrong|right'] } per Proofread, kept by the test only
   const snapshots = []; // the view at the end of each week
   for (let day = 0; day < WEEKS * 7; day++) {
     const week = Math.floor(day / 7);
@@ -150,11 +150,14 @@ function simulate(name, profile, seed) {
       const before = chosen.map((s) => fill(s, () => r() < profile.chance(week), slots)).join(' ');
       const after = chosen.map((s) => fill(s, () => false, picked)).join(' ');
       store = record(store, before, after, now);
-      ledger.push({ day, words: words(before).length, slots });
+      ledger.push({ day, t: now, words: words(before).length, before, slots });
     }
     const noise = NOISE.find((x) => x.day === day);
-    if (noise) store = record(store, noise.before, noise.after, START + day * DAY + 5 * 3600000);
-    if (day % 7 === 6) snapshots.push({ week: Math.floor(day / 7), now: START + day * DAY + 20 * 3600000, view: SR_insightsView(store, START + day * DAY + 20 * 3600000) });
+    if (noise) {
+      store = record(store, noise.before, noise.after, START + day * DAY + 5 * 3600000);
+      ledger.push({ day, t: START + day * DAY + 5 * 3600000, words: words(noise.before).length, before: noise.before, slots: [] });
+    }
+    if (day % 7 === 6) snapshots.push({ store, week: Math.floor(day / 7), now: START + day * DAY + 20 * 3600000, view: SR_insightsView(store, START + day * DAY + 20 * 3600000) });
   }
   return { name, profile, store, ledger, snapshots };
 }
@@ -176,6 +179,7 @@ for (const run of runs) {
   const mid = snapshots[3].view, end = snapshots[WEEKS - 1].view;
   const slotWords = new Set([...genuine(run)].flatMap((s) => s.split('|').flatMap((w) => words(fold(w)))));
   const atAll = (fn) => snapshots.forEach((s) => fn(s.view, s));
+  run.masteredWeeks = snapshots.map((x) => x.view.mastered.map((m) => m.to));
 
   // (a) habits and focus fit the profile.
   const ids = SR_habits(mid).map((h) => h.id);
@@ -236,14 +240,16 @@ for (const run of runs) {
       for (const t of it.targets) assert.ok(view.working.some((p) => key(p) === key(t)) && isReal(t), `${tag}: ${key(t)} is the user's own`);
     }
 
-    // (f) mastered only after 14 days with no fix and 500 words written since.
+    // (f) mastered only after 2+ fixes, then the right form on 3 different days and 14 days with no fix.
     for (const m of view.mastered) {
-      const fixedOn = run.ledger.filter((e) => START + e.day * DAY <= snap.now && e.slots.some((s) => SR_extractCorrections(...s.split('|')).some((q) => key(q) === key(m))));
-      const lastDay = Math.max(...fixedOn.map((e) => e.day));
-      const since = run.ledger.filter((e) => e.day > lastDay && START + e.day * DAY <= snap.now).reduce((n, e) => n + e.words, 0);
-      assert.ok(fixedOn.length >= 2, `${tag}: ${key(m)} mastered after one fix`);
-      assert.ok(snap.now - (START + lastDay * DAY) >= 14 * DAY, `${tag}: ${key(m)} mastered ${m.daysClean} days after its last fix`);
-      assert.ok(since >= 500, `${tag}: ${key(m)} mastered with ${since} words since`);
+      const upTo = run.ledger.filter((e) => e.t <= snap.now);
+      const fixes = upTo.filter((e) => e.slots.some((x) => SR_extractCorrections(...x.split('|')).some((q) => key(q) === key(m))));
+      const lastFix = Math.max(...fixes.map((e) => e.t));
+      const keepCase = SR_classifyCorrection(m) === 'capitalization';
+      const rightDays = new Set(upTo.filter((e) => e.t > lastFix && SR_practiceHas(e.before, m.to, keepCase)).map((e) => e.day));
+      assert.ok(fixes.length >= 2, `${tag}: ${key(m)} mastered after one fix`);
+      assert.ok(rightDays.size >= 3, `${tag}: ${key(m)} mastered with right uses on ${rightDays.size} days`);
+      assert.ok(snap.now - lastFix >= 14 * DAY, `${tag}: ${key(m)} mastered ${((snap.now - lastFix) / DAY).toFixed(1)} days after a fix`);
     }
     checks++;
   });
@@ -255,8 +261,10 @@ for (const run of runs) {
   if (improving) assert.ok(last < first * 0.5, `${name}: per100 ${first.toFixed(1)} → ${last.toFixed(1)} should fall`);
   else if (profile.chance(0) >= 0.1) assert.ok(last > first * 0.7, `${name}: per100 ${first.toFixed(1)} → ${last.toFixed(1)} should stay flat`);
   else assert.ok(first < 1 && last < 1, `${name}: a careful writer stays under 1 per 100 words`);
+  // Mastery is earned by the improving writer and never by one still making the mistake.
+  if (improving) assert.ok(end.mastered.length >= 3, `${name}: improving writer masters words: ${end.mastered.map((m) => m.to)}`);
+  if (profile.chance(0) >= 0.1 && !improving) assert.deepEqual(run.masteredWeeks.flat(), [], `${name}: a writer still wrong this often never masters`);
   if (name === 'apostrophe') {
-    assert.ok(end.mastered.length > 0, 'apostrophe: words are mastered after clean weeks');
   }
 
   // (g) nothing stored but corrected words: no name, digit, link, or sentence word.
@@ -266,13 +274,30 @@ for (const run of runs) {
     const allowed = new Set([...slotWords, ...NOISE_KEYS.flatMap((n) => words(n))]);
     for (const w of words(fold(k))) assert.ok(allowed.has(w), `${name}: "${w}" in ${k} was never a corrected word`);
   }
-  assert.deepEqual(Object.keys(store).sort(), ['days', 'pairs', 'v']);
-  for (const d of Object.values(store.days)) assert.deepEqual(Object.keys(d).sort(), ['fixes', 'proofreads', 'words']);
+  assert.deepEqual(Object.keys(store).sort(), ['days', 'pairs', 't', 'v']);
+  for (const d of Object.values(store.days)) {
+    assert.deepEqual(Object.keys(d).sort(), ['fixes', 'k', 'proofreads', 'words']);
+    for (const kind of Object.keys(d.k)) assert.ok(['apostrophe', 'capitalization', 'punctuation', 'grammar', 'spelling', 'other'].includes(kind), `${name}: day kind ${kind}`);
+  }
+  for (const p of Object.values(store.pairs)) assert.deepEqual(Object.keys(p).sort(), ['first', 'g', 'h', 'kind', 'last', 'n', 'streak'], `${name}: pair fields`);
+
   checks += 2;
+}
+
+// A correct text pasted in (or proofread again) masters nothing: one right use a day.
+{
+  const { store: st, now } = runs.find((r) => r.name === 'typist').snapshots[3];
+  const paste = PROFILES.typist.sentences.map((x) => x.replace(/\[[^|\]]*\|([^\]]*)\]/g, '$1').replace(/\{[^|}]*\|([^}]*)\}/g, '$1')).join(' ');
+  let pasted = st;
+  for (let i = 1; i <= 5; i++) pasted = record(pasted, paste, paste, now + 60000 * i);
+  const grew = Object.keys(st.pairs).filter((k) => pasted.pairs[k].streak > st.pairs[k].streak);
+  assert.ok(grew.length > 0, 'the paste does count as a right use');
+  for (const k of grew) assert.equal(pasted.pairs[k].streak, st.pairs[k].streak + (st.pairs[k].h.endsWith('g') && SR_dayKey(st.pairs[k].g) === SR_dayKey(now) ? 0 : 1), `${k}: at most one right use a day`);
+  assert.deepEqual(SR_newlyMastered(st, pasted), [], 'the same correct text 5 times in a day masters nothing');
 }
 
 // (a) no two writers are told the same thing.
 const sigs = runs.map((r) => r.signature);
 assert.equal(new Set(sigs).size, sigs.length, `profiles look alike:\n${sigs.join('\n')}`);
 console.log(`learning-sim: ${runs.length} writers, 8 weeks, ${checks} checks passed`);
-for (const r of runs) console.log(`  ${r.name}: ${r.signature}`);
+for (const r of runs) console.log(`  ${r.name}: ${r.signature} mastered by week: ${JSON.stringify(r.masteredWeeks)}`);

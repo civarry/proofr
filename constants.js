@@ -1110,57 +1110,115 @@ function SR_cleanInsights(store) {
   for (const [key, p] of Object.entries(obj(store && store.pairs))) {
     if (!key.includes('→') || !p || typeof p !== 'object' || SR_count(p.n) < 1) continue;
     const last = SR_count(p.last);
-    pairs[key] = { n: Math.floor(p.n), first: SR_count(p.first) || last, last, kind: typeof p.kind === 'string' ? p.kind : 'other' };
+    pairs[key] = {
+      n: Math.floor(p.n), first: SR_count(p.first) || last, last, kind: typeof p.kind === 'string' ? p.kind : 'other',
+      h: typeof p.h === 'string' && /^[mg]{0,6}$/.test(p.h) ? p.h : '', streak: Math.floor(SR_count(p.streak)), g: SR_count(p.g),
+    };
   }
   for (const [day, d] of Object.entries(obj(store && store.days))) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !d || typeof d !== 'object') continue;
-    days[day] = { fixes: SR_count(d.fixes), words: SR_count(d.words), proofreads: SR_count(d.proofreads) };
+    const k = {};
+    for (const [kind, n] of Object.entries(obj(d.k))) if (/^[a-z]+$/.test(kind) && SR_count(n)) k[kind] = SR_count(n);
+    days[day] = { fixes: SR_count(d.fixes), words: SR_count(d.words), proofreads: SR_count(d.proofreads), k };
   }
-  return { v: 1, pairs, days };
+  return { v: 1, t: SR_count(store && store.t), pairs, days };
 }
 
 // New store with one Proofread counted in. Numbers and word pairs only:
-// { v: 1, pairs: { 'from→to': { n, first, last, kind } }, days: { 'YYYY-MM-DD': { fixes, words, proofreads } } }.
+// { v: 1, t: last merge, pairs: { 'from→to': { n, first, last, kind, h, streak, g } },
+//   days: { 'YYYY-MM-DD': { fixes, words, proofreads, k: { kind: n } } } }.
 // fixes is every change the Proofread made (SR_diffCount), not only the pairs kept,
 // so the privacy filter doesn't bend the per-100-words rate. Keeps 120 days.
-function SR_mergeInsights(store, pairs, now = Date.now(), wordCount = 0, fixes = Array.isArray(pairs) ? pairs.length : 0) {
+// before (the user's own text, never stored) gives right uses: a stored pair not
+// fixed this time whose corrected form is in the text. h is the last 6 events,
+// oldest first ('m' fixed, 'g' right); streak counts right uses since the last fix,
+// at most one a day (g is that day), so pasting the same text again earns nothing.
+function SR_mergeInsights(store, pairs, now = Date.now(), wordCount = 0, fixes = Array.isArray(pairs) ? pairs.length : 0, before = '') {
   const next = SR_cleanInsights(store);
   pairs = (Array.isArray(pairs) ? pairs : []).filter((p) => p && typeof p.from === 'string' && typeof p.to === 'string');
   wordCount = SR_count(wordCount);
   fixes = SR_count(fixes);
+  const fixed = new Set();
+  const k = {};
   for (const p of pairs) {
     const key = `${p.from}→${p.to}`;
     const old = next.pairs[key];
-    next.pairs[key] = { n: (old ? old.n : 0) + 1, first: old ? old.first : now, last: now, kind: SR_classifyCorrection(p) };
+    const kind = SR_classifyCorrection(p);
+    k[kind] = (k[kind] || 0) + 1;
+    const h = old ? old.h : '';
+    next.pairs[key] = { n: (old ? old.n : 0) + 1, first: old ? old.first : now, last: now, kind,
+      h: fixed.has(key) ? h : `${h}m`.slice(-6), streak: 0, g: old ? old.g : 0 };
+    fixed.add(key);
+  }
+  // A word fixed in this text isn't a right use of it elsewhere in the same text
+  // ("their" → "there" here says nothing about another "their").
+  const text = typeof before === 'string' ? before : '';
+  const wrongHere = new Set(pairs.flatMap((p) => SR_wordSeq(p.from, false)));
+  const seq = { true: SR_wordSeq(text, true), false: SR_wordSeq(text, false) };
+  if (text) {
+    for (const [key, p] of Object.entries(next.pairs)) {
+      if (fixed.has(key)) continue;
+      const to = key.slice(key.indexOf('→') + 1);
+      const keepCase = p.kind === 'capitalization';
+      const needle = SR_wordSeq(to, keepCase);
+      if (!needle.length || SR_wordSeq(to, false).some((w) => wrongHere.has(w)) || !SR_seqHas(seq[keepCase], needle)) continue;
+      if (p.h.endsWith('g') && SR_dayKey(p.g) === SR_dayKey(now)) continue; // one right use a day
+      next.pairs[key] = { ...p, h: `${p.h}g`.slice(-6), streak: p.streak + 1, g: now };
+    }
   }
   // Over the cap, one-off pairs go first (oldest first): repeat pairs are what
   // "mastered" is computed from, and they're the oldest by nature.
   const keys = Object.keys(next.pairs);
   if (keys.length > SR_INSIGHTS_MAX_PAIRS) {
-    const rank = (k) => (next.pairs[k].n >= 2 ? 1 : 0);
+    const rank = (key) => (next.pairs[key].n >= 2 ? 1 : 0);
     keys.sort((x, y) => rank(y) - rank(x) || next.pairs[y].last - next.pairs[x].last)
-      .slice(SR_INSIGHTS_MAX_PAIRS).forEach((k) => { delete next.pairs[k]; });
+      .slice(SR_INSIGHTS_MAX_PAIRS).forEach((key) => { delete next.pairs[key]; });
   }
   if (wordCount > 0 || fixes > 0) {
     const today = SR_dayKey(now);
-    const d = next.days[today] || {};
-    next.days[today] = { fixes: (d.fixes || 0) + fixes, words: (d.words || 0) + wordCount, proofreads: (d.proofreads || 0) + 1 };
+    const d = next.days[today] || { k: {} };
+    for (const [kind, n] of Object.entries(k)) d.k[kind] = (d.k[kind] || 0) + n;
+    next.days[today] = { fixes: (d.fixes || 0) + fixes, words: (d.words || 0) + wordCount, proofreads: (d.proofreads || 0) + 1, k: d.k };
   }
   const oldest = SR_dayKey(now - (SR_INSIGHTS_DAYS - 1) * 86400000);
   for (const day of Object.keys(next.days)) if (day < oldest) delete next.days[day];
+  next.t = now;
   return next;
 }
 
-// A pair is "mastered" once it was fixed at least twice, then not for 14 days,
-// while at least this many words were proofread (not just "hasn't used Proofr").
-const SR_MASTERED_DAYS = 14;
-const SR_MASTERED_WORDS = 500;
+// Mastered is earned: fixed at least twice, then right on 3 different days in a
+// row, and no fix for 14 days. Over 20 simulated runs, the streak alone let writers
+// still wrong half the time "master" 62 word-weeks by luck; 7 days, 10; 14 days, none,
+// while the improving writer still mastered every word (test/learning-sim.mjs).
+// Not using a word for a while proves nothing on its own.
+const SR_MASTERED_STREAK = 3;
+const SR_MASTERED_QUIET_DAYS = 14;
+const SR_isMastered = (p, now) => p.n >= 2 && p.streak >= SR_MASTERED_STREAK && now - p.last >= SR_MASTERED_QUIET_DAYS * 86400000;
+
+// [to] for each pair that became mastered between two stores (for the toast),
+// each judged at its own merge time.
+function SR_newlyMastered(prevStore, nextStore) {
+  const prev = SR_cleanInsights(prevStore), next = SR_cleanInsights(nextStore);
+  const out = [];
+  for (const [key, p] of Object.entries(next.pairs)) {
+    const to = key.slice(key.indexOf('→') + 1);
+    if (SR_isMastered(p, next.t) && !(prev.pairs[key] && SR_isMastered(prev.pairs[key], prev.t)) && !out.includes(to)) out.push(to);
+  }
+  return out;
+}
+
+// A word fixed in the last 14 days, or on its way to mastered, is one you're working on.
+const SR_WORKING_DAYS = 14;
+// Below this many fixes in a 4-week window, its kind shares are noise.
+const SR_KINDS_MIN_FIXES = 10;
 // Below this many words in either week, the rate is noise: no trend.
 const SR_TREND_MIN_WORDS = 200;
 
 // What the Progress view shows, from the store alone. Weeks are the last 7 days
 // (today included) and the 7 before. per100 = fixes per 100 words proofread.
 // weeks: the last 8 weeks, oldest first, for the chart; total: all kept days.
+// kindsNow / kindsThen: each kind's % of kept fixes in the last 28 days and the 28
+// before; each is null when its own window has under 10 fixes.
 function SR_insightsView(store, now = Date.now()) {
   const { days, pairs } = SR_cleanInsights(store);
   const DAY = 86400000;
@@ -1177,26 +1235,31 @@ function SR_insightsView(store, now = Date.now()) {
   const total = Object.values(days).reduce((t, d) => ({ proofreads: t.proofreads + (d.proofreads || 0), words: t.words + (d.words || 0) }), { proofreads: 0, words: 0 });
   const trend = cur.words >= SR_TREND_MIN_WORDS && prev.words >= SR_TREND_MIN_WORDS
     ? Math.round((cur.per100 - prev.per100) * 10) / 10 : null;
-  const wordsAfter = (ms) => {
-    const day = SR_dayKey(ms);
-    return Object.entries(days).reduce((n, [k, d]) => (k > day ? n + d.words : n), 0);
+  const share = (from) => {
+    const k = {};
+    for (let i = from; i < from + 28; i++) {
+      for (const [kind, n] of Object.entries((days[SR_dayKey(now - i * DAY)] || {}).k || {})) k[kind] = (k[kind] || 0) + n;
+    }
+    const sum = Object.values(k).reduce((a, b) => a + b, 0);
+    for (const kind of Object.keys(k)) k[kind] = Math.round((k[kind] / sum) * 100);
+    return sum >= SR_KINDS_MIN_FIXES ? k : null;
   };
+  const kindsNow = share(0), kindsThen = share(28);
   const list = Object.entries(pairs).map(([key, p]) => {
     const [from, to] = key.split('→');
     return { from, to, ...p };
   });
-  const mastered = list
-    .filter((p) => p.n >= 2 && now - p.last >= SR_MASTERED_DAYS * DAY && wordsAfter(p.last) >= SR_MASTERED_WORDS)
-    .map((p) => ({ from: p.from, to: p.to, n: p.n, daysClean: Math.floor((now - p.last) / DAY) }))
-    .sort((a, b) => b.n - a.n || b.daysClean - a.daysClean);
+  const mastered = list.filter((p) => SR_isMastered(p, now))
+    .map((p) => ({ from: p.from, to: p.to, n: p.n, streak: p.streak }))
+    .sort((a, b) => b.n - a.n || b.streak - a.streak);
   // A pair fixed once may be the model's mistake, not the user's: never taught.
   const working = list
-    .filter((p) => p.n >= 2 && now - p.last < SR_MASTERED_DAYS * DAY)
-    .map((p) => ({ from: p.from, to: p.to, n: p.n, kind: p.kind }))
+    .filter((p) => p.n >= 2 && !SR_isMastered(p, now) && (now - p.last < SR_WORKING_DAYS * DAY || p.streak > 0))
+    .map((p) => ({ from: p.from, to: p.to, n: p.n, kind: p.kind, h: p.h, streak: p.streak }))
     .sort((a, b) => b.n - a.n);
   const kinds = {};
   for (const p of list) kinds[p.kind] = (kinds[p.kind] || 0) + p.n;
-  return { week: cur, prevWeek: prev, trend, weeks, total, mastered, working, kinds };
+  return { week: cur, prevWeek: prev, trend, weeks, total, mastered, working, kinds, kindsNow, kindsThen };
 }
 
 // One plain rule for a correction, or null when there's no rule worth showing.
@@ -1353,12 +1416,16 @@ function SR_buildPractice(view, n = 3, seed = 0) {
   return items;
 }
 
+// The words of a text, apostrophes straightened, lowercased unless keepCase.
+function SR_wordSeq(text, keepCase) {
+  const s = String(text || '').replace(/’/g, "'");
+  return SR_diffTokens(keepCase ? s : s.toLowerCase()).filter((x) => /[\p{L}\p{N}]/u.test(x));
+}
+const SR_seqHas = (hay, needle) => needle.length > 0 && hay.some((_, i) => needle.every((w, j) => hay[i + j] === w));
+
 // True when `phrase` appears in `text` as whole words. Case only matters with keepCase.
 function SR_practiceHas(text, phrase, keepCase) {
-  const fold = (s) => (keepCase ? s : s.toLowerCase()).replace(/’/g, "'");
-  const words = (s) => SR_diffTokens(fold(s)).filter((x) => /[\p{L}\p{N}]/u.test(x));
-  const hay = words(text), needle = words(phrase);
-  return needle.length > 0 && hay.some((_, i) => needle.every((w, j) => hay[i + j] === w));
+  return SR_seqHas(SR_wordSeq(text, keepCase), SR_wordSeq(phrase, keepCase));
 }
 
 // { right: [to], missed: [{ from, to, rule }] }: a target is right when its
@@ -1468,4 +1535,5 @@ if (typeof self !== 'undefined') {
   self.SR_checkPractice = SR_checkPractice;
   self.SR_practiceHas = SR_practiceHas;
   self.SR_habits = SR_habits;
+  self.SR_newlyMastered = SR_newlyMastered;
 }
