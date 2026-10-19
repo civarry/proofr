@@ -7,9 +7,9 @@
   <style>
     /* Same tokens as sidepanel.html, so the first page a user sees matches the panel. */
     :root {
-      --paper: #FAFAF9; --card: #FFFFFF; --ink: #17181C; --ink-soft: #6B6D76; --ink-faint: #A6A8B0;
-      --line: #E7E6E2; --line-soft: #F0EFEC; --accent: #16171B; --accent-fg: #FFFFFF;
-      --live: #3DA35D; --live-bg: #EAF6EE; --live-ink: #276B41; --error: #B4443A;
+      --paper: #FAF9F7; --card: #FFFFFF; --ink: #23221E; --ink-soft: #5E5B53; --ink-faint: #6C695F;
+      --line: #E6E3DC; --line-soft: #F1EFEA; --accent: #23221E; --accent-fg: #FFFFFF;
+      --live: #3DA35D; --live-bg: #E7F3EA; --live-ink: #276B41; --error: #B4443A;
       --radius: 12px;
       --mono: "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace;
       --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -18,13 +18,13 @@
     body { font-family: var(--sans); color: var(--ink); background: var(--paper); -webkit-font-smoothing: antialiased; }
     .wrap { max-width: 640px; margin: 0 auto; padding: 48px 16px 64px; }
     header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-    .mark { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); display: flex; align-items: center; justify-content: center; }
-    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+    .mark { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: var(--accent-fg); display: flex; align-items: center; justify-content: center; }
+    h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
     .lede { color: var(--ink-soft); font-size: 14px; line-height: 1.55; margin-bottom: 28px; }
 
     .step { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
-    .step h2 { font-size: 14.5px; font-weight: 650; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
-    .step h2 .n { width: 20px; height: 20px; border-radius: 50%; background: var(--line-soft); color: var(--ink-soft); font-size: 11.5px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .step h2 { font-size: 15px; font-weight: 650; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .step h2 .n { width: 20px; height: 20px; border-radius: 50%; background: var(--line-soft); color: var(--ink-soft); font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
     .step.done h2 .n { background: var(--live-bg); color: var(--live-ink); }
     .step p { font-size: 13px; line-height: 1.6; color: var(--ink-soft); }
     .step p + p { margin-top: 6px; }
@@ -33,22 +33,25 @@
     .status.ok { color: var(--live-ink); }
     .status.bad { color: var(--error); }
 
-    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px; border-radius: 9px; font: 600 13px var(--sans); cursor: pointer; border: 1px solid transparent; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 9px 14px; border-radius: 8px; font: 600 13px var(--sans); cursor: pointer; border: 1px solid transparent; }
     .btn-solid { background: var(--accent); color: var(--accent-fg); }
     .btn-solid:disabled { opacity: .5; cursor: not-allowed; }
     .btn-outline { background: var(--card); border-color: var(--line); color: var(--ink); }
     .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
 
-    textarea { width: 100%; min-height: 84px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; font: 14px/1.55 var(--sans); color: var(--ink); background: var(--paper); resize: vertical; }
+    textarea { width: 100%; min-height: 84px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: 14px/1.55 var(--sans); color: var(--ink); background: var(--paper); resize: vertical; }
     textarea:focus { outline: 2px solid var(--line); }
-    .result { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: var(--paper); border: 1px solid var(--line); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+    .result { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--paper); border: 1px solid var(--line); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
     .result.hidden, .hidden { display: none; }
-    .diff-ins { background: var(--live-bg); color: var(--live-ink); text-decoration: none; border-radius: 3px; padding: 0 1px; }
+    .diff-ins { background: var(--live-bg); color: var(--live-ink); text-decoration: none; border-radius: 4px; padding: 0 1px; }
     .diff-del { color: var(--ink-soft); text-decoration: line-through; margin-right: 3px; }
-    kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--card); color: var(--ink); }
+    kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--ink); }
     ul.sites { margin-top: 10px; padding-left: 18px; font-size: 13px; line-height: 1.8; color: var(--ink-soft); }
     footer { margin-top: 24px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
     footer a { color: var(--ink-soft); }
+
+    /* Keyboard focus: visible, in the product's ink instead of the browser's blue. */
+    :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   </style>
 </head>
 <body>

@@ -1,7 +1,7 @@
 
 :root {
   /* Warm, near-monochrome "paper" palette — no bright accents. */
-  --sr-primary: #2a2926;      /* ink, used for active/primary fills */
+  --sr-primary: #23221e;      /* ink, used for active/primary fills */
   --sr-primary-dark: #171614;
   --sr-secondary: #2a2926;
   --sr-white: #faf9f7;        /* paper */
@@ -11,18 +11,18 @@
   --sr-exit: 120ms cubic-bezier(0.3, 0, 1, 1);
   --sr-gray-50: #f3f2ee;
   --sr-gray-100: #eeece6;
-  --sr-gray-200: #e4e2db;
+  --sr-gray-200: #e6e3dc;
   --sr-gray-300: #d3d0c7;
   --sr-gray-400: #b3b1a8;
-  --sr-gray-500: #8a887f;
-  --sr-gray-600: #57554e;
+  --sr-gray-500: #6c695f; /* lightest text color; passes AA on paper */
+  --sr-gray-600: #5e5b53;
   --sr-gray-700: #3f3d38;
   --sr-gray-800: #2f2e2a;
-  --sr-gray-900: #26251f;
+  --sr-gray-900: #23221e;
   --sr-success: #57554e;
   --sr-error: #b4443a;
   --sr-card-bg: #faf9f7;
-  --sr-card-border: #e4e2db;
+  --sr-card-border: #e6e3dc;
   --sr-shadow-lg: 0 12px 24px -8px rgba(38, 37, 31, 0.14);
   --sr-shadow-xl: 0 18px 44px -14px rgba(38, 37, 31, 0.22);
 }
@@ -35,7 +35,7 @@
   width: 100vw;
   height: 100vh;
   z-index: 2147483647;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   opacity: 0;
   transition: opacity var(--sr-exit);
   /* Render our own controls (details, selects, scrollbars) in light mode even on dark-themed host pages. */
@@ -62,7 +62,7 @@
 
 .sr-modal-container {
   background: var(--sr-white);
-  border-radius: 16px;
+  border-radius: 12px;
   box-shadow: var(--sr-shadow-xl);
   border: 1px solid var(--sr-gray-200);
   min-width: 340px;
@@ -123,7 +123,7 @@
   background: none;
   border: none;
   font-size: 24px;
-  color: var(--sr-gray-400);
+  color: var(--sr-gray-500);
   cursor: pointer;
   padding: 8px;
   border-radius: 8px;
@@ -194,7 +194,7 @@
 .sr-result-box {
   padding: 13px 14px;
   border: 1px solid var(--sr-gray-200);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--sr-gray-50);
   font-size: 14px;
   line-height: 1.6;
@@ -209,13 +209,13 @@
 .sr-skeleton {
   padding: 14px;
   border: 1px solid var(--sr-gray-200);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--sr-white);
 }
 
 .sr-skeleton-line {
   height: 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   margin-bottom: 11px;
   background: linear-gradient(100deg, var(--sr-gray-100) 30%, var(--sr-gray-50) 50%, var(--sr-gray-100) 70%);
   background-size: 200% 100%;
@@ -246,13 +246,13 @@
   list-style: none;
   user-select: none;
   padding: 4px 2px;
-  border-radius: 6px;
+  border-radius: 8px;
   width: fit-content;
   outline: none;
 }
 
 .sr-original > summary::-webkit-details-marker { display: none; }
-.sr-original > summary::before { content: '▸ '; color: var(--sr-gray-400); }
+.sr-original > summary::before { content: '▸ '; color: var(--sr-gray-500); }
 .sr-original[open] > summary::before { content: '▾ '; }
 .sr-original > summary:hover { color: var(--sr-gray-700); }
 .sr-original > summary:focus-visible { outline: 2px solid var(--sr-gray-400); outline-offset: 2px; }
@@ -261,7 +261,7 @@
   margin-top: 6px;
   padding: 10px 12px;
   border: 1px solid var(--sr-gray-200);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--sr-gray-50);
   font-size: 13px;
   line-height: 1.55;
@@ -283,12 +283,12 @@
 
 .sr-scrollable::-webkit-scrollbar-track {
   background: var(--sr-gray-100);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .sr-scrollable::-webkit-scrollbar-thumb {
   background: var(--sr-gray-300);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .sr-scrollable::-webkit-scrollbar-thumb:hover {
@@ -336,7 +336,7 @@
   background: #e3f1e7;
   color: #1f5c36;
   text-decoration: none;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0 1px;
 }
 .sr-diff-del {
@@ -347,7 +347,7 @@
 .sr-diff-toggle {
   margin-top: 6px;
   background: none; border: none; padding: 0;
-  font: inherit; font-size: 11.5px;
+  font: inherit; font-size: 12px;
   color: var(--sr-gray-600);
   text-decoration: underline;
   cursor: pointer;
@@ -362,7 +362,7 @@
   background: #fbf3e4;
   border: 1px solid #ecd9b5;
   color: #6b4a12;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -370,14 +370,23 @@
 .sr-success-review {
   margin-left: 4px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   background: transparent;
   color: inherit;
-  font: inherit; font-size: 12.5px; font-weight: 600;
+  font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer;
 }
 .sr-success-review:hover { background: rgba(255, 255, 255, 0.15); }
+
+/* Keyboard focus in our own UI: visible, in the product's ink instead of
+   the browser's blue ring (which clashes with the warm palette). */
+#smart-rewrite-modal :focus-visible,
+#sr-toast :focus-visible,
+.sr-hover-popover :focus-visible {
+  outline: 2px solid var(--sr-gray-900);
+  outline-offset: 2px;
+}
 
 /* One-time rating ask: its own line under the footer buttons. */
 .sr-rate {
@@ -385,7 +394,7 @@
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px;
   padding-top: 8px;
   border-top: 1px solid var(--sr-gray-200);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--sr-gray-600);
 }
 .sr-rate a { color: var(--sr-gray-800); font-weight: 600; text-decoration: none; }
@@ -398,7 +407,7 @@
 
 .sr-hint {
   flex: 1;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--sr-gray-500);
   line-height: 1.35;
 }
@@ -415,7 +424,7 @@
   padding: 3px 9px;
   border: 1px solid var(--sr-gray-200);
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.2px;
   color: var(--sr-gray-600);
@@ -429,7 +438,7 @@
   align-items: center;
   gap: 8px;
   margin: 0 0 12px;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--sr-gray-600);
 }
 
@@ -441,7 +450,7 @@
   background: var(--sr-white);
   color: var(--sr-gray-900);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -458,7 +467,7 @@
 
 .sr-btn {
   padding: 12px 20px;
-  border-radius: 10px;
+  border-radius: 8px;
   border: none;
   font-family: inherit;
   font-weight: 500;
@@ -510,7 +519,7 @@
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity var(--sr-exit), transform var(--sr-exit);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .sr-success-notification.sr-show {
@@ -550,8 +559,8 @@
   border-radius: 12px;
   padding: 11px 15px;
   box-shadow: var(--sr-shadow-lg);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13.5px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
   font-weight: 500;
   opacity: 0;
   transform: translateY(-8px);
@@ -622,20 +631,20 @@
   padding: 5px;
   background: var(--sr-white);
   border: 1px solid var(--sr-gray-200);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: var(--sr-shadow-lg);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color-scheme: light;
 }
 .sr-hover-action {
   text-align: left;
   padding: 7px 9px;
   border: none;
-  border-radius: 7px;
+  border-radius: 8px;
   background: none;
   color: var(--sr-gray-800);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -656,7 +665,7 @@
   flex: 1;
   min-width: 0;
   border: 1px solid var(--sr-gray-200);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 6px 8px;
   font-family: inherit;
   font-size: 12px;
@@ -664,7 +673,7 @@
   background: var(--sr-white);
 }
 .sr-hover-ask-input:focus { outline: none; border-color: var(--sr-gray-400); }
-.sr-hover-ask-input::placeholder { color: var(--sr-gray-400); }
+.sr-hover-ask-input::placeholder { color: var(--sr-gray-500); }
 .sr-hover-ask-send {
   flex: none;
   width: 26px; height: 26px;
@@ -690,7 +699,7 @@
     width: 100%;
     max-width: 100%;
     margin: 0;
-    border-radius: 16px;
+    border-radius: 12px;
     max-height: 95vh;
   }
   
@@ -745,19 +754,19 @@
    Motion only where it explains something, and none under prefers-reduced-motion. */
 .sr-streaming { color: var(--sr-gray-700); }
 .sr-diff-bar { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.sr-diff-tip { font-size: 11.5px; color: var(--sr-gray-500); }
-.sr-change { cursor: pointer; border-radius: 3px; }
+.sr-diff-tip { font-size: 12px; color: var(--sr-gray-500); }
+.sr-change { cursor: pointer; border-radius: 4px; }
 .sr-change:hover, .sr-change:focus-visible { outline: 1px solid var(--sr-gray-400); outline-offset: 1px; }
 .sr-change:focus:not(:focus-visible) { outline: none; }
-.sr-diff-off { color: var(--sr-gray-400); text-decoration: line-through; margin-left: 3px; }
+.sr-diff-off { color: var(--sr-gray-500); text-decoration: line-through; margin-left: 3px; }
 .sr-success-undo {
   margin-left: 4px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   background: transparent;
   color: inherit;
-  font: inherit; font-size: 12.5px; font-weight: 600;
+  font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer;
 }
 .sr-success-undo:hover { background: rgba(255, 255, 255, 0.15); }
@@ -769,11 +778,11 @@
 .sr-toast-stop {
   margin-left: 4px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--sr-gray-300);
   background: transparent;
   color: inherit;
-  font: inherit; font-size: 12.5px; font-weight: 600;
+  font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer;
 }
 .sr-toast-stop:hover { background: var(--sr-gray-50); }
