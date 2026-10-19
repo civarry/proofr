@@ -162,10 +162,13 @@ function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup 
 
 // Where the text went, in plain words, for result labels. A server on the
 // user's own machine or network isn't "sent" anywhere they'd worry about.
+// Where the text went, and which model answered: "Sent to Groq · gpt-oss-120b".
 function whereLabel(providerId, cfg) {
-  if (providerId === 'device') return 'On this computer';
-  if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return 'On your computer or network';
-  return `Sent to ${SR_providerDisplayLabel(providerId)}`;
+  if (providerId === 'device') return 'On this computer · Gemini Nano';
+  // "openai/gpt-oss-120b" → "gpt-oss-120b": the vendor is already in the provider name.
+  const model = cfg && cfg.model ? ` · ${String(cfg.model).split('/').pop()}` : '';
+  if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return `On your computer or network${model}`;
+  return `Sent to ${SR_providerDisplayLabel(providerId)}${model}`;
 }
 
 // Rewrite with whatever is ready: on-device only when already downloaded,
@@ -707,7 +710,9 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
 
   // Coach mode: mark the spots, leave the text alone. The user fixes them in
   // the box, or reveals the usual diff with Apply to text box.
-  if (coach && window.SmartRewriteModal && window.SmartRewriteModal.showCoach) {
+  // With nothing to mark, Coach says so the usual way: the small toast.
+  const coachSpots = coach && typeof SR_wordDiff === 'function' ? SR_diffCount(SR_wordDiff(originalText, rewrittenText) || [{ type: 'ins' }]) : 1;
+  if (coach && coachSpots > 0 && window.SmartRewriteModal && window.SmartRewriteModal.showCoach) {
     const opts = { notice: guardNotice, where };
     const apply = guardFailed ? replaceAnyway
       : target ? { label: 'Apply to text box', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
