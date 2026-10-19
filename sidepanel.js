@@ -309,7 +309,9 @@ async function refreshCloudSection() {
 
   const cfg = await CloudProvider.getConfig(serviceId);
   refs.cloudModelInput.value = cfg.model;
+  refs.cloudModelInput.dataset.saved = cfg.model;
   refs.cloudModelInput.placeholder = meta.defaultModel || 'Connect first, then pick a model';
+  loadModelList(serviceId);
   if (serviceId === 'custom') refs.customBaseURLInput.value = cfg.baseURL;
   refs.apiKeyLabel.textContent = `${meta.name} API key`;
   refs.keySection.classList.toggle('keyless', cfg.keyless);
@@ -335,44 +337,76 @@ function needsHostAccess(id) {
   return !['groq', 'openai', 'openrouter'].includes(id);
 }
 
-// === Settings panel: browse available models ({baseURL}/models) ===
-let cachedModelList = [];
+// === Settings panel: model picker, filled from the connection itself ===
+// Once a provider is ready, its {baseURL}/models list loads on its own and
+// the model field becomes a combobox over it: click or type to filter, pick
+// with the mouse or arrows + Enter. A name the provider doesn't list can
+// still be typed (some endpoints don't publish a list).
+const modelLists = {};      // serviceId -> string[] (chat models only)
+let modelActiveIndex = -1;
+let modelFiltered = [];
 
 function closeModelMenu() {
   refs.modelMenu.classList.add('hidden');
+  refs.cloudModelInput.setAttribute('aria-expanded', 'false');
 }
 
 function renderModelMenu(query) {
+  const list = modelLists[activeServiceId] || [];
   const q = (query || '').toLowerCase();
-  const filtered = cachedModelList.filter((m) => m.toLowerCase().includes(q));
-  if (filtered.length === 0) {
-    refs.modelMenuList.innerHTML = '<div class="model-menu-empty">No matching models.</div>';
+  modelFiltered = list.filter((m) => m.toLowerCase().includes(q));
+  modelActiveIndex = -1;
+  if (modelFiltered.length === 0) {
+    refs.modelMenuList.innerHTML = `<div class="model-menu-empty">${list.length ? 'No matching models. Press Enter to use this name anyway.' : 'No models listed yet.'}</div>`;
     return;
   }
-  refs.modelMenuList.innerHTML = filtered.map((m) => `<div class="model-menu-item" data-model="${escapeHtml(m)}">${escapeHtml(m)}</div>`).join('');
+  const current = refs.cloudModelInput.dataset.saved || '';
+  refs.modelMenuList.innerHTML = modelFiltered.map((m, i) =>
+    `<div class="model-menu-item ${m === current ? 'current' : ''}" role="option" id="model-opt-${i}" data-model="${escapeHtml(m)}">${escapeHtml(m)}</div>`).join('');
 }
 
-async function openModelMenu() {
+function openModelMenu({ filter = false } = {}) {
+  if (!(modelLists[activeServiceId] || []).length) return;
+  renderModelMenu(filter ? refs.cloudModelInput.value : '');
   refs.modelMenu.classList.remove('hidden');
-  refs.modelMenuSearch.value = '';
-  refs.modelMenuList.innerHTML = '<div class="model-menu-empty">Loading…</div>';
-  refs.modelMenuSearch.focus();
+  refs.cloudModelInput.setAttribute('aria-expanded', 'true');
+  refs.modelMenuList.querySelector('.current')?.scrollIntoView({ block: 'nearest' });
+}
 
-  try {
-    const provider = await CloudProvider.getConfig();
-    cachedModelList = await SR_availableModels(provider);
-    if (cachedModelList.length === 0) {
-      refs.modelMenuList.innerHTML = '<div class="model-menu-empty">No chat models found.</div>';
+function setModelHint(text) {
+  refs.modelHint.textContent = text;
+}
+
+// Loads (or reuses) the provider's model list. `ids` skips the request when
+// the caller just fetched /models itself (key save, Connect).
+async function loadModelList(serviceId, { ids, open = false } = {}) {
+  const cfg = await CloudProvider.getConfig(serviceId);
+  if (!providerReady(cfg)) {
+    setModelHint(cfg.keyless || cfg.keyOptional ? 'Connect to see the models this server has.' : 'Save a key to see the models this provider offers.');
+    return;
+  }
+  if (ids) modelLists[serviceId] = ids;
+  if (!modelLists[serviceId]) {
+    setModelHint('Loading models…');
+    try {
+      modelLists[serviceId] = await SR_availableModels(cfg);
+    } catch (error) {
+      setModelHint(`Couldn't load the model list (${error.message || 'request failed'}). You can still type a model name.`);
       return;
     }
-    renderModelMenu('');
-  } catch (error) {
-    refs.modelMenuList.innerHTML = `<div class="model-menu-empty">${escapeHtml(error.message || 'Could not load models.')}</div>`;
+  }
+  if (serviceId !== activeServiceId) return; // the user switched providers meanwhile
+  const n = modelLists[serviceId].length;
+  setModelHint(n ? `${n} model${n === 1 ? '' : 's'} available from ${cfg.displayName}. Click the field to choose.` : `${cfg.displayName} didn't list any chat models. Type a model name.`);
+  if (open) {
+    refs.cloudModelInput.focus();
+    openModelMenu();
   }
 }
 
 async function selectModel(model) {
   refs.cloudModelInput.value = model;
+  refs.cloudModelInput.dataset.saved = model;
   const serviceId = await CloudProvider.getActiveService();
   await CloudProvider.setModel(serviceId, model);
   closeModelMenu();
@@ -487,6 +521,7 @@ async function healModel(serviceId, availableIds) {
   if (picked) {
     await CloudProvider.setModel(serviceId, picked);
     refs.cloudModelInput.value = picked;
+    refs.cloudModelInput.dataset.saved = picked;
   }
 }
 
@@ -497,10 +532,11 @@ async function connectKeyless(serviceId) {
   try {
     const ids = await SR_availableModels(cfg);
     await healModel(serviceId, ids);
-    refs.keyHint.innerHTML = `${ICON_CHECK}Connected · ${ids.length} model${ids.length === 1 ? '' : 's'} available`;
+    refs.keyHint.innerHTML = `${ICON_CHECK}Connected`;
     refs.keyHint.classList.add('ok');
     await refreshProviderPill();
     showSavedToast();
+    await loadModelList(serviceId, { ids, open: true });
   } catch (error) {
     refs.keyHint.textContent = `Couldn't reach ${cfg.displayName} at ${cfg.baseURL}. Is it running?`;
     refs.keyHint.classList.remove('ok');
@@ -556,10 +592,13 @@ async function saveKey() {
     const ids = (listed && Array.isArray(listed.data) ? listed.data : []).map((m) => m && m.id).filter(Boolean);
     await CloudProvider.setKey(serviceId, key);
     await healModel(serviceId, SR_chatModels(ids));
+    delete modelLists[serviceId]; // a different key can see different models
     keyEditing = false;
     await renderKeyField(serviceId);
     await refreshProviderPill();
     showSavedToast();
+    // Just connected: show what this key can use, open, so the choice is visible.
+    await loadModelList(serviceId, { ids: SR_chatModels(ids), open: true });
   } catch (error) {
     refs.keyHint.classList.remove('ok');
     refs.keyHint.textContent = `Could not reach ${cfg.displayName} to verify the key. Check your connection.`;
@@ -585,6 +624,7 @@ async function clearKey() {
   const serviceId = await CloudProvider.getActiveService();
   if (needsHostAccess(serviceId)) await releaseEndpointAccess((await CloudProvider.getConfig(serviceId)).baseURL);
   await CloudProvider.clearKey(serviceId);
+  delete modelLists[serviceId];
   keyEditing = false;
   await renderKeyField(serviceId);
   await refreshProviderPill();
@@ -1066,7 +1106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
-    'btnBrowseModels', 'modelMenu', 'modelMenuSearch', 'modelMenuList',
+    'btnBrowseModels', 'modelMenu', 'modelMenuList', 'modelHint',
     'apiKeyInput', 'btnToggleKeyEye', 'btnSaveKey', 'btnClearKey', 'keyHint',
     'thread', 'palette', 'paletteHintLeft', 'paletteList',
     'modeTag', 'modeTagLabel', 'ta', 'charCount', 'sendBtn',
@@ -1175,10 +1215,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       closeCloudMenu();
     }
   });
+  // Leaving the field saves only a real choice: an exact listed model, or any
+  // name when the provider lists none. Text typed to filter the list is put
+  // back; an unlisted name is saved deliberately with Enter.
   refs.cloudModelInput.addEventListener('change', async () => {
-    const id = await CloudProvider.getActiveService();
-    await CloudProvider.setModel(id, refs.cloudModelInput.value.trim());
-    showSavedToast();
+    const value = refs.cloudModelInput.value.trim();
+    const list = modelLists[activeServiceId] || [];
+    if (!value || (list.length && !list.includes(value))) {
+      refs.cloudModelInput.value = refs.cloudModelInput.dataset.saved || '';
+      return;
+    }
+    if (value !== refs.cloudModelInput.dataset.saved) await selectModel(value);
   });
   refs.customBaseURLInput.addEventListener('change', async () => {
     const previous = (await CloudProvider.getConfig('custom')).baseURL;
@@ -1187,19 +1234,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSavedToast();
   });
 
-  // Settings panel: browse available models
+  // Settings panel: model combobox over the provider's own list
+  refs.cloudModelInput.addEventListener('focus', () => openModelMenu());
+  refs.cloudModelInput.addEventListener('click', () => openModelMenu());
+  refs.cloudModelInput.addEventListener('input', () => openModelMenu({ filter: true }));
+  refs.cloudModelInput.addEventListener('keydown', (e) => {
+    const open = !refs.modelMenu.classList.contains('hidden');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!open) { openModelMenu(); return; }
+      e.preventDefault();
+      const max = modelFiltered.length - 1;
+      modelActiveIndex = e.key === 'ArrowDown' ? Math.min(modelActiveIndex + 1, max) : Math.max(modelActiveIndex - 1, 0);
+      refs.modelMenuList.querySelectorAll('.model-menu-item').forEach((n, i) => n.classList.toggle('active', i === modelActiveIndex));
+      const active = refs.modelMenuList.querySelector('.model-menu-item.active');
+      if (active) { active.scrollIntoView({ block: 'nearest' }); refs.cloudModelInput.setAttribute('aria-activedescendant', active.id); }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const pick = open && modelActiveIndex >= 0 ? modelFiltered[modelActiveIndex] : refs.cloudModelInput.value.trim();
+      if (pick) selectModel(pick);
+    } else if (e.key === 'Escape') {
+      refs.cloudModelInput.value = refs.cloudModelInput.dataset.saved || '';
+      closeModelMenu();
+    }
+  });
   refs.btnBrowseModels.addEventListener('click', (e) => {
     e.stopPropagation();
-    refs.modelMenu.classList.contains('hidden') ? openModelMenu() : closeModelMenu();
+    if (refs.modelMenu.classList.contains('hidden')) { refs.cloudModelInput.focus(); openModelMenu(); } else closeModelMenu();
   });
-  refs.modelMenuSearch.addEventListener('input', () => renderModelMenu(refs.modelMenuSearch.value));
+  refs.modelMenuList.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus in the field
   refs.modelMenuList.addEventListener('click', (e) => {
     const item = e.target.closest('.model-menu-item');
-    if (!item) return;
-    selectModel(item.dataset.model);
+    if (item) selectModel(item.dataset.model);
   });
   document.addEventListener('click', (e) => {
-    if (!refs.modelMenu.contains(e.target) && e.target !== refs.btnBrowseModels && !refs.btnBrowseModels.contains(e.target)) {
+    if (!refs.modelMenu.contains(e.target) && e.target !== refs.cloudModelInput && !refs.btnBrowseModels.contains(e.target)) {
       closeModelMenu();
     }
   });

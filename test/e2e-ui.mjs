@@ -48,7 +48,7 @@ const mock = http.createServer((req, res) => {
   req.on('end', () => {
     if (req.url.endsWith('/models')) {
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ data: [{ id: 'mock-chat-1' }, { id: 'mock-embed-1' }] }));
+      return res.end(JSON.stringify({ data: [{ id: 'mock-chat-1' }, { id: 'mock-chat-2' }, { id: 'other-model' }, { id: 'mock-embed-1' }] }));
     }
     const parsed = JSON.parse(body || '{}');
     mockRequests.push(parsed);
@@ -135,6 +135,27 @@ const synced = await panel.evaluate(() => chrome.storage.sync.get(['srCloudKey_c
 check('key not in sync storage', !synced.srCloudKey_custom);
 const model = await panel.evaluate(() => chrome.storage.sync.get(['srCloudModel_custom']));
 console.log('model after save:', JSON.stringify(model));
+// The connection's model list loads and opens by itself after Save.
+await sleep(500);
+const ml = await panel.evaluate(() => ({
+  open: !document.getElementById('modelMenu').classList.contains('hidden'),
+  items: [...document.querySelectorAll('#modelMenuList .model-menu-item')].map(n => n.dataset.model),
+  hint: document.getElementById('modelHint').textContent,
+}));
+check('model list opens automatically after connecting', ml.open && ml.items.join(',') === 'mock-chat-1,mock-chat-2,other-model', JSON.stringify(ml.items));
+check('model hint counts the chat models (embeddings left out)', /^3 models available/.test(ml.hint), ml.hint);
+// Type to filter, Enter picks.
+await panel.evaluate(() => { const i = document.getElementById('cloudModelInput'); i.focus(); i.value = 'other'; i.dispatchEvent(new Event('input')); });
+const filtered = await panel.evaluate(() => [...document.querySelectorAll('#modelMenuList .model-menu-item')].map(n => n.dataset.model));
+check('typing filters the model list', filtered.join(',') === 'other-model', filtered.join(','));
+await panel.evaluate(() => { const i = document.getElementById('cloudModelInput'); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+await sleep(300);
+check('Enter picks the highlighted model', (await panel.evaluate(() => chrome.storage.sync.get(['srCloudModel_custom']))).srCloudModel_custom === 'other-model');
+// Filter text left in the field is not saved as a model.
+await panel.evaluate(() => { const i = document.getElementById('cloudModelInput'); i.focus(); i.value = 'zzz'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new Event('change')); });
+await sleep(300);
+const afterBlur = await panel.evaluate(async () => ({ field: document.getElementById('cloudModelInput').value, saved: (await chrome.storage.sync.get(['srCloudModel_custom'])).srCloudModel_custom }));
+check('filter text is not saved as the model', afterBlur.saved === 'other-model' && afterBlur.field === 'other-model', JSON.stringify(afterBlur));
 
 console.log('STEP 4');
 // 4. Successful side panel rewrite through the mock, plus the rating line.
