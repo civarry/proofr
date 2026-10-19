@@ -177,6 +177,7 @@ const refs = {};
 
 // === State ===
 let deviceReady = false;
+let cloudChosen = false;
 let deviceNeedsSetup = false;
 let deviceSetupRunning = false;
 let keyEditing = false;
@@ -235,6 +236,11 @@ async function refreshProviderPill() {
   refs.providerPill.classList.toggle('connected', runnable && !(deviceNeedsSetup && !hasKey && engine !== 'cloud'));
   refs.providerPillText.textContent = label;
   refs.setupCard.classList.toggle('hidden', deviceReady || hasKey);
+  // On-device works here and nothing else is set up: the provider form is
+  // noise, so it waits behind one button.
+  const offerCloud = deviceReady && !hasKey && !cloudChosen;
+  refs.cloudOffer.classList.toggle('hidden', !offerCloud);
+  refs.cloudSection.classList.toggle('collapsed', offerCloud);
   refs.deviceSetupCard.classList.toggle('hidden', !(deviceNeedsSetup || deviceSetupRunning));
   return { deviceReady, hasKey, runnable };
 }
@@ -584,6 +590,22 @@ async function clearKey() {
   await refreshProviderPill();
 }
 
+async function consumePanelHandoff() {
+  const { srPanelPrefill, srPanelNotice } = await chrome.storage.local.get(['srPanelPrefill', 'srPanelNotice']);
+  if (!srPanelPrefill && !srPanelNotice) return;
+  await chrome.storage.local.remove(['srPanelPrefill', 'srPanelNotice']);
+  if (!refs.settingsPanel.classList.contains('hidden')) toggleSettingsPanel(false);
+  refs.panelNotice.textContent = srPanelNotice || '';
+  refs.panelNotice.classList.toggle('hidden', !srPanelNotice);
+  if (srPanelPrefill) {
+    refs.ta.value = srPanelPrefill;
+    autoGrow();
+    updateCharCount();
+    refs.sendBtn.disabled = false;
+  }
+  refs.ta.focus();
+}
+
 // Providers retire models (Groq's old default in Aug 2026, OpenAI's in Jan
 // 2027). Once a day, when the panel opens, ask the provider which models it
 // still lists and move off a retired one the same way saving a key does.
@@ -856,6 +878,15 @@ async function copyTurn(turn, btn) {
 }
 
 // === Thread rendering ===
+// Proofread results show what changed (Copy still copies the plain text).
+function turnBodyHtml(turn) {
+  const ops = (turn.mode === 'grammar' && typeof SR_wordDiff === 'function') ? SR_wordDiff(turn.inputText, turn.outputText) : null;
+  if (!ops || SR_diffCount(ops) === 0) return escapeHtml(turn.outputText);
+  return ops.map((op) => op.type === 'ins' ? `<ins class="diff-ins">${escapeHtml(op.text)}</ins>`
+    : op.type === 'del' ? `<del class="diff-del">${escapeHtml(op.text)}</del>`
+    : escapeHtml(op.text)).join('');
+}
+
 function renderAssistantCard(turn) {
   const modeName = escapeHtml(SR_getToneName(turn.mode));
 
@@ -880,7 +911,7 @@ function renderAssistantCard(turn) {
   const engineName = SR_providerDisplayLabel(turn.provider);
   return `<div class="assistant-card">
     <div class="assistant-head"><span><span class="tag">${modeName}</span> · ${engineName}</span><span>${formatLatency(turn.latencyMs)}</span></div>
-    <div class="assistant-body">${escapeHtml(turn.outputText)}</div>
+    <div class="assistant-body">${turnBodyHtml(turn)}</div>
     <div class="assistant-actions">
       <button class="chip-btn" data-action="redo">${ICON_REDO}Rewrite again</button>
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
@@ -926,6 +957,10 @@ function renderThread() {
   maybeShowRatePrompt();
   refs.thread.scrollTop = refs.thread.scrollHeight;
 }
+
+// A tip-jar link (Ko-fi / GitHub Sponsors), shown in Settings > About only
+// once it's set. Empty means the row stays hidden: no link that goes nowhere.
+const SUPPORT_URL = '';
 
 // === One-time rating ask ===
 // Shown once, under a successful result, after 5 successful rewrites (the
@@ -1006,7 +1041,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
-    'welcomeCard', 'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
+    'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
+    'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
@@ -1211,14 +1247,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Escape') { closePalette(); }
   });
 
-  // Opened as a tab right after install (background.js onInstalled).
-  const welcome = new URLSearchParams(location.search).has('welcome');
-  if (welcome) {
-    document.title = 'Welcome to Proofr';
-    refs.welcomeCard.classList.remove('hidden');
+  // Text sent from the page ("Open in Proofr panel"), and the note left when
+  // the shortcut was pressed on a page Chrome blocks. Read once on load and
+  // live while the panel stays open.
+  await consumePanelHandoff();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && (changes.srPanelPrefill?.newValue || changes.srPanelNotice?.newValue)) consumePanelHandoff();
+  });
+  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+
+  if (SUPPORT_URL) {
+    refs.supportRow.href = SUPPORT_URL;
+    refs.supportRow.classList.remove('hidden');
   }
 
-  if (welcome || (!deviceReady && !hasKey) || deviceNeedsSetup) {
+  refs.btnUseCloud.addEventListener('click', () => {
+    cloudChosen = true;
+    refreshProviderPill();
+  });
+
+  if ((!deviceReady && !hasKey) || deviceNeedsSetup) {
     toggleSettingsPanel(true);
   } else {
     setTimeout(() => refs.ta.focus(), 100);

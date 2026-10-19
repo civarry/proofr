@@ -5,14 +5,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-FILES="manifest.json background.js constants.js content.js dom-scan.js hover-assist.js modal.css sidepanel.html sidepanel.js icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png"
+FILES="manifest.json background.js constants.js content.js dom-scan.js hover-assist.js modal.css sidepanel.html sidepanel.js welcome.html welcome.js icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png"
 
 for f in $FILES; do
   [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
 
 # Every local file the extension loads must be in the list above.
-refs=$(grep -ohE "'[a-z-]+\.(js|css)'|\"[a-z-]+\.(js|css|html)\"|src=\"[a-z-]+\.js\"" manifest.json background.js sidepanel.html \
+refs=$(grep -ohE "'[a-z-]+\.(js|css)'|\"[a-z-]+\.(js|css|html)\"|src=\"[a-z-]+\.js\"" manifest.json background.js sidepanel.html welcome.html \
   | tr -d "'\"" | sed 's/^src=//' | sort -u)
 for r in $refs; do
   case " $FILES " in *" $r "*) ;; *) echo "referenced but not packaged: $r" >&2; exit 1 ;; esac

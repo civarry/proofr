@@ -184,10 +184,16 @@
 
       if (!this.modal) this.createModal();
 
+      // Proofread shows what changed; null (too long) or no changes → plain text.
+      const ops = tone === 'grammar' && typeof SR_wordDiff === 'function' ? SR_wordDiff(originalText, rewrittenText) : null;
+      const diffHtml = ops && SR_diffCount(ops) ? this.diffHtml(ops) : '';
+      const plainHtml = this.escapeHtml(rewrittenText);
+
       document.getElementById('sr-modal-content').innerHTML = `
         ${this.toneChipsHtml(tone)}
         ${this.langRowHtml(tone, targetLang)}
-        <div class="sr-result-box sr-scrollable" id="sr-rewritten-text">${this.escapeHtml(rewrittenText)}</div>
+        <div class="sr-result-box sr-scrollable" id="sr-rewritten-text">${diffHtml || plainHtml}</div>
+        ${diffHtml ? '<button type="button" class="sr-diff-toggle" id="sr-diff-toggle" aria-pressed="false">Show plain text</button>' : ''}
         <details class="sr-original">
           <summary>Show original</summary>
           <div class="sr-original-text">${this.escapeHtml(originalText)}</div>
@@ -205,6 +211,16 @@
       document.getElementById('sr-copy-btn').addEventListener('click', () => {
         this.copyToClipboard(rewrittenText);
       });
+
+      const toggle = document.getElementById('sr-diff-toggle');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const plain = toggle.getAttribute('aria-pressed') !== 'true';
+          document.getElementById('sr-rewritten-text').innerHTML = plain ? plainHtml : diffHtml;
+          toggle.setAttribute('aria-pressed', String(plain));
+          toggle.textContent = plain ? 'Show changes' : 'Show plain text';
+        });
+      }
 
       this.bindChips();
       this.bindLangRow();
@@ -353,6 +369,15 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    diffHtml(ops) {
+      return ops.map((op) => {
+        const text = this.escapeHtml(op.text);
+        if (op.type === 'del') return `<del class="sr-diff-del">${text}</del>`;
+        if (op.type === 'ins') return `<ins class="sr-diff-ins">${text}</ins>`;
+        return text;
+      }).join('');
     }
 
     rewriteWithTone(tone, targetLang) {

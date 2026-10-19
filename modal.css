@@ -325,6 +325,28 @@
   gap: 12px;
 }
 
+/* Proofread result: what changed, inline. Real <ins>/<del> for screen readers. */
+.sr-diff-ins {
+  background: #e3f1e7;
+  color: #1f5c36;
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.sr-diff-del {
+  color: #6b6960; /* 4.9:1 on the result box; gray-500 was too faint for AA */
+  text-decoration: line-through;
+}
+.sr-diff-toggle {
+  margin-top: 6px;
+  background: none; border: none; padding: 0;
+  font: inherit; font-size: 11.5px;
+  color: var(--sr-gray-600);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.sr-diff-toggle:hover { color: var(--sr-gray-800); }
+
 /* One-time rating ask: its own line under the footer buttons. */
 .sr-rate {
   flex-basis: 100%;

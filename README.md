@@ -14,7 +14,7 @@ The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-d
 
 - **Modes:** Proofread, Professional, Friendly, Concise, Plain English, Summarize, LinkedIn, Marketing, Executive, Academic, News, Translate
 - **Translate:** English, Spanish, French, German, and Japanese on-device. With a cloud key, also Filipino, Chinese (Simplified and Traditional), Korean, Portuguese, Italian, Vietnamese, Indonesian, Arabic, Hindi, and Thai.
-- **On any page:** select text, then right-click → Proofr → pick a mode, or press Alt+Shift+P to proofread it (rebind at `chrome://extensions/shortcuts`). In editable fields the selection is replaced in place, and Ctrl/Cmd+Z undoes it. Elsewhere the result opens in a dialog with a Copy button.
+- **On any page:** select text, then right-click → Proofr → pick a mode, or press Alt+Shift+P to proofread it (rebind at `chrome://extensions/shortcuts`). In editable fields the selection is replaced in place, and Ctrl/Cmd+Z undoes it. Elsewhere the result opens in a dialog with a Copy button. Proofread results in the dialog mark each change (removed words struck through, added words highlighted), with a toggle back to plain text.
 - **Side panel:** click the toolbar icon to paste or type text, pick a mode with `/`, and keep a local history of results. If your Chrome can run on-device AI but hasn't downloaded the model yet, the panel has a one-time setup button.
 - **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate. With a cloud key there is also an "Ask about this…" box for a freeform instruction. Results open in a dialog; the page text is never changed.
 
@@ -35,6 +35,9 @@ The browser tests load a copy of the extension in Chrome for Testing through [pu
 ```sh
 # On-device language handling, with a stubbed Prompt API (no browser needed)
 node test/device-langs.mjs
+
+# Proofread word diff: round trips, change count, size cap (no browser needed)
+node test/diff.mjs
 
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs

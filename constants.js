@@ -579,6 +579,71 @@ function SR_providerDisplayLabel(providerId) {
   return SR_cloudServiceMeta(providerId).name;
 }
 
+// === Word diff (Proofread results) ===
+// Tokens are words (letters/digits, with inner apostrophes), whitespace runs,
+// and single punctuation marks, so "fox." → "fox!" marks only the "!".
+function SR_diffTokens(text) {
+  return String(text || '').match(/\s+|[\p{L}\p{M}\p{N}_]+(?:['’][\p{L}\p{M}\p{N}_]+)*|[^\s]/gu) || [];
+}
+
+// Word-level LCS diff: [{type:'same'|'del'|'ins', text}]. Joining same+ins gives
+// `after` exactly; same+del gives `before`. The common prefix/suffix is trimmed
+// first, so a long text with few edits still diffs. Returns null when the
+// changed middle passes SR_DIFF_MAX_TOKENS on either side (the table is n*m).
+const SR_DIFF_MAX_TOKENS = 1500;
+function SR_wordDiff(before, after) {
+  const a = SR_diffTokens(before);
+  const b = SR_diffTokens(after);
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+  const x = a.slice(pre, a.length - suf);
+  const y = b.slice(pre, b.length - suf);
+  if (x.length > SR_DIFF_MAX_TOKENS || y.length > SR_DIFF_MAX_TOKENS) return null;
+
+  // L[i][j] = LCS length of x[i..] and y[j..], flattened.
+  const w = y.length + 1;
+  const L = new Uint16Array((x.length + 1) * w);
+  for (let i = x.length - 1; i >= 0; i--) {
+    for (let j = y.length - 1; j >= 0; j--) {
+      L[i * w + j] = x[i] === y[j] ? L[(i + 1) * w + j + 1] + 1 : Math.max(L[(i + 1) * w + j], L[i * w + j + 1]);
+    }
+  }
+
+  // A changed run is emitted as one del then one ins, so a reader sees "old → new".
+  const ops = [];
+  let del = '', ins = '';
+  const flush = () => {
+    if (del) ops.push({ type: 'del', text: del });
+    if (ins) ops.push({ type: 'ins', text: ins });
+    del = ''; ins = '';
+  };
+  const same = (text) => {
+    flush();
+    const last = ops[ops.length - 1];
+    if (last && last.type === 'same') last.text += text; else ops.push({ type: 'same', text });
+  };
+  if (pre) same(a.slice(0, pre).join(''));
+  let i = 0, j = 0;
+  while (i < x.length || j < y.length) {
+    if (i < x.length && j < y.length && x[i] === y[j]) { same(x[i]); i++; j++; }
+    else if (j >= y.length || (i < x.length && L[(i + 1) * w + j] >= L[i * w + j + 1])) del += x[i++];
+    else ins += y[j++];
+  }
+  flush();
+  if (suf) same(a.slice(a.length - suf).join(''));
+  return ops;
+}
+
+// Number of separate changes: each run of del/ins between unchanged text counts once.
+function SR_diffCount(ops) {
+  if (!ops) return 0;
+  let n = 0;
+  ops.forEach((op, k) => { if (op.type !== 'same' && (k === 0 || ops[k - 1].type === 'same')) n++; });
+  return n;
+}
+
 if (typeof self !== 'undefined') {
   self.SR_TONES = SR_TONES;
   self.SR_getTone = SR_getTone;
@@ -613,4 +678,6 @@ if (typeof self !== 'undefined') {
   self.SR_deviceReady = SR_deviceReady;
   self.SR_rewriteOnDevice = SR_rewriteOnDevice;
   self.SR_rewriteAuto = SR_rewriteAuto;
+  self.SR_wordDiff = SR_wordDiff;
+  self.SR_diffCount = SR_diffCount;
 }

@@ -92,13 +92,19 @@ sw.on('console', mm => { if (mm.type() === 'error') errors.push(`[sw] ${mm.text(
 
 console.log('STEP 1');
 // 1. Install opens the welcome tab.
-const welcomeT = await browser.waitForTarget(t => t.url().includes('sidepanel.html?welcome=1'), { timeout: 10000 }).catch(() => null);
+const welcomeT = await browser.waitForTarget(t => t.url().endsWith('/welcome.html'), { timeout: 10000 }).catch(() => null);
 check('install opens welcome tab', !!welcomeT);
 if (welcomeT) {
   const wp = await welcomeT.page(); watch(wp, 'welcome');
-  await sleep(800);
-  check('welcome card visible', await wp.evaluate(() => !document.getElementById('welcomeCard').classList.contains('hidden')));
-  check('welcome shows no-AI setup card', await wp.evaluate(() => !document.getElementById('setupCard').classList.contains('hidden')));
+  await sleep(1000);
+  const w = await wp.evaluate(() => ({
+    ai: document.getElementById('aiText').innerText,
+    connect: [...document.querySelectorAll('#aiActions button')].map(b => b.textContent),
+    tryDisabled: document.getElementById('btnTry').disabled,
+    tryStatus: document.getElementById('tryStatus').textContent,
+  }));
+  check('welcome: no-AI state offers to connect a provider', /can't run on-device AI/.test(w.ai) && w.connect.includes('Connect a provider'), JSON.stringify(w.connect));
+  check('welcome: try-it waits for setup instead of failing', w.tryDisabled && /step 2/.test(w.tryStatus));
   await shot(wp, '1-welcome.png');
   await wp.close();
 }
@@ -145,6 +151,23 @@ check('Not now records srRateAsked', (await panel.evaluate(() => chrome.storage.
 await panel.reload(); await sleep(800);
 check('rating line gone after Not now', await panel.evaluate(() => !document.querySelector('.rate-line')));
 
+// 4b. Welcome try-it with a provider connected: real proofread, changes marked.
+{
+  const wp = await browser.newPage(); watch(wp, 'welcome2');
+  await wp.goto(`chrome-extension://${extId}/welcome.html`); await sleep(1200);
+  await clk(wp, '#btnTry'); await sleep(1500);
+  const r = await wp.evaluate(() => ({ html: document.getElementById('tryResult').innerHTML, status: document.getElementById('tryStatus').textContent }));
+  check('welcome: try-it proofreads and marks changes', /<ins class="diff-ins">/.test(r.html) && /Fixed \d+ thing/.test(r.status), r.status + ' | ' + r.html.slice(0, 160));
+  await wp.close();
+}
+// 4c. Panel history shows the diff for Proofread turns.
+await panel.bringToFront();
+check('panel: proofread turn shows inline changes', await panel.evaluate(() => !![...document.querySelectorAll('.turn')].find(t => t.querySelector('.assistant-body ins.diff-ins'))));
+// 4d. "Open in Proofr panel" hands the selection to the composer.
+await panel.evaluate(() => chrome.storage.local.set({ srPanelPrefill: 'text from the page' })); await sleep(600);
+check('panel: prefill from page lands in the composer', (await panel.evaluate(() => document.getElementById('ta').value)) === 'text from the page');
+await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = ''; t.dispatchEvent(new Event('input')); });
+
 console.log('STEP 5');
 // 5. Translate prompt names the real language (board T2).
 mockRequests.length = 0;
@@ -190,6 +213,27 @@ check('overlapping rewrites: A replaced in place, not B', va === 'first R(SLOW a
 await demo.evaluate(() => { const t = document.getElementById('probe'); t.value = 'hello we was here ok'; t.focus(); t.setSelectionRange(6, 12); t.value = 'hello XX here ok'; });
 await demo.keyboard.down('Meta'); await demo.keyboard.press('KeyZ', { commands: ['undo'] }); await demo.keyboard.up('Meta'); await sleep(300);
 check('control: direct value write is not undoable', (await demo.evaluate(() => document.getElementById('probe').value)) === 'hello XX here ok');
+
+// 6c. "Proofread this whole text box": a plain field is replaced; a rich
+// editor is only read and the result opens in the dialog (no data loss).
+await demo.bringToFront();
+await demo.evaluate(() => {
+  const t = document.createElement('textarea'); t.id = 'whole'; t.value = 'whole box text'; t.style.cssText = 'position:fixed;top:200px;left:10px;width:300px;height:40px;z-index:99999';
+  document.body.appendChild(t); t.focus();
+});
+await sw.evaluate((id) => handleMenuClick({ menuItemId: 'srField:grammar' }, { id }), tabId); await sleep(1200);
+check('whole text box (plain field) replaced in place', (await demo.evaluate(() => document.getElementById('whole').value)) === 'R(whole box text)');
+await demo.evaluate(() => {
+  document.querySelector('#smart-rewrite-modal.sr-visible') && window.SmartRewriteModal && 0;
+  const d = document.createElement('div'); d.id = 'rich'; d.contentEditable = 'true';
+  d.innerHTML = 'Hi <a href="https://example.com">link</a> there'; d.style.cssText = 'position:fixed;top:260px;left:10px;width:300px;z-index:99999;background:#fff';
+  document.body.appendChild(d); d.focus();
+});
+await sw.evaluate((id) => handleMenuClick({ menuItemId: 'srField:grammar' }, { id }), tabId); await sleep(1200);
+const rich = await demo.evaluate(() => document.getElementById('rich').innerHTML);
+check('whole text box (rich editor) left untouched', rich === 'Hi <a href="https://example.com">link</a> there', rich);
+// 6d. Shortcut on a page Chrome blocks: detected, so the panel can explain.
+check('blocked pages recognized', await sw.evaluate(() => isBlockedPage('https://chromewebstore.google.com/detail/x') && isBlockedPage('chrome://newtab/') && !isBlockedPage('https://mail.google.com/')));
 
 console.log('STEP 7');
 // 6b. Side panel on Auto with a key while the on-device model still needs its
