@@ -17,7 +17,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Replies keyed on the instruction SR_buildPrompt puts in the prompt.
 const REPLIES = [
-  [/Correct only the grammar/, 'Hi team, I wanted to give a quick update. The launch is on track, but we hit a small snag with the payment flow. It is being looked at now and should be fixed by the end of the day. I will keep you posted.'],
+  // A minimal-edit proofread, matching what the frame's copy claims.
+  [/Correct only the grammar/, "Hi team, wanted to give a fast update. The launch is basically on track, but we hit a small snag with the payment thing. It's being looked at right now and should be fixed by EOD. Will keep you posted."],
   [/formal, polished/, 'I wanted to follow up on what we discussed last week. Please let me know whether that time still works for you, or if we should find another one.'],
   [/Summarize the following/, 'The team expected the report on Friday, but it will arrive tomorrow instead, so plan for a short delay.'],
 ];
@@ -47,9 +48,11 @@ const server = http.createServer((req, res) => {
 const BASE = `http://localhost:${PORT}`;
 
 // Copy with host access granted, standing in for the right-click activeTab grant
-// and the hover permission prompt (neither can be clicked by puppeteer).
+// (puppeteer can't click a real context menu).
 const ext = fs.mkdtempSync(path.join(os.tmpdir(), 'proofr-shots-'));
-for (const f of ['manifest.json', 'background.js', 'constants.js', 'content.js', 'dom-scan.js', 'hover-assist.js', 'modal.css', 'sidepanel.html', 'sidepanel.js', 'icons']) {
+const skip = new Set(['.git', 'market-research', 'store', 'store-screenshots', 'screenshots', 'test', 'docs']);
+for (const f of fs.readdirSync(root)) {
+  if (skip.has(f) || f.endsWith('.zip')) continue;
   fs.cpSync(path.join(root, f), path.join(ext, f), { recursive: true });
 }
 const manifest = JSON.parse(fs.readFileSync(path.join(ext, 'manifest.json'), 'utf8'));
@@ -105,8 +108,9 @@ try {
   await ta[0].scrollIntoView();
   await page.evaluate((el) => { el.focus(); el.setSelectionRange(0, el.value.length); }, ta[0]);
   await sleep(300);
-  const box = await ta[0].boundingBox();
-  const clip = { x: box.x - 24, y: box.y - 24, width: box.width + 48, height: box.height + 48 };
+  // screenshot clips are in page coordinates; boundingBox() is viewport-relative.
+  const box = await page.evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height }; }, ta[0]);
+  const clip = { x: box.x - 10, y: box.y - 10, width: box.width + 20, height: box.height + 20 };
   await page.screenshot({ path: `${out}/field-before.png`, clip });
   const tabId = await sw.evaluate(async (url) => (await chrome.tabs.query({ url }))[0].id, `${BASE}/`);
   const original = await page.evaluate((el) => el.value, ta[0]);
@@ -114,6 +118,13 @@ try {
   await sleep(1200);
   await page.evaluate(() => getSelection().removeAllRanges());
   await page.screenshot({ path: `${out}/field-after.png`, clip });
+
+  // Review from the in-place toast: the word diff of what Proofread changed.
+  await page.evaluate(() => document.querySelector('.sr-success-notification .sr-success-review').click());
+  await page.waitForSelector('#sr-rewritten-text ins.sr-diff-ins', { timeout: 5000 });
+  await sleep(500);
+  await (await page.$('.sr-modal-container')).screenshot({ path: `${out}/review-diff.png` });
+  await page.keyboard.press('Escape');
 
   // A selected paragraph, the backdrop for the right-click frame.
   await page.goto(`${BASE}/`);
@@ -126,23 +137,6 @@ try {
   });
   await sleep(300);
   await page.screenshot({ path: `${out}/page-selected.png` });
-
-  // Hover Summarize on an article paragraph.
-  await sw.evaluate(() => chrome.storage.sync.set({ srHoverAssist: true }));
-  await sleep(800);
-  await page.goto(`${BASE}/`);
-  await sleep(1000);
-  const para = await page.$('p.prose.selectme');
-  const pb = await para.boundingBox();
-  await page.mouse.move(pb.x + 40, pb.y + 10);
-  await sleep(900);
-  const icon = await page.waitForSelector('.sr-hover-icon', { timeout: 5000 });
-  await icon.click();
-  await sleep(500);
-  await page.screenshot({ path: `${out}/hover-popover.png` });
-  await page.click('.sr-hover-action[data-tone="tldr"]');
-  await sleep(2000);
-  await page.screenshot({ path: `${out}/hover-result.png` });
 
   console.log('captured:', fs.readdirSync(out).join(', '));
 } finally {

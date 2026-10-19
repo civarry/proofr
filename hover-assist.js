@@ -233,7 +233,7 @@
       return;
     }
 
-    showFeedback('result', sourceText, response.text, 'ask', response.provider, null);
+    showFeedback('result', sourceText, response.text, 'ask', response.provider, null, { where: response.where });
     removeIcon();
   }
 
@@ -261,7 +261,7 @@
       return;
     }
 
-    showFeedback('result', sourceText, response.text, tone, response.provider, targetLang);
+    showFeedback('result', sourceText, response.text, tone, response.provider, targetLang, { where: response.where });
     removeIcon();
   }
 
