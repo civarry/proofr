@@ -27,6 +27,8 @@
       --live-border:  #CBE5D3;
       --live-ink:     #276B41;
       --select-bg:    #E6EEFB;
+      --warn-bg:      #FBF3E4;
+      --warn-ink:     #6B4A12;
       --error:        #B4443A;
       --error-bg:     #F7ECE8;
       --radius:       12px;
@@ -64,6 +66,8 @@
         --live-border:  #2E4A37;
         --live-ink:     #8FD3A6;
         --select-bg:    #1C2A44;
+        --warn-bg:      #3A2E18;
+        --warn-ink:     #F0C987;
         --error:        #E58A80;
         --error-bg:     #3A2320;
         --shadow-lg:    0 10px 28px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
@@ -400,6 +404,62 @@
       flex-direction: column;
     }
     .settings-panel.hidden { display: none; }
+
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+    /* Write | Progress tabs */
+    .tabs { flex: none; display: flex; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--paper); }
+    .tab {
+      background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 8px 10px; font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab[aria-selected="true"] { color: var(--accent-ink); border-bottom-color: var(--accent); }
+
+    /* Progress and Practice: cards on the settings background */
+    .prog { display: flex; flex-direction: column; gap: 12px; }
+    .prog-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .prog-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+    .prog-big { display: flex; align-items: baseline; gap: 8px; }
+    .prog-big b { font-size: 24px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .prog-big span { font-size: 13px; color: var(--ink-soft); }
+    .prog-trend { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+    .prog-trend.down { color: var(--live-ink); }
+    .prog-spark { display: block; width: 100%; height: auto; margin-top: 12px; overflow: visible; }
+    .prog-spark .axis { stroke: var(--line); }
+    .prog-spark .line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+    .prog-spark .dot { fill: var(--accent); }
+    .prog-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--ink-faint); }
+    .prog-note { margin-top: 8px; font-size: 12px; line-height: 1.5; color: var(--ink-faint); }
+    .prog-focus { background: var(--accent-tint); border-color: var(--accent-tint-line); }
+    .prog-focus .prog-label, .prog-focus h3 { color: var(--accent-ink); }
+    .prog-focus h3 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .prog-focus p { font-size: 13px; line-height: 1.5; color: var(--ink-soft); margin-bottom: 12px; }
+    .prog-focus p b { color: var(--ink); }
+    .prog-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; line-height: 1.45; }
+    .prog-label + .prog-row, .prog-list > .prog-row:first-child { border-top: none; padding-top: 0; }
+    .prog-row .meta { margin-left: auto; padding-left: 8px; font-size: 12px; color: var(--ink-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .prog-row .word { font-weight: 600; color: var(--ink); }
+    .prog-row .from { color: var(--ink-soft); text-decoration: line-through; }
+    .prog-row .to { color: var(--live-ink); font-weight: 600; }
+    .prog-row .rule { margin-top: 2px; font-size: 12px; color: var(--ink-soft); }
+    .prog-icon { width: 18px; height: 18px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+    .prog-icon svg { width: 11px; height: 11px; display: block; }
+    .prog-icon.ok { background: var(--live-bg); color: var(--live-ink); }
+    .prog-icon.miss { background: var(--warn-bg); color: var(--warn-ink); font-size: 11px; font-weight: 700; }
+    .prog-tips-out { margin-top: 10px; font-size: 13px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; }
+    .prog-tips-card p { font-size: 12px; line-height: 1.5; color: var(--ink-soft); margin-bottom: 10px; }
+    .prog-empty { font-size: 13px; line-height: 1.55; color: var(--ink-soft); }
+    .prog-empty b { display: block; font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+    .prog-empty .btn-outline { margin-top: 12px; }
+    .practice-sentence { font-size: 15px; line-height: 1.6; color: var(--ink); }
+    .practice-input {
+      display: block; width: 100%; margin-top: 10px; padding: 10px 12px; resize: vertical; min-height: 72px;
+      border: 1px solid var(--line-focus); border-radius: 8px; background: var(--card); color: var(--ink);
+      font-family: var(--sans); font-size: 15px; line-height: 1.6;
+    }
+    .practice-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+    .practice-actions { display: flex; gap: 8px; margin-top: 12px; }
     .settings-header {
       flex: none;
       display: flex;
@@ -791,6 +851,11 @@
     </button>
   </div>
 
+  <div class="tabs" role="tablist" aria-label="Proofr">
+    <button type="button" class="tab" role="tab" id="tabWrite" aria-selected="true" aria-controls="thread">Write</button>
+    <button type="button" class="tab" role="tab" id="tabProgress" aria-selected="false" aria-controls="progressPanel" tabindex="-1">Progress</button>
+  </div>
+
   <!-- Everything below the header lives in .panel-body, which fills the
        remaining height. Settings is a full-panel overlay inside it (own
        header + back button) rather than an inline accordion — an accordion
@@ -825,6 +890,86 @@
 
     <!-- Settings: full-panel view, not an accordion. Covers the thread and
          composer while open. -->
+    <!-- Progress: how the user's own writing changes, from corrected word
+         pairs and daily word counts stored on this computer (never sentences). -->
+    <div id="progressPanel" class="settings-panel hidden" role="tabpanel" aria-labelledby="tabProgress">
+      <div class="settings-body">
+        <div class="prog-card prog-empty" id="progEmpty" hidden>
+          <b id="progEmptyTitle">Nothing here yet</b>
+          <span id="progEmptyText">Proofread something you wrote. The words Proofr fixes for you show up here, and so does how your mistake rate changes week to week.</span>
+          <br><button type="button" class="btn-outline" id="btnProgEmpty" hidden>Turn on in Settings</button>
+        </div>
+        <div class="prog" id="progBody" hidden>
+          <section class="prog-card">
+            <div class="prog-label">Mistakes per 100 words</div>
+            <div class="prog-big"><b id="progRate">-</b><span>this week</span></div>
+            <div class="prog-trend" id="progTrend"></div>
+            <svg class="prog-spark" id="progSpark" viewBox="0 0 320 64" role="img"></svg>
+            <div class="prog-axis" id="progAxis"><span>8 weeks ago</span><span>this week</span></div>
+            <div class="prog-note" id="progBasis"></div>
+          </section>
+          <section class="prog-card prog-focus" id="progFocus" hidden>
+            <div class="prog-label">This week's focus</div>
+            <h3 id="progFocusTitle"></h3>
+            <p id="progFocusText"></p>
+            <button type="button" class="btn-solid" id="btnPractice">Practice now</button>
+          </section>
+          <section class="prog-card" id="progMasteredCard" hidden>
+            <div class="prog-label">Mastered</div>
+            <div class="prog-list" id="progMastered"></div>
+          </section>
+          <section class="prog-card" id="progWorkingCard" hidden>
+            <div class="prog-label">Still working on</div>
+            <div class="prog-list" id="progWorking"></div>
+          </section>
+          <section class="prog-card prog-tips-card">
+            <div class="prog-label">Writing tips</div>
+            <p>Your AI looks at the words above and suggests a few habits to change. Only that list of words is sent, never your text.</p>
+            <button type="button" class="btn-outline" id="btnTips">Get writing tips</button>
+            <p class="settings-hint" id="insTipsStatus" role="status"></p>
+            <div class="prog-tips-out" id="insTips" hidden></div>
+          </section>
+          <p class="prog-note">Only corrected words and word counts are kept, on this computer. Never your sentences. <button type="button" class="link-danger" id="btnClearInsights">Clear history</button></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Practice: sentences built locally from the user's own mistakes. -->
+    <div id="practicePanel" class="settings-panel hidden">
+      <div class="settings-header">
+        <button class="icon-btn" id="btnPracticeBack" type="button" aria-label="Back to Progress">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <h2 id="practiceTitle">Practice</h2>
+      </div>
+      <div class="settings-body">
+        <div class="prog">
+          <section class="prog-card" id="practiceCard">
+            <div class="prog-label">Fix this sentence yourself</div>
+            <p class="practice-sentence" id="practicePrompt"></p>
+            <textarea class="practice-input" id="practiceInput" rows="3" spellcheck="false" autocomplete="off" aria-label="Your corrected sentence"></textarea>
+            <div class="practice-actions">
+              <button type="button" class="btn-solid" id="btnPracticeCheck">Check</button>
+              <button type="button" class="btn-outline" id="btnPracticeSkip">Skip</button>
+            </div>
+          </section>
+          <section class="prog-card" id="practiceResult" hidden>
+            <div class="prog-label" id="practiceScore"></div>
+            <div class="prog-list" id="practiceList"></div>
+          </section>
+          <section class="prog-card prog-empty" id="practiceDone" hidden>
+            <b id="practiceDoneTitle"></b>
+            <span id="practiceDoneText"></span>
+            <div class="practice-actions">
+              <button type="button" class="btn-solid" id="btnPracticeAgain">Practice again</button>
+              <button type="button" class="btn-outline" id="btnPracticeDone">Back to Progress</button>
+            </div>
+          </section>
+          <p class="prog-note">Sentences are built from your own common mistakes. Nothing is sent anywhere.</p>
+        </div>
+      </div>
+    </div>
+
     <div id="settingsPanel" class="settings-panel hidden">
       <div class="settings-header">
         <button class="icon-btn" id="btnSettingsBack" type="button" aria-label="Back">
@@ -927,6 +1072,20 @@
           <input type="checkbox" id="hoverToggle">
         </label>
         <p class="settings-hint" id="hoverHint" role="status"></p>
+        <label class="toggle-row" for="insightsToggle">
+          <span>
+            <b>Learn from my proofreads</b>
+            <span class="settings-hint">Keeps the words Proofread fixes for you and how many words you proofread (never your sentences) on this computer, for the Progress tab.</span>
+          </span>
+          <input type="checkbox" id="insightsToggle">
+        </label>
+        <label class="toggle-row" for="coachToggle">
+          <span>
+            <b>Coach mode</b>
+            <span class="settings-hint">Proofread marks the mistakes in your text box instead of fixing them, so you can fix them yourself. Show fixes is one click away.</span>
+          </span>
+          <input type="checkbox" id="coachToggle">
+        </label>
 
         <details class="advanced" id="advancedSection">
           <summary>Advanced: AI engine</summary>

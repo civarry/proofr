@@ -366,6 +366,9 @@ async function refreshSettingsPanel() {
 
   const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
   refs.hoverToggle.checked = !!srHoverAssist;
+  const { srInsightsOn, srCoach } = await chrome.storage.sync.get(['srInsightsOn', 'srCoach']);
+  refs.insightsToggle.checked = srInsightsOn !== false;
+  refs.coachToggle.checked = srCoach === true;
   refreshWeekLine();
 }
 
@@ -1025,6 +1028,7 @@ async function runTurn(turn, opts = {}) {
     delete turn.errorMessage;
     delete turn.statusText;
     await StatsManager.updateStats(turn.mode);
+    if (turn.mode === 'grammar') recordInsights(turn.inputText, rewritten);
   } catch (error) {
     turn.status = 'error';
     turn.errorMessage = controller.signal.aborted ? 'Stopped.' : (error.message || 'Something went wrong.');
@@ -1163,6 +1167,232 @@ async function loadShortcut() {
   refs.shortcutValue.textContent = shortcutText || 'Not set';
 }
 
+// === Progress ===
+// Built from srInsights in local storage: corrected word pairs and daily word
+// counts, never sentences. background.js writes it (the panel's own
+// Proofreads are sent there too, so every write goes through one queue).
+// Tips send the word list, and nothing else, to whichever AI is set up, and
+// only when asked.
+const FOCUS_COPY = {
+  apostrophe: 'Apostrophes in contractions',
+  spelling: 'Words you often misspell',
+  grammar: 'Word choice and agreement',
+  capitalization: 'Capital letters',
+  punctuation: 'Punctuation',
+  other: 'Your most common fixes',
+};
+let progressView = null;
+
+function recordInsights(before, after) {
+  return chrome.runtime.sendMessage({ action: 'recordInsights', before, after }).catch(() => {});
+}
+
+function showTab(name) {
+  const progress = name === 'progress';
+  for (const [tab, on] of [[refs.tabWrite, !progress], [refs.tabProgress, progress]]) {
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+  }
+  if (!refs.settingsPanel.classList.contains('hidden')) toggleSettingsPanel(false);
+  refs.practicePanel.classList.add('hidden');
+  refs.progressPanel.classList.toggle('hidden', !progress);
+  closeEngineMenu();
+  if (progress) renderProgress();
+}
+
+const fmt = (n) => Number(n || 0).toLocaleString();
+
+// Line through the weeks that have a rate; weeks with no words are gaps in x.
+function sparkSvg(weeks) {
+  const pts = weeks.map((w, i) => (w.per100 == null ? null : { i, v: w.per100 })).filter(Boolean);
+  if (pts.length < 2) return '';
+  const max = Math.max(...pts.map((p) => p.v), 1);
+  const x = (i) => 8 + (i * 304) / (weeks.length - 1);
+  const y = (v) => 56 - (v / max) * 48;
+  const line = pts.map((p) => `${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  const last = pts[pts.length - 1];
+  return `<line class="axis" x1="0" y1="63" x2="320" y2="63"/><polyline class="line" points="${line}"/><circle class="dot" cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="4"/>`;
+}
+
+function pairHtml(p) {
+  return `<span class="from">${escapeHtml(p.from)}</span> <span aria-hidden="true">→</span><span class="visually-hidden"> to </span> <span class="to">${escapeHtml(p.to)}</span>`;
+}
+
+// Practice needs pairs it can build sentences from; returns the kind to focus
+// on and whether a round can be built for it.
+function pickFocus(view) {
+  const counts = {};
+  for (const p of view.working) counts[p.kind] = (counts[p.kind] || 0) + p.n;
+  const kind = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+  if (!kind) return null;
+  const words = view.working.filter((p) => p.kind === kind).slice(0, 3).map((p) => p.to);
+  const canPractice = typeof SR_buildPractice === 'function' && SR_buildPractice(view, 3, 0).length > 0;
+  return { kind, words, canPractice };
+}
+
+async function renderProgress() {
+  if (typeof SR_insightsView !== 'function') return null;
+  const { srInsights } = await chrome.storage.local.get(['srInsights']);
+  const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
+  const view = SR_insightsView(srInsights, Date.now());
+  progressView = view;
+  const empty = !view.total.proofreads;
+  refs.progEmpty.hidden = !empty;
+  refs.progBody.hidden = empty;
+  refs.btnProgEmpty.hidden = srInsightsOn !== false;
+  if (empty) {
+    refs.progEmptyTitle.textContent = srInsightsOn === false ? 'Progress is turned off' : 'Nothing here yet';
+    refs.progEmptyText.textContent = srInsightsOn === false
+      ? 'Turn on "Learn from my proofreads" and Proofr will keep the words it fixes for you, on this computer.'
+      : 'Proofread something you wrote. The words Proofr fixes for you show up here, and so does how your mistake rate changes week to week.';
+    return view;
+  }
+
+  // Rate, trend, chart
+  const rate = view.week.per100;
+  refs.progRate.textContent = rate == null ? '-' : rate.toFixed(1);
+  const t = view.trend;
+  refs.progTrend.className = `prog-trend${t != null && t < 0 ? ' down' : ''}`;
+  refs.progTrend.textContent = rate == null ? 'Proofread something this week to see your rate.'
+    : t == null ? 'A trend shows once you have proofread 200 words in each of two weeks.'
+      : t < 0 ? `↓ ${Math.abs(t).toFixed(1)} fewer than last week`
+        : t > 0 ? `↑ ${t.toFixed(1)} more than last week` : 'Same as last week';
+  const spark = sparkSvg(view.weeks);
+  refs.progSpark.innerHTML = spark;
+  refs.progSpark.hidden = !spark;
+  refs.progAxis.hidden = !spark;
+  const rated = view.weeks.filter((w) => w.per100 != null);
+  refs.progSpark.setAttribute('aria-label', rated.length ? `Mistakes per 100 words by week: ${rated.map((w) => w.per100).join(', ')}` : '');
+  refs.progBasis.textContent = `Based on ${fmt(view.total.proofreads)} proofread${view.total.proofreads === 1 ? '' : 's'}, ${fmt(view.total.words)} words. The rate also moves when you switch AI, since each one catches different things.`;
+
+  // Focus
+  const focus = pickFocus(view);
+  refs.progFocus.hidden = !focus;
+  if (focus) {
+    refs.progFocusTitle.textContent = FOCUS_COPY[focus.kind] || FOCUS_COPY.other;
+    const list = focus.words.map((w) => `<b>${escapeHtml(w)}</b>`).join(', ');
+    refs.progFocusText.innerHTML = focus.canPractice
+      ? `Most of your recent fixes are words like ${list}. Two minutes of practice, using your own mistakes.`
+      : `Most of your recent fixes are like ${list}. Watch for these the next time you write.`;
+    refs.btnPractice.hidden = !focus.canPractice;
+  }
+
+  // Mastered / Still working on
+  refs.progMasteredCard.hidden = !view.mastered.length;
+  refs.progMastered.innerHTML = view.mastered.slice(0, 5).map((p) =>
+    `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(p.to)}</span><span class="meta">clean for ${p.daysClean} days</span></div>`).join('');
+  refs.progWorkingCard.hidden = !view.working.length;
+  refs.progWorking.innerHTML = view.working.slice(0, 5).map((p) => {
+    const rule = typeof SR_ruleFor === 'function' ? SR_ruleFor(p) : null;
+    return `<div class="prog-row"><div>${pairHtml(p)}${rule ? `<div class="rule">${escapeHtml(rule)}</div>` : ''}</div><span class="meta">${p.n}×</span></div>`;
+  }).join('');
+  return view;
+}
+
+// Tips: the connected provider, else Chrome's on-device model (from this
+// click, so a first-time download is allowed). The list is fenced as data
+// and the reply checked like any other (SR_cleanOutput).
+async function getTips() {
+  const view = await renderProgress();
+  if (!view || !view.working.length && !view.mastered.length) return;
+  const pairs = [...view.working, ...view.mastered].slice(0, 15);
+  const kinds = view.kinds;
+  const prompt = SR_buildTipsPrompt(pairs, kinds);
+  refs.btnTips.disabled = true;
+  refs.insTipsStatus.textContent = 'Looking at your list…';
+  refs.insTips.hidden = true;
+  try {
+    const provider = await CloudProvider.getConfig();
+    const { engine } = await Settings.get();
+    const deviceNow = (await SR_deviceAvailability()) === 'available';
+    let text;
+    if (providerReady(provider) && (engine === 'cloud' || !deviceNow)) {
+      text = await SR_callCloud(provider, prompt, 0.4, 600);
+    } else {
+      const LM = SR_deviceModel();
+      if (!LM) throw new Error('Connect an AI provider in Settings to get tips.');
+      const session = await LM.create({ expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] });
+      try { text = await session.prompt(SR_joinPrompt(prompt)); } finally { try { session.destroy(); } catch { /* ignore */ } }
+    }
+    refs.insTips.textContent = SR_cleanOutput(text, { fence: prompt.fence });
+    refs.insTips.hidden = false;
+    refs.insTipsStatus.textContent = '';
+  } catch (error) {
+    refs.insTipsStatus.textContent = error.message || 'Couldn\'t get tips right now. Try again.';
+  } finally {
+    refs.btnTips.disabled = false;
+  }
+}
+
+// === Practice ===
+// A round of 3 sentences from SR_buildPractice, checked on this computer.
+const practice = { items: [], i: 0, right: 0, total: 0, checked: false };
+
+function startPractice() {
+  const view = progressView;
+  if (!view || typeof SR_buildPractice !== 'function') return;
+  const items = SR_buildPractice(view, 3, Math.floor(Math.random() * 1e6));
+  if (!items.length) return;
+  Object.assign(practice, { items, i: 0, right: 0, total: 0, checked: false });
+  refs.progressPanel.classList.add('hidden');
+  refs.practicePanel.classList.remove('hidden');
+  showPracticeItem();
+}
+
+function showPracticeItem() {
+  const item = practice.items[practice.i];
+  refs.practiceTitle.textContent = `Practice · ${practice.i + 1} of ${practice.items.length}`;
+  refs.practiceCard.hidden = false;
+  refs.practiceDone.hidden = true;
+  refs.practiceResult.hidden = true;
+  refs.practicePrompt.textContent = item.prompt;
+  refs.practiceInput.value = item.prompt;
+  refs.practiceInput.readOnly = false;
+  refs.btnPracticeCheck.textContent = 'Check';
+  refs.btnPracticeSkip.hidden = false;
+  practice.checked = false;
+  refs.practiceInput.focus();
+  refs.practiceInput.setSelectionRange(item.prompt.length, item.prompt.length);
+}
+
+function checkPractice() {
+  if (practice.checked) { nextPractice(); return; }
+  const item = practice.items[practice.i];
+  const res = SR_checkPractice(item, refs.practiceInput.value);
+  practice.checked = true;
+  practice.right += res.right.length;
+  practice.total += res.right.length + res.missed.length;
+  const n = res.right.length + res.missed.length;
+  refs.practiceScore.textContent = `${res.right.length} of ${n} right`;
+  refs.practiceList.innerHTML = [
+    ...res.right.map((to) => `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(to)}</span></div>`),
+    ...res.missed.map((m) => `<div class="prog-row"><span class="prog-icon miss" aria-hidden="true">!</span><div>${pairHtml(m)}${m.rule ? `<div class="rule">${escapeHtml(m.rule)}</div>` : ''}</div></div>`),
+  ].join('');
+  refs.practiceResult.hidden = false;
+  refs.practiceInput.readOnly = true;
+  refs.btnPracticeSkip.hidden = true;
+  refs.btnPracticeCheck.textContent = practice.i + 1 < practice.items.length ? 'Next sentence' : 'Finish';
+  refs.btnPracticeCheck.focus();
+}
+
+function nextPractice() {
+  if (practice.i + 1 < practice.items.length) { practice.i++; showPracticeItem(); return; }
+  refs.practiceTitle.textContent = 'Practice';
+  refs.practiceCard.hidden = true;
+  refs.practiceResult.hidden = true;
+  refs.practiceDone.hidden = false;
+  refs.practiceDoneTitle.textContent = practice.total ? `${practice.right} of ${practice.total} fixed` : 'Round done';
+  refs.practiceDoneText.textContent = practice.total && practice.right === practice.total
+    ? 'All of them. Your progress shows in your real writing: the rate on the Progress tab.'
+    : 'The ones you missed come back in your next round. Your progress shows in your real writing: the rate on the Progress tab.';
+  refs.btnPracticeAgain.focus();
+}
+
+function closePractice() {
+  refs.practicePanel.classList.add('hidden');
+  showTab('progress');
+}
+
 // === One-time rating ask ===
 // Shown once, under a successful result, after 5 successful rewrites (the
 // same rewriteStats counter every surface increments). Same ask for everyone,
@@ -1245,6 +1475,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
+    'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'progBody',
+    'progRate', 'progTrend', 'progSpark', 'progAxis', 'progBasis', 'progFocus', 'progFocusTitle', 'progFocusText', 'btnPractice',
+    'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
+    'btnTips', 'insTipsStatus', 'insTips', 'btnClearInsights', 'insightsToggle', 'coachToggle',
+    'practicePanel', 'btnPracticeBack', 'practiceTitle', 'practiceCard', 'practicePrompt', 'practiceInput',
+    'btnPracticeCheck', 'btnPracticeSkip', 'practiceResult', 'practiceScore', 'practiceList',
+    'practiceDone', 'practiceDoneTitle', 'practiceDoneText', 'btnPracticeAgain', 'btnPracticeDone',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
@@ -1529,6 +1766,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('click', (e) => {
     if (!refs.engineMenu.contains(e.target) && !refs.providerPill.contains(e.target)) closeEngineMenu();
   });
+
+  // Write | Progress
+  refs.tabWrite.addEventListener('click', () => showTab('write'));
+  refs.tabProgress.addEventListener('click', () => showTab('progress'));
+  for (const tab of [refs.tabWrite, refs.tabProgress]) {
+    tab.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const next = tab === refs.tabWrite ? refs.tabProgress : refs.tabWrite;
+      showTab(next === refs.tabProgress ? 'progress' : 'write');
+      next.focus();
+    });
+  }
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.srInsights && !refs.progressPanel.classList.contains('hidden')) renderProgress();
+  });
+  refs.btnProgEmpty.addEventListener('click', () => toggleSettingsPanel(true));
+  refs.btnTips.addEventListener('click', getTips);
+  refs.btnClearInsights.addEventListener('click', async () => {
+    await chrome.storage.local.remove(['srInsights']);
+    refs.insTips.hidden = true;
+    renderProgress();
+  });
+  refs.insightsToggle.addEventListener('change', async () => {
+    await Settings.set({ srInsightsOn: refs.insightsToggle.checked });
+    showSavedToast();
+  });
+  refs.coachToggle.addEventListener('change', async () => {
+    await Settings.set({ srCoach: refs.coachToggle.checked });
+    showSavedToast();
+  });
+  refs.btnPractice.addEventListener('click', startPractice);
+  refs.btnPracticeCheck.addEventListener('click', checkPractice);
+  refs.btnPracticeSkip.addEventListener('click', nextPractice);
+  refs.practiceInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); checkPractice(); }
+  });
+  refs.btnPracticeBack.addEventListener('click', closePractice);
+  refs.btnPracticeDone.addEventListener('click', closePractice);
+  refs.btnPracticeAgain.addEventListener('click', startPractice);
 
   refs.btnChangeShortcut.addEventListener('click', () => {
     chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });

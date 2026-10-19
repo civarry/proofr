@@ -315,6 +315,48 @@ try {
     check(!back.visible && back.focus === 'ta', `dialog: Esc closes at once and gives focus back (got ${JSON.stringify(back)})`);
   });
 
+  // 3d2. Coach mode: the original with spots marked, no fix shown; reveal or fix it yourself.
+  await step('coach', async () => {
+    await page.evaluate(() => document.getElementById('ta').focus());
+    const before = 'hi team we was late'; // "," is a pure insertion: a gap spot
+    const after = 'Hi team, we were late';
+    const r = await inModal((a, b) => {
+      const M = window.SmartRewriteModal;
+      window.__revealed = 0;
+      M.showCoach(a, b, { where: 'On this computer', onReveal: () => { window.__revealed++; M.showResult(a, b, 'grammar', 'device'); } });
+      const box = document.getElementById('sr-coach-text');
+      const e = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, metaKey: true, bubbles: true, cancelable: true });
+      getSelection().removeAllRanges();
+      document.dispatchEvent(e);
+      return {
+        role: document.querySelector('.sr-modal-container').getAttribute('role'),
+        spots: box.querySelectorAll('.sr-spot').length, gaps: box.querySelectorAll('.sr-spot-gap').length,
+        text: box.textContent, count: document.getElementById('sr-coach-count').textContent,
+        focus: document.activeElement.id, buttons: [...document.querySelectorAll('#sr-modal-footer button')].map((x) => x.textContent),
+        copied: e.defaultPrevented,
+      };
+    }, before, after);
+    const n = C.SR_diffCount(C.SR_wordDiff(before, after));
+    check(r.role === 'dialog' && r.spots === n && r.gaps === 1, `coach: ${n} spots marked, one a gap (got ${r.spots}, gaps ${r.gaps})`);
+    check(r.text === before, `coach: shows the original, no fix (got ${JSON.stringify(r.text)})`);
+    check(r.count === `${n} spots to check. Fix them in your text box, or show the fixes.`, `coach: says how many (got ${JSON.stringify(r.count)})`);
+    check(r.focus === 'sr-coach-self' && r.buttons.join() === "I'll fix them,Show fixes", `coach: buttons, focus on "I'll fix them" (got ${r.focus}, ${r.buttons})`);
+    check(!r.copied, 'coach: Ctrl/Cmd+C does not copy the hidden fix');
+    const shown = await inModal(() => {
+      document.getElementById('sr-coach-reveal').click();
+      return { revealed: window.__revealed, diff: !!document.querySelector('#sr-rewritten-text ins.sr-diff-ins'), visible: window.SmartRewriteModal.isVisible };
+    });
+    check(shown.revealed === 1 && shown.diff && shown.visible, `coach: Show fixes opens the diff (got ${JSON.stringify(shown)})`);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.getElementById('ta').focus());
+    const self = await inModal((a, b) => {
+      window.SmartRewriteModal.showCoach(a, b, {});
+      document.getElementById('sr-coach-self').click();
+      return { visible: window.SmartRewriteModal.isVisible, focus: document.activeElement.id };
+    }, before, after);
+    check(!self.visible && self.focus === 'ta', `coach: "I'll fix them" closes and returns to the text box (got ${JSON.stringify(self)})`);
+  });
+
   // 3e. One toast per action, near the field, held while hovered (§3 #5, #6, #7, #3).
   await step('one toast', async () => {
     await page.evaluate(() => { const el = document.getElementById('ta'); el.value = 'teh quick brown fox'; el.focus(); });

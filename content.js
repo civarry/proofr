@@ -544,6 +544,54 @@
       this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where, action: review.action, notice: review.notice });
     }
 
+    // Coach mode: the original text with each spot Proofread would change marked,
+    // without the fix. "Show fixes" calls onReveal (the usual diff); "I'll fix them"
+    // closes and puts focus back in the text box.
+    showCoach(original, rewritten, { where, onReveal } = {}) {
+      this.currentText = original;
+      this.currentTone = 'grammar';
+      this.currentRewrite = ''; // Ctrl/Cmd+C must not copy the hidden fix
+      this.busy = false;
+      this.hideLoadingToast();
+      if (!this.modal) this.createModal();
+
+      const ops = typeof SR_wordDiff === 'function' ? SR_wordDiff(original, rewritten) : null;
+      const groups = ops ? SR_diffGroups(ops) : [];
+      let html = '', spots = 0;
+      for (let k = 0; k < (ops || []).length; k++) {
+        if (groups[k] < 0) { html += this.escapeHtml(ops[k].text); continue; }
+        let del = '';
+        const g = groups[k];
+        for (; k < ops.length && groups[k] === g; k++) if (ops[k].type === 'del') del += ops[k].text;
+        k--;
+        spots++;
+        html += del
+          ? `<mark class="sr-spot">${this.escapeHtml(del)}</mark>`
+          : '<mark class="sr-spot sr-spot-gap" aria-label="something missing here"></mark>';
+      }
+      if (!ops) html = this.escapeHtml(original);
+      const count = !ops ? 'Too long to mark the spots. Show fixes to see them.'
+        : spots === 0 ? 'Nothing to fix.'
+        : `${spots} spot${spots === 1 ? '' : 's'} to check. Fix ${spots === 1 ? 'it' : 'them'} in your text box, or show the fixes.`;
+
+      document.getElementById('sr-modal-content').innerHTML = `
+        ${this.toneChipsHtml('grammar')}
+        <div class="sr-result-box sr-scrollable" id="sr-coach-text">${html}</div>
+        <p class="sr-coach-count" id="sr-coach-count">${count}</p>
+      `;
+      const engineTag = where ? `<span class="sr-engine">${this.escapeHtml(where)}</span>` : '';
+      document.getElementById('sr-modal-footer').innerHTML = spots || !ops
+        ? `<button class="sr-btn sr-btn-primary" id="sr-coach-self">I'll fix them</button>
+           <button class="sr-btn sr-btn-secondary" id="sr-coach-reveal">Show fixes</button>${engineTag}`
+        : `<button class="sr-btn sr-btn-primary" id="sr-coach-self">Close</button>${engineTag}`;
+      document.getElementById('sr-coach-self').addEventListener('click', () => this.hide());
+      const reveal = document.getElementById('sr-coach-reveal');
+      if (reveal) reveal.addEventListener('click', () => { if (onReveal) onReveal(); });
+
+      this.bindChips();
+      this.show();
+    }
+
     // Focus moves into the dialog (primary button) and comes back on hide.
     show() {
       if (this.modal) {

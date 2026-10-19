@@ -74,6 +74,30 @@ function bumpDay(days) {
   return out;
 }
 
+// === "Your writing": corrected word pairs only, never sentences ===
+// Proofread results feed a local tally of which words get fixed, for the
+// side panel's "Your writing" view. Writes are chained so two results
+// landing together can't overwrite each other's update.
+let insightsQueue = Promise.resolve();
+function recordInsights(before, after) {
+  insightsQueue = insightsQueue.then(async () => {
+    if (typeof SR_extractCorrections !== 'function' || typeof SR_mergeInsights !== 'function') return;
+    const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
+    if (srInsightsOn === false) return;
+    // Every proofread counts, even a clean one: words with no fixes are what
+    // brings "mistakes per 100 words" down. Fixes are counted from the full
+    // diff, not the stored pairs, so pairs dropped for privacy (names,
+    // numbers) don't read as fewer mistakes.
+    const pairs = SR_extractCorrections(before, after);
+    const words = (String(before).match(/[\p{L}\p{N}]+/gu) || []).length;
+    const ops = SR_wordDiff(before, after);
+    const fixes = ops ? SR_diffCount(ops) : pairs.length;
+    const { srInsights } = await chrome.storage.local.get(['srInsights']);
+    await chrome.storage.local.set({ srInsights: SR_mergeInsights(srInsights, pairs, Date.now(), words, fixes) });
+  }).catch((e) => console.warn('Insights:', e?.message || e));
+  return insightsQueue;
+}
+
 class StatsManager {
   static async getStats() {
     const result = await chrome.storage.local.get(['rewriteStats']);
@@ -379,6 +403,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleHoverAskAI(message, sendResponse);
     return true; // async sendResponse
   }
+  // The side panel's Proofreads go through the same write queue as the
+  // page's. Only extension pages may write here, never a content script.
+  if (message.action === 'recordInsights') {
+    if (sender.tab || !String(sender.url || '').startsWith(chrome.runtime.getURL(''))) return false;
+    recordInsights(String(message.before || ''), String(message.after || '')).then(() => sendResponse({ ok: true }));
+    return true; // async sendResponse
+  }
   if (message.action === 'hasCloudKey') {
     CloudProvider.isReady().then((hasKey) => sendResponse({ hasKey }), () => sendResponse({ hasKey: false }));
     return true; // async sendResponse
@@ -466,10 +497,14 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
       inject(tabId, streamPartial, [soFar]);
     };
     usedDevice = onDevice;
-    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, onToken, controller.signal);
+    // Coach mode marks mistakes without showing fixes, so a streamed answer
+    // (which is the fix) must not appear while it runs.
+    const coach = tone === 'grammar' && (await chrome.storage.sync.get(['srCoach'])).srCoach === true;
+    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, coach ? null : onToken, controller.signal);
     await StatsManager.updateStats(tone);
+    if (tone === 'grammar') recordInsights(text, rewritten);
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider)]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider), coach]);
   } catch (error) {
     // Stopped from the toast: it already says "Stopped.", so add nothing.
     if (error && error.name === 'AbortError') return;
@@ -479,14 +514,15 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     const cloudReady = providerReady(cloud);
     // On-device failures (too long, unsupported language, timeout) have a
     // cloud fallback the user may not know about.
-    if (!cloudReady && !/key|provider/i.test(message)) {
+    if (!cloudReady && error.name !== 'SuspectOutput' && !/key|provider/i.test(message)) {
       message += ' Connecting an AI provider in the Proofr side panel handles longer text and more languages.';
     }
     // Every model error can be retried in place; an on-device failure can go
     // straight to the connected cloud provider instead.
     const retry = { text, tone, targetLang, label: 'Try again' };
     const alternative = usedDevice && cloudReady ? { text, tone, targetLang, engine: 'cloud', label: `Use ${cloud.displayName} instead` } : null;
-    inject(tabId, showErrorMessage, [message, null, { retry, alternative }]);
+    const title = error.name === 'SuspectOutput' ? 'Proofr didn\'t use that answer' : null;
+    inject(tabId, showErrorMessage, [message, title, { retry, alternative }]);
   } finally {
     if (requestId) activeRewrites.delete(requestId);
   }
@@ -591,7 +627,7 @@ function showLoadingModal(originalText, tone, targetLang, requestId, onDevice) {
 // so the page's editor (React, Lexical, ProseMirror…) sees a normal input
 // event and Ctrl+Z restores the original. Only replaces when the captured
 // text is still there; otherwise the result opens in the modal instead.
-function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where) {
+function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach) {
   const targets = window.__srTargets;
   const target = targets && targets.get(requestId);
   if (targets) targets.delete(requestId);
@@ -646,6 +682,21 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
         guardFailed ? 'Proofread ready for the box you left. It changed more than usual: review it first.' : 'Proofread ready for the box you left.',
         guardFailed ? { review } : { review, apply: { label: 'Apply', run: () => { try { return !!insertInto(target, rewrittenText); } catch (_) { return false; } } } });
     }
+    return;
+  }
+
+  // Coach mode: mark the spots, leave the text alone. The user fixes them in
+  // the box, or reveals the usual diff with Apply to text box.
+  if (coach && window.SmartRewriteModal && window.SmartRewriteModal.showCoach) {
+    const opts = { notice: guardNotice, where };
+    const apply = guardFailed ? replaceAnyway
+      : target ? { label: 'Apply to text box', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
+    if (apply) opts.action = apply;
+    window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: apply };
+    window.SmartRewriteModal.showCoach(originalText, rewrittenText, {
+      where,
+      onReveal: () => window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, opts),
+    });
     return;
   }
 

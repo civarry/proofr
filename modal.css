@@ -35,6 +35,8 @@
   --sr-notice-bg: #fbf3e4;
   --sr-notice-border: #ecd9b5;
   --sr-notice-fg: #6b4a12;
+  --sr-spot-line: #c98a1a; /* Coach mode: a spot to check (amber, not the error red) */
+  --sr-spot-bg: rgba(232, 170, 60, 0.16);
   /* Brand accent (Ocean blue), same values as the side panel. */
   --sr-accent: #1d64d8;
   --sr-accent-dark: #154ead;
@@ -75,6 +77,8 @@
     --sr-notice-bg: #3a2c18;
     --sr-notice-border: #5a4424;
     --sr-notice-fg: #e8bd7d;
+    --sr-spot-line: #e0a948;
+    --sr-spot-bg: rgba(224, 169, 72, 0.18);
     --sr-accent: #7ea8f8;
     --sr-accent-dark: #a9c5fa;
     --sr-on-accent: #0f1b33;
@@ -849,3 +853,9 @@
   @keyframes sr-ins-in { from { opacity: 0; } to { opacity: 1; } }
   .sr-success-notification.sr-show .sr-success-icon { animation: sr-ins-in 150ms ease-out both; }
 }
+
+/* Coach mode (content.js showCoach): the original text with each spot to check
+   marked, no fix shown. A gap marks something missing (a comma, a word). */
+.sr-spot { background: var(--sr-spot-bg); color: inherit; border-bottom: 2px solid var(--sr-spot-line); padding: 0 1px; }
+.sr-spot-gap { display: inline-block; width: 6px; height: 1em; vertical-align: -0.15em; margin: 0 1px; }
+.sr-coach-count { font-size: 13px; color: var(--sr-gray-600); margin: 10px 0 0; }
