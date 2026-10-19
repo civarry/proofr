@@ -334,6 +334,7 @@
   padding: 0 1px;
 }
 .sr-diff-del {
+  margin-right: 3px; /* keeps "was" and "were" from reading as one word */
   color: #6b6960; /* 4.9:1 on the result box; gray-500 was too faint for AA */
   text-decoration: line-through;
 }
