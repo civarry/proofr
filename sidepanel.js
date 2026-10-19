@@ -785,6 +785,7 @@ function toggleSettingsPanel(forceOpen) {
   const panel = refs.settingsPanel;
   const open = forceOpen !== undefined ? forceOpen : panel.classList.contains('hidden');
   panel.classList.toggle('hidden', !open);
+  syncChrome();
   if (open) {
     keyEditing = false;
     refreshSettingsPanel();
@@ -1202,8 +1203,19 @@ function showTab(name) {
   if (!refs.settingsPanel.classList.contains('hidden')) toggleSettingsPanel(false);
   refs.practicePanel.classList.add('hidden');
   refs.progressPanel.classList.toggle('hidden', !progress);
+  syncChrome();
   closeEngineMenu();
   if (progress) renderProgress();
+}
+
+// Settings is its own page, not part of Write or Progress: the tabs go away
+// while it's open (Back returns to the tab you were on). The trash icon
+// clears Write's history, so it only shows on Write.
+function syncChrome() {
+  const settingsOpen = !refs.settingsPanel.classList.contains('hidden');
+  const onWrite = refs.tabWrite.getAttribute('aria-selected') === 'true';
+  refs.tabBar.hidden = settingsOpen;
+  refs.btnClearHistory.hidden = settingsOpen || !onWrite;
 }
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -1546,7 +1558,7 @@ const InfoOverlays = {
 // === Wire up ===
 document.addEventListener('DOMContentLoaded', async () => {
   [
-    'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
+    'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'tabBar', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',

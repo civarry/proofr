@@ -413,6 +413,8 @@
 
     /* Write | Progress tabs */
     .tabs { flex: none; display: flex; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--paper); }
+    /* A display rule would otherwise beat the hidden attribute. */
+    .tabs[hidden], .icon-btn[hidden], .prog[hidden], .prog-axis[hidden], .prog-spark[hidden], .prog-legend[hidden], .prog-note[hidden], .prog-bars[hidden] { display: none; }
     .tab {
       background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
       padding: 8px 10px; font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer;
@@ -872,7 +874,7 @@
     </button>
   </div>
 
-  <div class="tabs" role="tablist" aria-label="Proofr">
+  <div class="tabs" id="tabBar" role="tablist" aria-label="Proofr">
     <button type="button" class="tab" role="tab" id="tabWrite" aria-selected="true" aria-controls="thread">Write</button>
     <button type="button" class="tab" role="tab" id="tabProgress" aria-selected="false" aria-controls="progressPanel" tabindex="-1">Progress</button>
   </div>

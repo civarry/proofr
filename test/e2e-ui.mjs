@@ -545,6 +545,8 @@ check('asking for tips again on the same list costs no request', mockRequests.le
 // Coach mode on: spots marked, text untouched; Show fixes then Apply.
 await clk(panel, '#btnSettings'); await sleep(500);
 await clk(panel, '#coachToggle'); await sleep(500);
+const chrome1 = await panel.evaluate(() => ({ tabs: document.getElementById('tabBar').hidden, trash: document.getElementById('btnClearHistory').hidden }));
+check('settings is its own page: no tabs, no trash icon', chrome1.tabs && chrome1.trash, JSON.stringify(chrome1));
 check('coach toggle saves', (await sw.evaluate(async () => (await chrome.storage.sync.get(['srCoach'])).srCoach)) === true);
 await demo.bringToFront();
 await putBox('coach', SENT);
@@ -561,6 +563,14 @@ await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), 
 const cleanCoach = await demo.evaluate(() => ({ dialog: !!document.querySelector('#smart-rewrite-modal.sr-visible #sr-coach-text, #sr-coach-text'), toast: document.getElementById('sr-toast')?.innerText || '' }));
 check('coach with nothing to fix shows the toast, not a dialog', !cleanCoach.dialog && /Nothing to fix/.test(cleanCoach.toast), JSON.stringify(cleanCoach));
 await sw.evaluate(() => chrome.storage.sync.set({ srCoach: false }));
+await panel.bringToFront();
+await clk(panel, '#btnSettingsBack'); await sleep(300);
+const chrome2 = await panel.evaluate(() => ({ tabs: document.getElementById('tabBar').hidden, progress: document.getElementById('tabProgress').getAttribute('aria-selected'), trash: document.getElementById('btnClearHistory').hidden }));
+check('back from settings returns to the tab you were on', !chrome2.tabs && chrome2.progress === 'true', JSON.stringify(chrome2));
+check('the trash icon is only on Write', chrome2.trash, JSON.stringify(chrome2));
+await clk(panel, '#tabWrite'); await sleep(200);
+check('the trash icon shows on Write', !(await panel.evaluate(() => document.getElementById('btnClearHistory').hidden)));
+await demo.bringToFront();
 
 // Patterns appear once this writer's own fixes support one.
 await panel.bringToFront();
@@ -639,6 +649,19 @@ await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), 
 const leakText = await demo.evaluate(() => document.querySelector('#smart-rewrite-modal')?.innerText || '');
 check('a reply that repeats the instructions is not inserted', (await boxValue('leak')) === LEAK, await boxValue('leak'));
 check('and the user is told why', /didn't use that answer/.test(leakText) && /repeated its own instructions/.test(leakText), leakText.replace(/\s+/g, ' ').slice(0, 120));
+
+// Empty Progress: only the "Nothing here yet" card, none of the empty widgets.
+await panel.bringToFront();
+await clk(panel, '#tabProgress'); await sleep(300);
+await clk(panel, '#btnClearInsights'); await sleep(500);
+const empty = await panel.evaluate(() => {
+  const shown = (id) => { const e = document.getElementById(id); return !!e && e.getClientRects().length > 0; };
+  return { emptyCard: shown('progEmpty'), body: shown('progBody'), rate: shown('progRate'), axis: shown('progAxis') };
+});
+check('empty progress shows only the empty-state card', empty.emptyCard && !empty.body && !empty.rate && !empty.axis, JSON.stringify(empty));
+// Nothing hidden by attribute is still on screen anywhere in the panel.
+const leaks = await panel.evaluate(() => [...document.querySelectorAll('[hidden]')].filter((e) => e.getClientRects().length > 0).map((e) => e.id || e.className));
+check('hidden elements are really hidden', leaks.length === 0, JSON.stringify(leaks));
 
 // (A runtime font-request check was removed: content-script CSS requests aren't visible to
 // page.on('request'), so it passed on the old code too. The static modal.css check covers it.)
