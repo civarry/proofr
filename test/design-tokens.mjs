@@ -69,6 +69,7 @@ for (const theme of ['light', 'dark']) {
   for (const k of ['--ink', '--ink-soft', '--ink-faint', '--live-ink', '--error']) {
     for (const bg of [panel['--paper'], panel['--card']]) if (ratio(panel[k], bg) < 4.5) fail(`${theme}: panel ${k} ${panel[k]} is ${ratio(panel[k], bg).toFixed(2)}:1 on ${bg}`);
   }
+  if (ratio(panel['--warn-ink'], panel['--warn-bg']) < 4.5) fail(`${theme}: practice miss text is ${ratio(panel['--warn-ink'], panel['--warn-bg']).toFixed(2)}:1 on its fill`);
   if (ratio(panel['--accent-fg'], panel['--accent']) < 4.5) fail(`${theme}: button text on accent is ${ratio(panel['--accent-fg'], panel['--accent']).toFixed(2)}:1`);
   for (const k of ['--sr-gray-500', '--sr-gray-600', '--sr-gray-900', '--sr-error', '--sr-del-fg', '--sr-notice-fg']) {
     for (const bg of [page['--sr-white'], page['--sr-gray-50']]) if (ratio(page[k], bg) < 4.5) fail(`${theme}: in-page ${k} ${page[k]} is ${ratio(page[k], bg).toFixed(2)}:1 on ${bg}`);

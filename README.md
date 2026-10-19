@@ -17,6 +17,10 @@ The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-d
 - **On any page:** select text, then right-click → Proofr → pick a mode, or press Alt+Shift+P (Option+Shift+P on a Mac) to proofread it (rebind at `chrome://extensions/shortcuts`). In editable fields the selection is replaced in place, and Ctrl/Cmd+Z undoes it. Elsewhere the result opens in a dialog with a Copy button. Proofread results in the dialog mark each change (removed words struck through, added words highlighted), with a toggle back to plain text. Click a change to put just that one back to your original words; Copy and Replace use what you kept. On-device answers appear as they are written. While an in-place rewrite runs, a small note next to the field shows progress (seconds, or a percentage for Proofread) with a Stop button; Esc also stops it while focus is still in that field. The same note then becomes the confirmation, with Review (the same view, and "Apply to text box" puts back only the changes you kept) and an Undo button, for editors where Ctrl/Cmd+Z doesn't reach the change. It stays while the pointer is over it. Alt+Shift+R (Option+Shift+R on a Mac) opens Review for the last change on the page, after the note has gone. If you moved to another box before the result came back, nothing is pasted until you click Apply. Errors from the model offer Try again, and a cloud alternative when on-device AI failed. Each result says where the text went: "On this computer" (on-device), "On your computer or network" (a local server), or "Sent to <provider>".
 - **Change guard:** a Proofread is not pasted in if it changed more than half the words (in text of 6 words or more), or removed a number, a likely name, a hedge like "maybe" or "I think", or added or removed a negation like "not". It opens in the dialog instead, with the reason and a "Replace anyway" button. The 50% line is the 95th percentile of how much human correctors changed in the [JFLEG](https://github.com/keisks/jfleg) corpus.
 - **Side panel:** click the toolbar icon to paste or type text, pick a mode with `/`, and keep a local history of results. If your Chrome can run on-device AI but hasn't downloaded the model yet, the panel has a one-time setup button.
+- **Progress tab:** the side panel's Progress tab shows your mistakes per 100 words this week with an 8-week chart, a weekly focus, words you've mastered (no fix for 14 days while you kept writing), and words you're still working on, each with a one-line rule. It is built from corrected word pairs and word counts kept on this computer, never your sentences, and can be turned off in Settings. "Get writing tips" sends only that word list to your AI.
+- **Practice:** two-minute rounds of sentences built on this computer from your own common mistakes, checked locally with the rule for anything missed.
+- **Coach mode (off by default):** Proofread marks the spots in your text box instead of fixing them. "I'll fix them" returns you to the box; "Show fixes" opens the usual diff with Apply to text box.
+- **Prompt-injection defenses:** the text you select is sent inside a tag with a random id that page text can't close, with a rule before and after it saying it is data, not instructions. Cloud calls send the rules as a separate system message. A reply that repeats Proofr's instructions is refused and never pasted.
 - **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate. With a cloud key there is also an "Ask about this…" box for a freeform instruction. Results open in a dialog; the page text is never changed.
 
 ## Privacy
@@ -43,6 +47,12 @@ node test/diff.mjs
 # Proofread change guard: normal fixes pass, meaning changes are caught (no browser needed)
 node test/guard.mjs
 
+# Writing insights: which corrected word pairs are kept (no names, numbers, links or phrases), counts, practice (no browser needed)
+node test/insights.mjs
+
+# Prompt-injection defenses: fencing, rules around the text, system/user split, leaked replies refused (no browser needed)
+node test/injection.mjs
+
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
 
@@ -50,7 +60,8 @@ node test/cloud-call.mjs
 node test/design-tokens.mjs
 
 # UI end-to-end: welcome tab, key save, side panel, rating ask, translate,
-# in-place replace + undo, hover permission, setup errors
+# in-place replace + undo, hover permission, setup errors, Progress, Practice,
+# Coach mode, and an injected reply never reaching the page
 PUPPETEER=/path/to/puppeteer.js NO_SHOTS=1 node test/e2e-ui.mjs
 
 # Success paths against a local OpenAI-compatible mock provider
