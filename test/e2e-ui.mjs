@@ -246,6 +246,18 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   check('clear history is immediate with Undo (no confirm dialog)', n > 0 && cleared === 0 && back === n, `${n} -> ${cleared} -> ${back}`);
 }
 
+// 4h. The mode list stays one line per mode, even in a narrow panel.
+await panel.bringToFront();
+await panel.setViewport({ width: 320, height: 800 });
+await clk(panel, '#modeTag'); await sleep(300);
+const rows = await panel.evaluate(() => [...document.querySelectorAll('#paletteList .palette-item')].map((r) => {
+  const lineH = (el) => (el ? el.getClientRects().length : 0);
+  return { name: r.querySelector('.name')?.textContent.trim(), h: Math.round(r.getBoundingClientRect().height), nameLines: lineH(r.querySelector('.name b')), descLines: lineH(r.querySelector('.desc')) };
+}));
+check('mode list: every row is one line at 320px', rows.length > 5 && rows.every((r) => r.h <= 34 && r.nameLines === 1 && r.descLines <= 1), JSON.stringify(rows.filter((r) => r.h > 34 || r.nameLines !== 1 || r.descLines > 1)));
+await panel.keyboard.press('Escape');
+await panel.setViewport({ width: 400, height: 800 });
+
 console.log('STEP 5');
 // 5. Translate prompt names the real language (board T2).
 mockRequests.length = 0;

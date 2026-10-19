@@ -374,7 +374,10 @@
       padding: 7px 9px; border-radius: 8px;
       font-size: 13px; color: var(--ink);
     }
-    .palette-item .desc { font-size: 11px; color: var(--ink-faint); font-weight: 400; }
+    /* One line per mode: the name never wraps, a long description is cut with "…". */
+    .palette-item { gap: 12px; }
+    .palette-item .name { flex: none; white-space: nowrap; }
+    .palette-item .desc { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; font-size: 11px; color: var(--ink-faint); font-weight: 400; }
     .palette-item b { font-weight: 600; }
     .palette-item.active { background: var(--select-bg); }
     .palette-item.current .name::after { content: "✓"; margin-left: 6px; color: var(--live-ink); font-weight: 700; }

@@ -4,7 +4,7 @@
 // so the tone list and prompt never drift between surfaces.
 
 const SR_TONES = [
-  { id: 'grammar',      name: 'Proofread',     desc: 'Fix grammar & spelling, keep your voice' },
+  { id: 'grammar',      name: 'Proofread',     desc: 'Fix mistakes, keep your voice' },
   { id: 'professional', name: 'Professional',  desc: 'Formal and business-ready' },
   { id: 'friendly',     name: 'Friendly',      desc: 'Warm and approachable' },
   { id: 'short',        name: 'Concise',       desc: 'Trimmed to the essentials' },
