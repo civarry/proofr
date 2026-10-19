@@ -163,8 +163,8 @@ function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup 
 // Where the text went, in plain words, for result labels. A server on the
 // user's own machine or network isn't "sent" anywhere they'd worry about.
 // Where the text went, and which model answered: "Sent to Groq · gpt-oss-120b".
-function whereLabel(providerId, cfg) {
-  if (providerId === 'device') return 'On this computer · Gemini Nano';
+function whereLabel(providerId, cfg, engine) {
+  if (providerId === 'device') return `On this computer · ${engine || 'Gemini Nano'}`;
   // "openai/gpt-oss-120b" → "gpt-oss-120b": the vendor is already in the provider name.
   const model = cfg && cfg.model ? ` · ${String(cfg.model).split('/').pop()}` : '';
   if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return `On your computer or network${model}`;
@@ -173,9 +173,33 @@ function whereLabel(providerId, cfg) {
 
 // Rewrite with whatever is ready: on-device only when already downloaded,
 // otherwise the cloud key.
-function rewriteNow(text, tone, status, targetLang, onToken, signal) {
+async function rewriteNow(text, tone, status, targetLang, onToken, signal) {
   const engine = (status.settings.engine === 'auto' && !status.deviceNow) ? 'cloud' : status.settings.engine;
-  return SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang, onToken, signal });
+  const result = await SR_rewriteAuto(text, tone, { provider: status.provider, engine, targetLang, onToken, signal });
+  if (result.provider === 'device') keepDeviceWarm();
+  return result;
+}
+
+// Chrome stops an idle extension background after ~30s, and with it the
+// on-device base sessions (constants.js), so the next proofread would start
+// cold. Extension API calls count as activity (Chrome 110+): while a base
+// session exists, one cheap call every 25s keeps them for up to
+// DEVICE_WARM_MS after the last on-device use. Checked by test/e2e-ui.mjs.
+const DEVICE_WARM_MS = 5 * 60 * 1000;
+let deviceWarmUntil = 0;
+let deviceWarmTimer = null;
+function keepDeviceWarm() {
+  deviceWarmUntil = Date.now() + DEVICE_WARM_MS;
+  if (deviceWarmTimer) return;
+  deviceWarmTimer = setInterval(() => {
+    if (Date.now() > deviceWarmUntil) {
+      clearInterval(deviceWarmTimer);
+      deviceWarmTimer = null;
+      if (typeof SR_dropAllBases === 'function') SR_dropAllBases(); // free the model's memory
+      return;
+    }
+    chrome.runtime.getPlatformInfo().catch(() => {});
+  }, 25000);
 }
 
 // Clicking the toolbar icon opens the side panel directly (replaces the old popup).
@@ -438,9 +462,9 @@ async function handleHoverRewrite(message, sendResponse) {
       sendResponse({ error: 'setup', title: problem.title, message: problem.message });
       return;
     }
-    const { text, provider: providerId } = await rewriteNow(message.text, message.tone, status, message.targetLang);
+    const { text, provider: providerId, engine } = await rewriteNow(message.text, message.tone, status, message.targetLang);
     await StatsManager.updateStats(message.tone);
-    sendResponse({ text, provider: providerId, where: whereLabel(providerId, status.provider) });
+    sendResponse({ text, provider: providerId, where: whereLabel(providerId, status.provider, engine) });
   } catch (error) {
     sendResponse({ error: 'failed', message: error.message || 'Something went wrong.' });
   }
@@ -519,13 +543,13 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // Coach mode marks mistakes without showing fixes, so a streamed answer
     // (which is the fix) must not appear while it runs.
     const coach = tone === 'grammar' && (await chrome.storage.sync.get(['srCoach'])).srCoach === true;
-    const { text: rewritten, provider: providerId } = await rewriteNow(text, tone, status, lang, coach ? null : onToken, controller.signal);
+    const { text: rewritten, provider: providerId, engine } = await rewriteNow(text, tone, status, lang, coach ? null : onToken, controller.signal);
     await StatsManager.updateStats(tone);
     // Local storage only, a few ms: awaited so a word mastered by this very
     // proofread can be named in its toast.
     const mastered = tone === 'grammar' && ownText ? await recordInsights(text, rewritten) : [];
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider), coach, mastered]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider, engine), coach, mastered]);
   } catch (error) {
     // Stopped from the toast: it already says "Stopped.", so add nothing.
     if (error && error.name === 'AbortError') return;

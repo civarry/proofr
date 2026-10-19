@@ -63,6 +63,7 @@ globalThis.LanguageModel.create = async (opts) => {
 };
 for (const m of ['delta', 'cumulative']) {
   mode = m;
+  SR_clearCache(); // the same text twice would come from the result cache
   const seen = [];
   const r = await SR_rewriteAuto('teh report', 'grammar', { engine: 'device', onToken: (t) => seen.push(t) });
   assert.equal(r.text, 'The report is ready.', `${m} chunks give the full text`);
@@ -71,19 +72,29 @@ for (const m of ['delta', 'cumulative']) {
 // Without onToken it doesn't stream.
 assert.equal(await SR_rewriteOnDevice('x', 'grammar'), 'stub output');
 
-// Warm session: created once, taken by the next rewrite with the same options, then gone.
+// Base sessions: one per task, holding the rules; each rewrite runs on a
+// clone. (Replaced 1.3.0's single-use warm session: Google's guidance is to
+// clone a base rather than create() per request. test/device-perf.mjs
+// measures the difference.)
+SR_dropAllBases(); SR_clearCache();
+let clones = 0;
+const baseCreate = globalThis.LanguageModel.create;
+globalThis.LanguageModel.create = async (opts) => {
+  const s = await baseCreate(opts);
+  s.clone = async () => { clones++; return { ...s, clone: undefined }; };
+  return s;
+};
 creates = 0;
 assert.equal(await SR_warmDevice('grammar'), true);
 assert.equal(creates, 1);
 await SR_rewriteOnDevice('x', 'grammar');
-assert.equal(creates, 1, 'the rewrite used the warm session');
-await SR_rewriteOnDevice('x', 'grammar');
-assert.equal(creates, 2, 'a warm session is used once');
-// Different options (Professional has another temperature) don't take it.
-await SR_warmDevice('grammar');
-creates = 0;
+await SR_rewriteOnDevice('y', 'grammar');
+assert.equal(creates, 1, 'rewrites reuse the warm base session');
+assert.equal(clones, 2, 'each rewrite runs on its own clone');
+// Different options (Professional has another temperature) get their own base.
 await SR_rewriteOnDevice('x', 'professional');
-assert.equal(creates, 1);
+assert.equal(creates, 2);
+SR_dropAllBases();
 // Never warms (or downloads) unless the model is already available.
 const avail = globalThis.LanguageModel.availability;
 globalThis.LanguageModel.availability = async () => 'downloadable';

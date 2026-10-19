@@ -580,10 +580,10 @@ async function SR_deviceAvailability() {
       // English only: "can the model run at all". Checking every language would
       // mark the whole engine unavailable on a build missing one of them;
       // SR_rewriteOnDevice handles per-language support.
-      return await LM.availability({
+      return await SR_within(LM.availability({
         expectedInputs: [{ type: 'text', languages: ['en'] }],
         expectedOutputs: [{ type: 'text', languages: ['en'] }],
-      });
+      }), SR_TASK_LIMITS.availability);
     }
     // Legacy: ai.languageModel.capabilities() → { available: 'readily'|'after-download'|'no' }
     if (typeof LM.capabilities === 'function') {
@@ -617,7 +617,10 @@ function SR_deviceSessionOptions(tone, targetLang, temperatureBoost = 0) {
   };
 }
 
-async function SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor) {
+// initialPrompts (optional): the task's rules and examples, for a base session.
+// A build that rejects them gets a plain session marked srInline: requests
+// then carry the whole prompt themselves.
+async function SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor, initialPrompts) {
   const LM = SR_deviceModel();
   const { outputLanguage, temperature } = SR_deviceSessionOptions(tone, targetLang, temperatureBoost);
   const inputLanguages = SR_LANGUAGES.map((l) => l.code);
@@ -636,8 +639,17 @@ async function SR_createDeviceSession(tone, targetLang, temperatureBoost, monito
     { ...baseOpts, expectedInputs: [{ type: 'text', languages: ['en'] }] },
   ];
   let lastError;
+  if (initialPrompts) {
+    for (const opts of attempts) {
+      try { return await LM.create({ ...opts, initialPrompts }); } catch (err) { lastError = err; }
+    }
+  }
   for (const opts of attempts) {
-    try { return await LM.create(opts); } catch (err) { lastError = err; }
+    try {
+      const session = await LM.create(opts);
+      if (initialPrompts) session.srInline = true;
+      return session;
+    } catch (err) { lastError = err; }
   }
   if (lastError && lastError.name === 'NotSupportedError' && outputLanguage !== 'en') {
     throw new Error(`${SR_fullLangName(outputLanguage)} isn't supported by Chrome's on-device model here. Add a cloud provider key to translate into it.`);
@@ -645,39 +657,206 @@ async function SR_createDeviceSession(tone, targetLang, temperatureBoost, monito
   throw lastError || new Error('Could not start the on-device model.');
 }
 
-// Creating a session is most of the wait on the first rewrite. The panel calls
-// SR_warmDevice when it opens; the next rewrite with the same options takes the
-// session (each session is used once, then destroyed). Never starts a download:
-// only when the model is already 'available'. An unused session is dropped after
-// SR_WARM_TTL_MS so it doesn't hold the model's memory.
-const SR_WARM_TTL_MS = 2 * 60 * 1000;
-let SR_warm = null; // { key, promise, timer }
+// === On-device sessions: one base per task, cloned per request ===
+// Google's guidance for the Prompt API: give the instructions to create() as
+// initialPrompts once, then clone() that base session for each request, so
+// the model doesn't re-read the rules and examples every time (most of the
+// wait on a laptop without a strong GPU). Each base has its own random fence
+// id, kept in memory only, so page text still can't close the tag. Bases are
+// dropped after SR_BASE_TTL_MS unused, and at most SR_BASE_MAX are kept.
+// On builds without clone() or initialPrompts, each request falls back to a
+// fresh session with the whole prompt inline (the 1.3.0 behaviour).
+// test/device-perf.mjs counts creates, clones and tokens re-read per request.
+const SR_BASE_TTL_MS = 5 * 60 * 1000;
+const SR_BASE_MAX = 3;
+const SR_bases = new Map(); // key -> { promise, fence, timer }
 
+function SR_baseKey(tone, targetLang, temperatureBoost) {
+  return JSON.stringify({ tone, ...SR_deviceSessionOptions(tone, targetLang, temperatureBoost) });
+}
+
+function SR_dropBase(key) {
+  const b = SR_bases.get(key);
+  if (!b) return;
+  SR_bases.delete(key);
+  clearTimeout(b.timer);
+  b.promise.then((s) => { try { s && s.destroy && s.destroy(); } catch (_) { /* ignore */ } }, () => {});
+}
+
+function SR_dropAllBases() {
+  for (const key of [...SR_bases.keys()]) SR_dropBase(key);
+}
+
+function SR_getBase(tone, targetLang, temperatureBoost, monitor) {
+  const key = SR_baseKey(tone, targetLang, temperatureBoost);
+  let b = SR_bases.get(key);
+  if (!b) {
+    while (SR_bases.size >= SR_BASE_MAX) SR_dropBase(SR_bases.keys().next().value); // oldest first
+    const fence = SR_newFence();
+    const parts = SR_buildPromptParts('', tone, targetLang, fence, { examples: true });
+    const initialPrompts = [
+      { role: 'system', content: parts.system },
+      ...parts.examples.flatMap(([input, output]) => [
+        { role: 'user', content: SR_fenced(input, fence, parts.reminder) },
+        { role: 'assistant', content: output },
+      ]),
+    ];
+    b = { fence, promise: SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor, initialPrompts) };
+    SR_bases.set(key, b);
+    b.promise.catch(() => { if (SR_bases.get(key) === b) SR_bases.delete(key); });
+  } else {
+    // Most recently used goes last, so the oldest is evicted first.
+    SR_bases.delete(key);
+    SR_bases.set(key, b);
+  }
+  clearTimeout(b.timer);
+  b.timer = setTimeout(() => SR_dropBase(key), SR_BASE_TTL_MS);
+  if (b.timer && typeof b.timer.unref === 'function') b.timer.unref(); // Node (tests): don't hold the process open
+  return { key, base: b };
+}
+
+// Prepares the base session for a task before the user asks (the side panel
+// opening, a shortcut). Never starts a download: only when the model is
+// already 'available'.
 async function SR_warmDevice(tone = 'grammar', targetLang) {
   if (await SR_deviceAvailability() !== 'available') return false;
-  const key = JSON.stringify(SR_deviceSessionOptions(tone, targetLang));
-  if (SR_warm && SR_warm.key === key) return true;
-  SR_dropWarmSession();
-  const promise = SR_createDeviceSession(tone, targetLang, 0).catch(() => null);
-  SR_warm = { key, promise, timer: setTimeout(SR_dropWarmSession, SR_WARM_TTL_MS) };
-  return !!(await promise);
+  try { await SR_getBase(tone, targetLang, 0).base.promise; return true; } catch (_) { return false; }
 }
 
-function SR_dropWarmSession() {
-  if (!SR_warm) return;
-  const { promise, timer } = SR_warm;
-  SR_warm = null;
-  clearTimeout(timer);
-  promise.then((session) => { try { session && session.destroy && session.destroy(); } catch (_) { /* ignore */ } });
+// A per-request session: a clone of the task's base, or (no clone support) a
+// fresh one with the prompt inline. Returns { session, fence, inline }.
+async function SR_deviceRequestSession(tone, targetLang, temperatureBoost, monitor) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { key, base } = SR_getBase(tone, targetLang, temperatureBoost, monitor);
+    const t0 = SR_now();
+    const baseSession = await base.promise;
+    SR_timing.baseMs = SR_now() - t0;
+    if (baseSession.srInline || typeof baseSession.clone !== 'function') {
+      const t1 = SR_now();
+      const session = await SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor);
+      SR_timing.createMs = SR_now() - t1;
+      return { session, fence: SR_newFence(), inline: true };
+    }
+    try {
+      const t1 = SR_now();
+      const session = await baseSession.clone();
+      SR_timing.cloneMs = SR_now() - t1;
+      return { session, fence: base.fence, inline: false };
+    } catch (_) {
+      SR_dropBase(key); // the base went bad (evicted under memory pressure): make a new one once
+    }
+  }
+  throw new Error('Could not start the on-device model.');
 }
 
-async function SR_takeWarmSession(tone, targetLang, temperatureBoost) {
-  if (!SR_warm || SR_warm.key !== JSON.stringify(SR_deviceSessionOptions(tone, targetLang, temperatureBoost))) return null;
-  const { promise, timer } = SR_warm;
-  SR_warm = null;
-  clearTimeout(timer);
-  return promise;
+// === Timing, for the benchmark and the perf test (memory only, never sent) ===
+const SR_now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+let SR_timing = {};
+function SR_lastTiming() { return { ...SR_timing }; }
+
+// === Result cache: the same text, mode and model twice returns at once ===
+// Memory only, never stored. "Try again" (a temperature boost) skips it.
+// Saves on-device time and the user's cloud key alike.
+const SR_CACHE_MAX = 20;
+const SR_CACHE_TTL_MS = 30 * 60 * 1000;
+const SR_cache = new Map(); // key -> { value, at }
+
+function SR_cacheKey(text, tone, opts) {
+  const p = opts.provider || {};
+  return JSON.stringify([tone, opts.targetLang || '', opts.engine || 'auto', p.id || '', p.model || '', p.baseURL || '', String(text)]);
 }
+
+function SR_cacheGet(key) {
+  const hit = SR_cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > SR_CACHE_TTL_MS) { SR_cache.delete(key); return null; }
+  SR_cache.delete(key);
+  SR_cache.set(key, hit); // most recently used last
+  return hit.value;
+}
+
+function SR_cachePut(key, value) {
+  SR_cache.delete(key);
+  SR_cache.set(key, { value, at: Date.now() });
+  while (SR_cache.size > SR_CACHE_MAX) SR_cache.delete(SR_cache.keys().next().value);
+}
+
+function SR_clearCache() { SR_cache.clear(); }
+
+// === Chrome's Translator (+ Language Detector) ===
+// Stable for extensions since Chrome 138, with dedicated language models (39
+// languages, versus 5 for Gemini Nano). Feature-detected: Google documents it
+// as unavailable in workers, so the background may not have it while the side
+// panel does. Returns null to fall back to Gemini Nano or the cloud.
+// Not used: the Summarizer API. Measured in Chrome 155 (test/nano-bench.html)
+// it was 10% slower than Proofr's own Gemini Nano prompt and dropped numbers
+// ("6 weeks" became "six weeks", a 7-2 vote and 3,000 cyclists were lost),
+// which the change guard exists to prevent.
+// Only 'available' models are used, except that Translator may fetch a
+// language pack when the caller says the user just clicked (allowDownload:
+// the side panel's Send); Chrome requires that click before a download.
+const SR_TRANSLATOR_CODES = { 'zh-TW': 'zh-Hant' };
+const SR_TRANSLATOR_LANGS = new Set(['ar', 'bg', 'bn', 'cs', 'da', 'de', 'el', 'en', 'es', 'fi', 'fr', 'he', 'hi', 'hr', 'hu', 'id', 'it', 'ja', 'kn', 'ko', 'lt', 'mr', 'nl', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'sl', 'sv', 'ta', 'te', 'th', 'tr', 'uk', 'vi', 'zh', 'zh-Hant']);
+// Chrome can leave these calls pending forever (seen in Chrome 155: a tab not
+// in front never got an answer from LanguageDetector.availability()), so each
+// has a limit; on a stall Proofr falls back instead of hanging.
+const SR_TASK_LIMITS = { availability: 3000, create: 10000, download: 120000, run: 45000 };
+function SR_within(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => { const e = new Error('Chrome did not answer in time.'); e.name = 'StallError'; reject(e); }, ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+const SR_taskApi = (name) => { try { return (typeof self !== 'undefined' && self[name]) || null; } catch (_) { return null; } };
+
+function SR_translatorLang(code) { return SR_TRANSLATOR_CODES[code] || code; }
+function SR_translatorSupports(code) { return !!SR_taskApi('Translator') && SR_TRANSLATOR_LANGS.has(SR_translatorLang(code)); }
+
+async function SR_detectLanguage(text, signal, allowDownload = false) {
+  const LD = SR_taskApi('LanguageDetector');
+  if (!LD) return null;
+  const state = typeof LD.availability === 'function' ? await SR_within(LD.availability(), SR_TASK_LIMITS.availability) : 'available';
+  if (state !== 'available' && !(allowDownload && (state === 'downloadable' || state === 'downloading'))) return null;
+  const detector = await SR_within(LD.create({ signal }), state === 'available' ? SR_TASK_LIMITS.create : SR_TASK_LIMITS.download);
+  try {
+    const [top] = await SR_within(detector.detect(String(text), { signal }), SR_TASK_LIMITS.create);
+    return top && top.confidence >= 0.6 && top.detectedLanguage !== 'und' ? top.detectedLanguage : null;
+  } finally { try { detector.destroy && detector.destroy(); } catch (_) { /* ignore */ } }
+}
+
+async function SR_translateOnDevice(text, targetLang, { signal, allowDownload = false, onStatus } = {}) {
+  const T = SR_taskApi('Translator');
+  if (!T || !SR_translatorSupports(targetLang)) return null;
+  try {
+    const t0 = SR_now();
+    const source = await SR_detectLanguage(text, signal, allowDownload);
+    SR_timing.detectMs = SR_now() - t0;
+    const target = SR_translatorLang(targetLang);
+    // Unknown source, or already in the target language (Gemini Nano refines it).
+    if (!source || source.split('-')[0] === target.split('-')[0]) return null;
+    const pair = { sourceLanguage: source, targetLanguage: target };
+    const state = await SR_within(T.availability(pair), SR_TASK_LIMITS.availability);
+    if (state !== 'available' && !(allowDownload && (state === 'downloadable' || state === 'downloading'))) return null;
+    const monitor = (m) => m && m.addEventListener && m.addEventListener('downloadprogress', (e) => {
+      onStatus && onStatus(`Getting the ${SR_fullLangName(targetLang)} language pack… ${Math.round((e.loaded || 0) * 100)}%`);
+    });
+    const t1 = SR_now();
+    const translator = await SR_within(T.create({ ...pair, signal, ...(state === 'available' ? {} : { monitor }) }), state === 'available' ? SR_TASK_LIMITS.create : SR_TASK_LIMITS.download);
+    SR_timing.createMs = SR_now() - t1;
+    try {
+      const t2 = SR_now();
+      const out = String(await SR_within(translator.translate(String(text), { signal }), SR_TASK_LIMITS.run) || '').trim();
+      SR_timing.promptMs = SR_now() - t2;
+      SR_timing.path = 'translator';
+      return out || null;
+    } finally { try { translator.destroy && translator.destroy(); } catch (_) { /* ignore */ } }
+  } catch (err) {
+    if (signal && signal.aborted) throw SR_stopped();
+    return null;
+  }
+}
+
 
 // promptStreaming chunks are deltas in current Chrome and the cumulative text in
 // older builds. Decided once, on the second chunk: if it extends the first, the
@@ -737,8 +916,10 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
     }
   };
 
-  const session = await SR_takeWarmSession(tone, targetLang, temperatureBoost)
-    || await SR_createDeviceSession(tone, targetLang, temperatureBoost, monitor);
+  SR_timing = { path: 'nano', at: Date.now() };
+  const tStart = SR_now();
+  const { session, fence, inline } = await SR_deviceRequestSession(tone, targetLang, temperatureBoost, monitor);
+  SR_timing.path = inline ? 'nano-inline' : 'nano-clone';
   try {
     // Race the prompt against a timeout, and try to abort the underlying work so
     // a stalled model can't leave the UI spinning forever.
@@ -762,17 +943,22 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
       }, SR_DEVICE_TIMEOUT_MS);
     });
 
-    let out, fence;
+    let out;
     try {
-      const parts = SR_buildPromptParts(text, tone, targetLang, undefined, { examples: true });
-      fence = parts.fence;
-      const promptText = SR_joinPrompt(parts);
+      const parts = SR_buildPromptParts(text, tone, targetLang, fence, { examples: true });
+      // A clone already holds the rules and examples: send only the text.
+      const promptText = inline ? SR_joinPrompt(parts) : parts.user;
+      SR_timing.promptChars = promptText.length;
       const promptOpts = controller ? { signal: controller.signal } : undefined;
+      const tPrompt = SR_now();
+      const firstToken = (t) => { if (SR_timing.firstTokenMs == null) SR_timing.firstTokenMs = SR_now() - tStart; return t; };
       const run = onToken && typeof session.promptStreaming === 'function'
         // An echoed opening tag is dropped from what streams onto the screen.
-        ? SR_readDeviceStream(session.promptStreaming(promptText, promptOpts), (t) => onToken(String(t).replace(/^\s*<text-[0-9a-f]{12}>\s*/, '')))
+        ? SR_readDeviceStream(session.promptStreaming(promptText, promptOpts), (t) => onToken(firstToken(String(t)).replace(/^\s*<text-[0-9a-f]{12}>\s*/, '')))
         : session.prompt(promptText, promptOpts);
       out = await Promise.race([run, timeout, stopped]);
+      SR_timing.promptMs = SR_now() - tPrompt;
+      SR_timing.totalMs = SR_now() - tStart;
     } catch (err) {
       if (signal && signal.aborted) throw SR_stopped();
       if (err && err.message === 'device-timeout') {
@@ -799,6 +985,24 @@ async function SR_rewriteAuto(text, tone, opts = {}) {
   const engine = opts.engine || 'auto';
   const boost = opts.temperatureBoost || 0;
   const hasProvider = SR_providerReady(opts.provider);
+  // The same text, mode and model again (Undo, then proofread again): answer
+  // at once. "Try again" (boost > 0) always asks the model.
+  const cacheKey = boost ? null : SR_cacheKey(text, tone, opts);
+  const cached = cacheKey && SR_cacheGet(cacheKey);
+  if (cached) { SR_timing = { path: 'cache', totalMs: 0, at: Date.now() }; return { ...cached }; }
+  const done = (result) => { if (cacheKey) SR_cachePut(cacheKey, result); return { ...result }; };
+
+  if (engine !== 'cloud') {
+    // Chrome's Translator first for translation: dedicated models, more
+    // languages. Returns null to fall through to Gemini Nano.
+    const t0 = SR_now();
+    if (tone === 'translate' && !boost) {
+      SR_timing = { at: Date.now() };
+      const out = await SR_translateOnDevice(text, opts.targetLang || 'en', { signal: opts.signal, allowDownload: !!opts.allowDownload, onStatus: opts.onStatus });
+      if (out) { SR_timing.totalMs = SR_now() - t0; return done({ text: out, provider: 'device', engine: 'Chrome Translator' }); }
+    }
+  }
+
   // Nano can only output the five on-device languages; send other translate targets to the cloud.
   const deviceLang = tone !== 'translate' || SR_isOnDeviceLanguage(opts.targetLang || 'en');
   const wantDevice = engine === 'device' || (engine === 'auto' && deviceLang && await SR_deviceReady());
@@ -806,14 +1010,18 @@ async function SR_rewriteAuto(text, tone, opts = {}) {
   if (wantDevice) {
     try {
       const out = await SR_rewriteOnDevice(text, tone, opts.onStatus, opts.targetLang, boost, { onToken: opts.onToken, signal: opts.signal });
-      return { text: out, provider: 'device' };
+      return done({ text: out, provider: 'device', engine: 'Gemini Nano' });
     } catch (err) {
       // Stopped, forced on-device, or nothing to fall back to → surface the error.
       if ((opts.signal && opts.signal.aborted) || engine === 'device' || !hasProvider) throw err;
       // Auto with a cloud provider configured → fall through to it.
     }
   }
-  return { text: await SR_rewrite(opts.provider, text, tone, opts.targetLang, boost, opts.signal), provider: opts.provider.id };
+  SR_timing = { path: 'cloud', at: Date.now() };
+  const t0 = SR_now();
+  const out = await SR_rewrite(opts.provider, text, tone, opts.targetLang, boost, opts.signal);
+  SR_timing.totalMs = SR_now() - t0;
+  return done({ text: out, provider: opts.provider.id });
 }
 
 // 'device' → "On-device"; any cloud service id → its friendly name (falls
@@ -1523,6 +1731,12 @@ if (typeof self !== 'undefined') {
   self.SR_diffGroups = SR_diffGroups;
   self.SR_applyDiff = SR_applyDiff;
   self.SR_warmDevice = SR_warmDevice;
+  self.SR_lastTiming = SR_lastTiming;
+  self.SR_clearCache = SR_clearCache;
+  self.SR_dropAllBases = SR_dropAllBases;
+  self.SR_translateOnDevice = SR_translateOnDevice;
+  self.SR_translatorSupports = SR_translatorSupports;
+  self.SR_TASK_LIMITS = SR_TASK_LIMITS;
   self.SR_changeGuard = SR_changeGuard;
   self.SR_extractCorrections = SR_extractCorrections;
   self.SR_classifyCorrection = SR_classifyCorrection;

@@ -22,6 +22,7 @@ The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-d
 - **Practice:** two-minute rounds of sentences built on this computer from your own common mistakes, checked locally with the rule for anything missed.
 - **Coach mode (off by default):** Proofread marks the spots in your text box instead of fixing them. "I'll fix them" returns you to the box; "Show fixes" opens the usual diff with Apply to text box.
 - **Small models learn from a big one:** on-device Nano, local servers (Ollama, LM Studio) and small cloud models (about 14B parameters or less) get a couple of worked examples per task, written and checked by a strong model, including one that treats an instruction inside the text as text. Big models skip them and their cost. `store/distill.mjs` measures the examples on a real small model against a big model's answers, and only replaces them with a set that scores better than both the shipped examples and none: `GROQ_API_KEY=... node store/distill.mjs grammar`.
+- **On-device speed:** Proofr follows Google's guidance for the Prompt API: each mode's rules and examples go into one base session, and every request runs on a clone of it, so Gemini Nano doesn't re-read them each time. After an on-device proofread the background stays warm for 5 minutes. Translation uses Chrome's Translator (39 languages on-device, versus 5 for Gemini Nano) when its language pack is there; the side panel can download a pack on your click. The same text, mode and model twice answers at once, on-device or cloud (Try again always asks again). Every call into Chrome's AI has a time limit, so a stalled call falls back instead of hanging. Measured with real Gemini Nano in Chrome 155 (`test/nano-bench.html`): each proofread after the first is 45% faster (807 → 447 ms median) with the first words on screen 64% sooner (570 → 208 ms); the first one in a session is 22% slower, because it builds the base. The Summarizer API is not used: it dropped numbers from summaries in testing.
 - **Cost on your key:** instructions are about 240 tokens per request, and the answer budget fits the text, so a short fix can't run away and a long one isn't cut off.
 - **Prompt-injection defenses:** the text you select is sent inside a tag with a random id that page text can't close, with a rule before and after it saying it is data, not instructions. Cloud calls send the rules as a separate system message. A reply that repeats Proofr's instructions is refused and never pasted.
 - **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate. With a cloud key there is also an "Ask about this…" box for a freeform instruction. Results open in a dialog; the page text is never changed.
@@ -69,6 +70,9 @@ node test/distill.mjs
 # HTML escaping: every helper escapes quotes, so a model id or answer can't break out of an attribute (no browser needed)
 node test/escape.mjs
 
+# On-device work, old code against new: sessions created, characters re-read per request, cache, Translator, stalls (no browser needed)
+node test/device-perf.mjs
+
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
 
@@ -86,11 +90,16 @@ PUPPETEER=/path/to/puppeteer.js node test/e2e-mock.mjs
 # The real manifest with no site access granted (what a fresh install has)
 PUPPETEER=/path/to/puppeteer.js node test/e2e-shipped.mjs
 
+# The background stays warm after an on-device proofread (with a control that proves an idle one is stopped)
+PUPPETEER=/path/to/puppeteer.js node test/e2e-warm.mjs
+
 # Update from the published 1.2.4 to the packaged zip (run store/package.sh first)
 PUPPETEER=/path/to/puppeteer.js node test/e2e-upgrade.mjs
 ```
 
 Each script exits non-zero if any check fails. On macOS, Chrome stops painting while the display sleeps or the screen is locked, and the browser tests time out. Run `caffeinate -u -t 600 &` first for a sleeping display; a locked screen has to be unlocked.
+
+`test/nano-bench.html` measures real Gemini Nano in your own Chrome: load the extension unpacked, open `chrome-extension://<id>/test/nano-bench.html` (or serve the repo on localhost and open it there), and press Run. It compares the previous on-device path with the current one and copies the results as JSON.
 
 `test/run_injection.mjs` is a live prompt-injection check against Groq and needs a real key: `GROQ_API_KEY=... node test/run_injection.mjs`.
 
