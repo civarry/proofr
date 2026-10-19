@@ -19,7 +19,7 @@
   --sr-gray-700: #3f3d38;
   --sr-gray-800: #2f2e2a;
   --sr-gray-900: #23221e;
-  --sr-success: #57554e;
+  --sr-success: #23221e; /* the toast: same ink as the Copy button */
   --sr-error: #b4443a;
   --sr-card-bg: #faf9f7;
   --sr-card-border: #e6e3dc;

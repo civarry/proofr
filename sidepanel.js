@@ -1104,7 +1104,7 @@ function renderAssistantCard(turn) {
   // Say where the text went, in plain words.
   const engineName = escapeHtml(turn.where || (turn.provider === 'device' ? 'On this computer' : `Sent to ${SR_providerDisplayLabel(turn.provider)}`));
   return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
-    <div class="assistant-head"><span><span class="tag">${modeName}</span> · ${engineName}</span><span>${formatLatency(turn.latencyMs)}</span></div>
+    <div class="assistant-head" title="${turn.latencyMs != null ? `Took ${formatLatency(turn.latencyMs)}` : ''}"><span><span class="tag">${modeName}</span> · ${engineName}</span></div>
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
     <div class="assistant-actions">
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
