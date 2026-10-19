@@ -837,6 +837,11 @@ async function runTurn(turn, opts = {}) {
     });
     turn.outputText = rewritten;
     turn.provider = providerId;
+    // Same wording as background.js whereLabel: a server on this machine or
+    // network isn't "sent" anywhere a user would worry about.
+    turn.where = providerId === 'device' ? 'On this computer'
+      : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? 'On your computer or network'
+      : `Sent to ${SR_providerDisplayLabel(providerId)}`;
     turn.latencyMs = Math.round(performance.now() - start);
     turn.status = 'done';
     delete turn.errorMessage;
@@ -908,7 +913,8 @@ function renderAssistantCard(turn) {
     </div>`;
   }
 
-  const engineName = SR_providerDisplayLabel(turn.provider);
+  // Say where the text went, in plain words.
+  const engineName = escapeHtml(turn.where || (turn.provider === 'device' ? 'On this computer' : `Sent to ${SR_providerDisplayLabel(turn.provider)}`));
   return `<div class="assistant-card">
     <div class="assistant-head"><span><span class="tag">${modeName}</span> · ${engineName}</span><span>${formatLatency(turn.latencyMs)}</span></div>
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
@@ -943,7 +949,9 @@ function renderThread() {
       <h2>Three ways to use Proofr</h2>
       <ol>
         <li><b>On any page:</b> select text, right-click, choose <b>Proofr</b>, then a tone. In a text box your text is replaced; <kbd>${mod}</kbd>+<kbd>Z</kbd> undoes it.</li>
-        <li><b>Quick proofread:</b> select text and press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>.</li>
+        <li><b>Quick proofread:</b> ${shortcutText
+          ? `select text (or click in a text box) and press <kbd>${escapeHtml(shortcutText)}</kbd>.`
+          : 'set a keyboard shortcut under Settings, then select text and press it.'}</li>
         <li><b>Here:</b> paste text below, type <kbd>/</kbd> to pick a mode, and press <kbd>${mod}</kbd>+<kbd>Enter</kbd>.</li>
       </ol>
       <p class="fine">Each result here is separate: Proofr never sends earlier entries with a new one. This history stays on this computer.</p>
@@ -961,6 +969,18 @@ function renderThread() {
 // A tip-jar link (Ko-fi / GitHub Sponsors), shown in Settings > About only
 // once it's set. Empty means the row stays hidden: no link that goes nowhere.
 const SUPPORT_URL = '';
+
+// === Keyboard shortcut ===
+// Chrome owns the binding (manifest "commands"); users change it on
+// chrome://extensions/shortcuts. Read the real one so every mention matches,
+// in the platform's own notation (Chrome returns ⌥⇧P on a Mac).
+let shortcutText = '';
+async function loadShortcut() {
+  const commands = await chrome.commands.getAll().catch(() => []);
+  const cmd = commands.find((c) => c.name === 'proofread-selection');
+  shortcutText = (cmd && cmd.shortcut) || '';
+  refs.shortcutValue.textContent = shortcutText || 'Not set';
+}
 
 // === One-time rating ask ===
 // Shown once, under a successful result, after 5 successful rewrites (the
@@ -1027,7 +1047,7 @@ const InfoOverlays = {
   showSupport() {
     openOverlay(`
       <h3>Help</h3>
-      <p><strong>On any page:</strong> select text → right-click → Proofr, or press <strong>Alt+Shift+P</strong> to proofread it (change the shortcut at chrome://extensions/shortcuts). In a text box the selection is replaced in place; press Ctrl+Z (⌘Z on Mac) to undo. Turn on <strong>Hover actions</strong> in Settings to summarize, simplify, or translate any paragraph you're reading.</p>
+      <p><strong>On any page:</strong> select text → right-click → Proofr, or press <strong>${escapeHtml(shortcutText || 'your Proofr shortcut')}</strong> to proofread it (change it under Settings → Keyboard shortcut). In a text box the selection is replaced in place; press Ctrl+Z (⌘Z on Mac) to undo. Turn on <strong>Hover actions</strong> in Settings to summarize, simplify, or translate any paragraph you're reading.</p>
       <p><strong>In this panel:</strong> type or paste text, click the <strong>/Mode</strong> tag (or type <strong>/</strong>) to pick a mode, then <strong>Ctrl/Cmd+Enter</strong> or the send button. Each entry in the list is independent. Proofr doesn't read earlier entries when rewriting a new one.</p>
       <p><strong>How it rewrites:</strong> if your Chrome has built-in AI, rewrites in English, Spanish, French, German, and Japanese run on-device with no key. Other languages, the hover "Ask" box, and Chrome without built-in AI use your cloud provider key. The pill up top shows which is active.</p>
       <p>Questions? <a href="mailto:cjcarito15@gmail.com">cjcarito15@gmail.com</a> · <a href="https://github.com/civarry" target="_blank" rel="noopener">github.com/civarry</a></p>
@@ -1042,7 +1062,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'mark', 'providerPill', 'providerPillText', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
-    'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow',
+    'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
@@ -1059,6 +1079,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   currentTargetLang = targetLang;
   updateModeTag();
 
+  await loadShortcut();
   const { hasKey } = await refreshProviderPill();
   if (hasKey) checkModelStillListed();
 
@@ -1260,6 +1281,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     refs.supportRow.href = SUPPORT_URL;
     refs.supportRow.classList.remove('hidden');
   }
+
+  refs.btnChangeShortcut.addEventListener('click', () => {
+    chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+  });
+  // Back from rebinding: pick up the new key when the panel regains focus.
+  window.addEventListener('focus', async () => {
+    const before = shortcutText;
+    await loadShortcut();
+    if (before !== shortcutText && turns.length === 0) renderThread();
+  });
 
   refs.btnUseCloud.addEventListener('click', () => {
     cloudChosen = true;

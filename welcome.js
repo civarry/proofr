@@ -135,15 +135,16 @@ async function tryProofread() {
 async function refreshShortcut() {
   const commands = await chrome.commands.getAll().catch(() => []);
   const cmd = commands.find((c) => c.name === 'proofread-selection');
+  const openShortcuts = (e) => { e.preventDefault(); chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }); };
   if (cmd && cmd.shortcut) {
-    $('shortcutKey').textContent = cmd.shortcut;
+    // Chrome reports it in the platform's notation (⌥⇧P on a Mac).
+    document.querySelectorAll('.sc').forEach((k) => { k.textContent = cmd.shortcut; });
+    $('changeShortcut').addEventListener('click', openShortcuts);
   } else {
     // Chrome skips a suggested key that another extension already uses.
     $('shortcutLine').innerHTML = 'Chrome didn\'t assign Proofr\'s keyboard shortcut on this computer. <a href="#" id="setShortcut">Set one</a> to proofread a selection from the keyboard.';
-    $('setShortcut').addEventListener('click', (e) => {
-      e.preventDefault();
-      chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
-    });
+    $('setShortcut').addEventListener('click', openShortcuts);
+    document.querySelectorAll('.lede .sc').forEach((k) => { k.textContent = 'your shortcut'; });
   }
 }
 

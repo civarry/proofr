@@ -33,18 +33,33 @@
       color: var(--ink); background: var(--canvas);
     }
     a.btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .why { margin-top: 48px; text-align: left; }
+    .why h2 { font-size: 18px; margin-bottom: 10px; }
+    .why p, .why li { font-size: 14px; line-height: 1.6; color: var(--muted, #57554e); }
+    .why ul { margin: 12px 0 12px 18px; display: grid; gap: 8px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4.5" y1="7.5" x2="13.5" y2="7.5"/><line x1="4.5" y1="11.5" x2="10.5" y2="11.5"/><line x1="4.5" y1="15.5" x2="8.5" y2="15.5"/><path d="M18.4 8 20 9.6l-5.3 5.3-2.1.5.5-2.1L18.4 8z"/></svg></span>
     <h1>Proofr</h1>
-    <p>Select text in Chrome, right-click, and proofread it, rephrase it in another tone, summarize it, or translate it. On computers that support it, Proofr uses Chrome's built-in AI, so your text stays on your device. No account, no usage limit.</p>
+    <p>Proofr fixes the text you already wrote, in the box where you wrote it. Select it and press Alt+Shift+P (Option+Shift+P on a Mac), or right-click and choose Proofr. It shows what it changed, and Ctrl+Z puts it back. On computers that support it, Proofr uses Chrome's built-in AI, so your text stays on your device. No account, no usage limit.</p>
     <div class="links">
       <a class="btn primary" href="https://chromewebstore.google.com/detail/dfhooimjbdefdbabhppgloclhkjolhfg">Add to Chrome</a>
       <a class="btn" href="privacy.html">Privacy Policy</a>
       <a class="btn" href="https://github.com/civarry/proofr" target="_blank" rel="noopener">Source on GitHub</a>
     </div>
+    <section class="why">
+      <h2>Why not just paste it into a chatbot?</h2>
+      <p>You can, and for writing something new, a chatbot is the better tool. Proofr is for the other job: fixing what you already wrote, many times a day.</p>
+      <ul>
+        <li><b>No round trip.</b> Pasting into a chat tab takes about ten clicks and keystrokes and two tab switches. Proofr takes two: select, then press its shortcut (Alt+Shift+P, or Option+Shift+P on a Mac; you can pick your own).</li>
+        <li><b>Your words stay yours.</b> Proofread corrects grammar, spelling, and punctuation and leaves your wording alone. It shows exactly what it changed, and Ctrl+Z undoes it.</li>
+        <li><b>Nothing to sign into.</b> No account, no message limit.</li>
+        <li><b>Private when your computer allows it.</b> With Chrome's built-in AI, your text never leaves your computer. With a cloud key, it goes straight to the provider you chose.</li>
+      </ul>
+      <p>What Proofr is not: a chatbot. It won't draft a cover letter or answer questions. It fixes and rephrases text you select.</p>
+    </section>
   </div>
 </body>
 </html>

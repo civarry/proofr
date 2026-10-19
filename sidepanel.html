@@ -380,6 +380,20 @@
     /* Local servers need no key: hide the key input, keep the Connect button. */
     #keySection.keyless .key-input-wrap { display: none; }
     #cloudSection.collapsed { display: none; }
+    .shortcut-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 12px; margin-bottom: 6px;
+      background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+      font-size: 13px;
+    }
+    .shortcut-row > span { flex: 1; min-width: 0; }
+    .shortcut-row b { display: block; font-weight: 600; margin-bottom: 2px; }
+    .shortcut-row .settings-hint { display: block; margin: 0; }
+    .shortcut-row kbd {
+      font-family: var(--mono); font-size: 12px; white-space: nowrap;
+      padding: 2px 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper);
+    }
+    .shortcut-row .btn-outline { padding: 6px 10px; }
     .panel-notice {
       flex: none;
       margin: 10px 14px 0;
@@ -815,6 +829,14 @@
         </div>
 
         <div class="settings-section-label">On web pages</div>
+        <div class="shortcut-row">
+          <span>
+            <b>Keyboard shortcut</b>
+            <span class="settings-hint">Proofreads the selection, or the whole text box when nothing is selected.</span>
+          </span>
+          <kbd id="shortcutValue">…</kbd>
+          <button type="button" class="btn-outline" id="btnChangeShortcut">Change</button>
+        </div>
         <label class="toggle-row" for="hoverToggle">
           <span>
             <b>Hover actions</b>

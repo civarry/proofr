@@ -218,6 +218,64 @@ try {
     });
   }
 
+  // 4b. The in-place toast has a Review link that opens the diff, labelled with where the text went.
+  const selectField = (text) => page.evaluate((t) => {
+    const el = document.querySelector('#ta');
+    el.value = t; el.focus(); el.setSelectionRange(0, t.length);
+  }, text);
+  await step('toast review', async () => {
+    await page.evaluate(() => document.querySelectorAll('.sr-success-notification').forEach((n) => n.remove()));
+    await selectField('teh quick brown fox');
+    await sw.evaluate((id) => handleRewrite(id, 'teh quick brown fox', 'grammar', { ensure: true }), tabId);
+    const hasReview = await waitFor(() => page.evaluate(() => !!document.querySelector('.sr-success-notification .sr-success-review')), 5000);
+    check(hasReview, 'in-place toast: has a Review link');
+    await page.evaluate(() => document.querySelector('.sr-success-notification .sr-success-review').click());
+    const reviewed = await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text ins.sr-diff-ins')), 3000);
+    check(reviewed, 'in-place toast: Review opens the result with the diff');
+    const where = await page.evaluate(() => (document.querySelector('#sr-modal-footer .sr-engine') || {}).textContent);
+    // The mock is on localhost, so nothing left this computer.
+    check(where === 'On your computer or network', `result dialog: says where the text went (got ${JSON.stringify(where)})`);
+    await page.keyboard.press('Escape');
+  });
+
+  // 4c. The change guard: a "proofread" that drops "not" must not replace the text.
+  await step('change guard', async () => {
+    const risky = 'I will not be there on Monday.';
+    await selectField(risky);
+    await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, risky);
+    const notice = await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-modal-content .sr-notice')), 5000);
+    check(notice, 'change guard: opens the dialog with a notice');
+    check(await page.evaluate(() => document.querySelector('#ta').value) === risky, 'change guard: the field is left unchanged');
+    const reason = await page.evaluate(() => document.querySelector('#sr-modal-content .sr-notice').textContent);
+    check(/not/.test(reason), `change guard: the notice names the reason (got ${JSON.stringify(reason)})`);
+    await page.evaluate(() => document.getElementById('sr-action-btn').click());
+    const forced = await waitFor(() => page.evaluate((out) => document.querySelector('#ta').value === out
+      && document.querySelector('.sr-modal-overlay').getClientRects().length === 0, OUT), 3000);
+    check(forced, 'change guard: "Replace anyway" replaces the text and closes the dialog');
+  });
+
+  // 4d. A real mouse click reaches the toast's Review button (z-index, pointer-events).
+  // Needs painted frames: with the display asleep or the screen locked it can hang, so it skips.
+  await step('toast review (mouse)', async () => {
+    await page.evaluate(() => document.querySelectorAll('.sr-success-notification').forEach((n) => n.remove()));
+    await selectField('teh quick brown fox');
+    await sw.evaluate((id) => handleRewrite(id, 'teh quick brown fox', 'grammar', { ensure: true }), tabId);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('.sr-success-notification.sr-show .sr-success-review')), 5000);
+    await sleep(400); // let the slide-in finish so the box is where it will be clicked
+    const clicked = await Promise.race([
+      (async () => {
+        const btn = await page.$('.sr-success-notification .sr-success-review');
+        const box = await btn.boundingBox();
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        return waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text ins.sr-diff-ins')), 3000);
+      })(),
+      sleep(8000).then(() => 'timeout'),
+    ]);
+    if (clicked === 'timeout') console.log('SKIP in-place toast: real mouse click (no painted frames: display asleep or screen locked)');
+    else check(clicked, 'in-place toast: a real mouse click on Review opens the diff');
+    await page.keyboard.press('Escape');
+  });
+
   // 5. Service worker stayed clean.
   await sleep(500);
   check(swErrors.length === 0, `service worker: no errors${swErrors.length ? ` (${swErrors.join(' | ')})` : ''}`);

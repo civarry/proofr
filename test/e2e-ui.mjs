@@ -168,6 +168,23 @@ await panel.evaluate(() => chrome.storage.local.set({ srPanelPrefill: 'text from
 check('panel: prefill from page lands in the composer', (await panel.evaluate(() => document.getElementById('ta').value)) === 'text from the page');
 await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = ''; t.dispatchEvent(new Event('input')); });
 
+// 4e. Keyboard shortcut: Settings shows Chrome's real binding, the guide uses
+// it, and "Change" opens Chrome's own shortcut page (where users set their own).
+{
+  const actual = await sw.evaluate(async () => ((await chrome.commands.getAll()).find(c => c.name === 'proofread-selection') || {}).shortcut || '');
+  await panel.bringToFront();
+  const shown = await panel.evaluate(() => document.getElementById('shortcutValue').textContent);
+  check('settings shows the real shortcut', !!actual && shown === actual, `chrome=${actual} shown=${shown}`);
+  await panel.evaluate(async () => { await chrome.storage.local.remove(['turnLog']); });
+  await panel.reload(); await sleep(900);
+  await panel.evaluate(() => { if (!document.getElementById('settingsPanel').classList.contains('hidden')) document.getElementById('btnSettingsBack').click(); });
+  const guide = await panel.evaluate(() => document.querySelector('.thread-empty')?.innerText || '');
+  check('usage guide names the real shortcut', !!actual && guide.includes(actual), guide.slice(0, 120));
+  const opened = browser.waitForTarget(t => t.url().startsWith('chrome://extensions/shortcuts'), { timeout: 5000 }).then(() => true, () => false);
+  await panel.evaluate(() => document.getElementById('btnChangeShortcut').click());
+  check('Change opens Chrome\'s shortcut page', await opened);
+}
+
 console.log('STEP 5');
 // 5. Translate prompt names the real language (board T2).
 mockRequests.length = 0;
