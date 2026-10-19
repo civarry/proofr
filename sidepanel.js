@@ -210,9 +210,9 @@ let paletteOpenedViaSlash = false;
 let savedToastTimer = null;
 
 function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s ?? '';
-  return d.innerHTML;
+  // Quotes too: values go inside attributes (model ids from a provider's list).
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(s ?? '').replace(/[&<>"']/g, (c) => map[c]);
 }
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

@@ -682,10 +682,10 @@
       return tone.charAt(0).toUpperCase() + tone.slice(1);
     }
 
+    // Safe in text and in quoted attributes (innerHTML alone leaves quotes as they are).
     escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+      return String(text ?? '').replace(/[&<>"']/g, (c) => map[c]);
     }
 
     // Each change (a del/ins run) is one toggle; a rejected one shows the original words.
