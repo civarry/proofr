@@ -74,6 +74,12 @@ for (const theme of ['light', 'dark']) {
     for (const bg of [page['--sr-white'], page['--sr-gray-50']]) if (ratio(page[k], bg) < 4.5) fail(`${theme}: in-page ${k} ${page[k]} is ${ratio(page[k], bg).toFixed(2)}:1 on ${bg}`);
   }
   if (ratio(page['--sr-ins-fg'], page['--sr-ins-bg']) < 4.5) fail(`${theme}: inserted-word text is ${ratio(page['--sr-ins-fg'], page['--sr-ins-bg']).toFixed(2)}:1 on its highlight`);
+  // Brand accent: one value on every surface, readable on and as text.
+  if (panel['--accent'] !== page['--sr-accent']) fail(`${theme}: in-page accent ${page['--sr-accent']} differs from the panel's ${panel['--accent']}`);
+  if (welcome['--accent'] && welcome['--accent'] !== panel['--accent']) fail(`${theme}: welcome accent ${welcome['--accent']} differs from the panel's`);
+  if (ratio(page['--sr-on-accent'], page['--sr-accent']) < 4.5) fail(`${theme}: text on the in-page accent is ${ratio(page['--sr-on-accent'], page['--sr-accent']).toFixed(2)}:1`);
+  if (ratio(panel['--accent-ink'], panel['--accent-tint']) < 4.5) fail(`${theme}: accent text on its tint is ${ratio(panel['--accent-ink'], panel['--accent-tint']).toFixed(2)}:1`);
+  if (ratio(panel['--accent-ink'], panel['--card']) < 4.5) fail(`${theme}: accent text on cards is ${ratio(panel['--accent-ink'], panel['--card']).toFixed(2)}:1`);
   if (ratio(page['--sr-on-primary'], page['--sr-primary']) < 4.5) fail(`${theme}: text on ink fills is ${ratio(page['--sr-on-primary'], page['--sr-primary']).toFixed(2)}:1`);
 }
 // Grays too faint for text must only be used for borders and fills.
