@@ -40,17 +40,23 @@ class CloudProvider {
       // Legacy single-key storage (pre-multi-provider) — carries an already-saved Groq key forward.
       const apiKey = keys[keyField] || (id === 'groq' ? (keys.groqAPIKey || '') : '');
       const baseURL = id === 'custom' ? (r.srCloudCustomBaseURL || '') : meta.baseURL;
-      const model = r[modelField] || meta.defaultModel;
-      return { id, displayName: meta.name, baseURL, model, apiKey };
+      const model = r[modelField] || meta.defaultModel || '';
+      // Local servers (Ollama, LM Studio, a custom localhost URL) take no key.
+      // Presets for local servers (Ollama, LM Studio) take no key at all. A custom
+      // endpoint on this computer may or may not want one (LiteLLM does), so
+      // there the key is optional rather than hidden, as in lasso's form.
+      const keyless = !!meta.keyless;
+      const keyOptional = keyless || (typeof SR_isLocalURL === 'function' && SR_isLocalURL(baseURL));
+      return { id, displayName: meta.name, baseURL, model, apiKey, keyless, keyOptional };
     } catch {
       const meta = SR_cloudServiceMeta('groq');
       return { id: 'groq', displayName: meta.name, baseURL: meta.baseURL, model: meta.defaultModel, apiKey: '' };
     }
   }
 
-  static async hasKey(serviceId) {
-    const cfg = await this.getConfig(serviceId);
-    return !!(cfg.apiKey && cfg.apiKey.trim().length > 0);
+  // Ready to send a request: a key, or a provider that doesn't need one.
+  static async isReady(serviceId) {
+    return providerReady(await this.getConfig(serviceId));
   }
 
   static async setKey(serviceId, apiKey) {
@@ -79,12 +85,22 @@ class CloudProvider {
   }
 }
 
+function providerReady(cfg) {
+  if (typeof SR_providerReady === 'function') return SR_providerReady(cfg);
+  return !!(cfg && cfg.baseURL && (cfg.apiKey || cfg.keyless));
+}
+
+// The provider's own page for creating a key, from the preset when it has one.
+function keyLinkFor(id) {
+  return SR_cloudServiceMeta(id).keyURL || SR_KEY_LINKS[id] || null;
+}
+
 function keyHintForService(id) {
-  const link = SR_KEY_LINKS[id];
-  if (!link) return 'Stored only in your browser.';
+  const link = keyLinkFor(id);
+  if (!link) return 'Stored on this computer only.';
   let host = link;
   try { host = new URL(link).host; } catch { /* keep raw link as fallback text */ }
-  return `Get a key from <a href="${link}" target="_blank" rel="noopener">${host}</a>. Stored only in your browser.`;
+  return `Get a key from <a href="${link}" target="_blank" rel="noopener">${host}</a>. Stored on this computer only.`;
 }
 
 // === Usage stats (aggregate only, not shown in this UI, kept for parity
@@ -198,12 +214,12 @@ async function refreshProviderPill() {
   deviceReady = availability === 'available' || availability === 'downloadable' || availability === 'downloading';
   deviceNeedsSetup = availability === 'downloadable' || availability === 'downloading';
   const provider = await CloudProvider.getConfig();
-  const hasKey = !!provider.apiKey;
+  const hasKey = providerReady(provider);
   const { engine } = await Settings.get();
 
   let label, runnable;
   if (engine === 'cloud') {
-    label = hasKey ? `${provider.displayName} · connected` : 'Add key';
+    label = hasKey ? `${provider.displayName} · connected` : 'Set up AI';
     runnable = hasKey;
   } else if (engine === 'device') {
     label = deviceReady ? 'On-device · local' : 'Unavailable';
@@ -211,7 +227,7 @@ async function refreshProviderPill() {
   } else {
     label = deviceReady && !deviceNeedsSetup ? 'On-device · local'
       : hasKey ? `${provider.displayName} · connected`
-      : deviceNeedsSetup ? 'Set up on-device AI' : 'Add key';
+      : deviceNeedsSetup ? 'Set up on-device AI' : 'Set up AI';
     runnable = deviceReady || hasKey;
   }
 
@@ -255,7 +271,9 @@ async function refreshSettingsPanel() {
   });
   updateEngineHint(engine);
 
-  refs.keySection.classList.toggle('hidden', engine === 'device');
+  refs.cloudSection.classList.toggle('hidden', engine === 'device');
+  // Open Advanced when it holds a non-default choice, so it's never hidden state.
+  if (engine !== 'auto') refs.advancedSection.open = true;
   await refreshCloudSection();
 
   const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
@@ -277,19 +295,38 @@ function openCloudMenu() {
 async function refreshCloudSection() {
   const serviceId = await CloudProvider.getActiveService();
   const meta = SR_cloudServiceMeta(serviceId);
+  activeServiceId = serviceId;
   refs.cloudServiceBtnLabel.textContent = meta.name;
-  refs.cloudServiceMenu.querySelectorAll('.cloud-select-item').forEach((item) => {
-    item.classList.toggle('current', item.dataset.value === serviceId);
-  });
+  renderProviderMenu(serviceId);
   refs.customBaseURLRow.classList.toggle('hidden', serviceId !== 'custom');
+  refs.providerNote.textContent = meta.note || '';
 
   const cfg = await CloudProvider.getConfig(serviceId);
   refs.cloudModelInput.value = cfg.model;
-  refs.cloudModelInput.placeholder = meta.defaultModel || 'model name';
+  refs.cloudModelInput.placeholder = meta.defaultModel || 'Connect first, then pick a model';
   if (serviceId === 'custom') refs.customBaseURLInput.value = cfg.baseURL;
+  refs.apiKeyLabel.textContent = `${meta.name} API key`;
+  refs.keySection.classList.toggle('keyless', cfg.keyless);
 
   await renderKeyField(serviceId);
   closeModelMenu();
+}
+
+// Presets come from SR_CLOUD_SERVICES (constants.js), so a provider added
+// there shows up here without touching this file.
+let activeServiceId = 'groq';
+function renderProviderMenu(currentId) {
+  refs.cloudServiceMenu.innerHTML = SR_CLOUD_SERVICES.map((svc) => `
+    <div class="cloud-select-item ${svc.id === currentId ? 'current' : ''}" data-value="${escapeHtml(svc.id)}" role="option" aria-selected="${svc.id === currentId}">
+      <span>${escapeHtml(svc.name)}</span>${svc.keyless ? '<span class="cloud-select-tag">no key</span>' : ''}
+    </div>`).join('');
+}
+
+// Only Groq, OpenAI, and OpenRouter were verified to send CORS headers for
+// extension requests; any other endpoint needs host access to its origin.
+function needsHostAccess(id) {
+  if (typeof SR_needsHostAccess === 'function') return SR_needsHostAccess(id);
+  return !['groq', 'openai', 'openrouter'].includes(id);
 }
 
 // === Settings panel: browse available models ({baseURL}/models) ===
@@ -349,7 +386,17 @@ async function renderKeyField(serviceId) {
   const hasKey = !!cfg.apiKey;
   const input = refs.apiKeyInput;
 
-  if (keyEditing) {
+  if (cfg.keyless) {
+    // A server on this computer: nothing to paste, just check it's running.
+    input.readOnly = false;
+    input.value = '';
+    refs.btnSaveKey.textContent = 'Connect';
+    refs.btnSaveKey.classList.remove('btn-outline');
+    refs.btnSaveKey.classList.add('btn-solid');
+    refs.keyHint.textContent = `No key needed. Start ${cfg.displayName} on this computer, then press Connect.`;
+    refs.keyHint.classList.remove('ok', 'hidden-fade');
+    refs.btnClearKey.classList.add('hidden');
+  } else if (keyEditing) {
     input.readOnly = false;
     input.type = 'text'; // unmasked by default while typing a NEW key; a typo here has real cost
     input.value = '';
@@ -370,7 +417,7 @@ async function renderKeyField(serviceId) {
     refs.btnSaveKey.textContent = 'Change';
     refs.btnSaveKey.classList.remove('btn-solid');
     refs.btnSaveKey.classList.add('btn-outline');
-    refs.keyHint.innerHTML = `${ICON_CHECK}Saved: stored only in your browser`;
+    refs.keyHint.innerHTML = `${ICON_CHECK}Saved on this computer only`;
     refs.keyHint.classList.add('ok');
     refs.keyHint.classList.remove('hidden-fade');
     refs.btnClearKey.classList.remove('hidden');
@@ -380,7 +427,7 @@ async function renderKeyField(serviceId) {
     input.readOnly = false;
     input.type = 'text';
     input.value = '';
-    input.placeholder = `${cfg.displayName} API key…`;
+    input.placeholder = cfg.keyOptional ? 'API key (optional for a server on this computer)' : `${cfg.displayName} API key…`;
     input.classList.remove('editing');
     refs.btnSaveKey.textContent = 'Save';
     refs.btnSaveKey.classList.remove('btn-outline');
@@ -399,11 +446,14 @@ function onSaveClick() {
   // the key the user just pasted).
   const hasSavedKey = refs.apiKeyInput.readOnly;
   if (keyEditing || !hasSavedKey) {
-    // Custom endpoints rarely send CORS headers, so they need host access.
-    // Requested here, synchronously inside the click, while it still counts
-    // as a user gesture.
-    if (refs.cloudServiceBtnLabel.textContent === SR_cloudServiceMeta('custom').name) {
-      requestCustomEndpointAccess(refs.customBaseURLInput.value.trim()).finally(saveKey);
+    // Endpoints other than the CORS-verified presets need host access to
+    // their origin. Requested here, synchronously inside the click, while it
+    // still counts as a user gesture.
+    if (needsHostAccess(activeServiceId)) {
+      const baseURL = activeServiceId === 'custom'
+        ? refs.customBaseURLInput.value.trim()
+        : SR_cloudServiceMeta(activeServiceId).baseURL;
+      requestEndpointAccess(baseURL).finally(saveKey);
       return;
     }
     saveKey();
@@ -414,7 +464,7 @@ function onSaveClick() {
   refs.apiKeyInput.focus();
 }
 
-function requestCustomEndpointAccess(baseURL) {
+function requestEndpointAccess(baseURL) {
   let origin;
   try { origin = new URL(baseURL).origin + '/*'; } catch { return Promise.resolve(false); }
   return chrome.permissions.request({ origins: [origin] }).catch(() => false);
@@ -434,9 +484,35 @@ async function healModel(serviceId, availableIds) {
   }
 }
 
+async function connectKeyless(serviceId) {
+  const cfg = await CloudProvider.getConfig(serviceId);
+  refs.btnSaveKey.disabled = true;
+  refs.btnSaveKey.textContent = 'Connecting…';
+  try {
+    const ids = await SR_availableModels(cfg);
+    await healModel(serviceId, ids);
+    refs.keyHint.innerHTML = `${ICON_CHECK}Connected · ${ids.length} model${ids.length === 1 ? '' : 's'} available`;
+    refs.keyHint.classList.add('ok');
+    await refreshProviderPill();
+    showSavedToast();
+  } catch (error) {
+    refs.keyHint.textContent = `Couldn't reach ${cfg.displayName} at ${cfg.baseURL}. Is it running?`;
+    refs.keyHint.classList.remove('ok');
+  } finally {
+    refs.btnSaveKey.disabled = false;
+    refs.btnSaveKey.textContent = 'Connect';
+  }
+}
+
 async function saveKey() {
   const serviceId = await CloudProvider.getActiveService();
+  const current = await CloudProvider.getConfig(serviceId);
   const key = refs.apiKeyInput.value.trim();
+  // No key to save for a local server: just check it answers.
+  if (current.keyless || (current.keyOptional && !key)) {
+    await connectKeyless(serviceId);
+    return;
+  }
   if (!key) {
     refs.keyHint.classList.remove('ok');
     refs.keyHint.textContent = 'Enter your API key first.';
@@ -488,10 +564,10 @@ async function saveKey() {
   }
 }
 
-// The custom endpoint's own origin is granted when its key is saved. Give it
-// back when that endpoint stops being used. While hover actions are on,
+// An endpoint's own origin is granted when it's connected. Give it back when
+// that endpoint stops being used. While hover actions are on,
 // <all_urls> already covers it, so leave permissions alone then.
-async function releaseCustomEndpointAccess(baseURL) {
+async function releaseEndpointAccess(baseURL) {
   let origin;
   try { origin = new URL(baseURL).origin + '/*'; } catch { return; }
   const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
@@ -501,7 +577,7 @@ async function releaseCustomEndpointAccess(baseURL) {
 
 async function clearKey() {
   const serviceId = await CloudProvider.getActiveService();
-  if (serviceId === 'custom') await releaseCustomEndpointAccess((await CloudProvider.getConfig('custom')).baseURL);
+  if (needsHostAccess(serviceId)) await releaseEndpointAccess((await CloudProvider.getConfig(serviceId)).baseURL);
   await CloudProvider.clearKey(serviceId);
   keyEditing = false;
   await renderKeyField(serviceId);
@@ -517,7 +593,7 @@ async function checkModelStillListed() {
     const { srModelCheckedAt } = await chrome.storage.local.get(['srModelCheckedAt']);
     if (srModelCheckedAt && Date.now() - srModelCheckedAt < MODEL_CHECK_MS) return;
     const cfg = await CloudProvider.getConfig();
-    if (!cfg.apiKey || !cfg.baseURL) return;
+    if (!providerReady(cfg)) return;
     const ids = await SR_availableModels(cfg);
     await chrome.storage.local.set({ srModelCheckedAt: Date.now() });
     await healModel(cfg.id, ids);
@@ -619,7 +695,7 @@ function updatePaletteActive() {
 
 async function openPalette(view) {
   paletteView = view;
-  if (view === 'languages') hasKeyCached = await CloudProvider.hasKey();
+  if (view === 'languages') hasKeyCached = await CloudProvider.isReady();
   renderPalette();
   refs.palette.classList.add('open');
 }
@@ -687,7 +763,7 @@ async function sendMessage() {
   const text = refs.ta.value.trim();
   if (!text) return;
 
-  const hasKey = await CloudProvider.hasKey();
+  const hasKey = await CloudProvider.isReady();
   const { engine } = await Settings.get();
   const runnable = engine === 'cloud' ? hasKey : engine === 'device' ? deviceReady : (deviceReady || hasKey);
   if (!runnable) {
@@ -728,7 +804,7 @@ async function runTurn(turn, opts = {}) {
     // Same rule as background.js rewriteNow: on Auto with a key, don't start a
     // multi-GB model download mid-rewrite; use the key until the user sets
     // on-device up from the card in Settings.
-    const engine = (settings.engine === 'auto' && provider.apiKey && (await SR_deviceAvailability()) !== 'available')
+    const engine = (settings.engine === 'auto' && providerReady(provider) && (await SR_deviceAvailability()) !== 'available')
       ? 'cloud' : settings.engine;
     const { text: rewritten, provider: providerId } = await SR_rewriteAuto(turn.inputText, turn.mode, {
       provider,
@@ -830,7 +906,17 @@ function renderTurn(turn) {
 
 function renderThread() {
   if (turns.length === 0) {
-    refs.thread.innerHTML = '<div class="thread-empty">Your rewrites will appear here.</div>';
+    // First-use guide in place of an empty list: the three ways in, shortest first.
+    const mod = /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
+    refs.thread.innerHTML = `<div class="thread-empty">
+      <h2>Three ways to use Proofr</h2>
+      <ol>
+        <li><b>On any page:</b> select text, right-click, choose <b>Proofr</b>, then a tone. In a text box your text is replaced; <kbd>${mod}</kbd>+<kbd>Z</kbd> undoes it.</li>
+        <li><b>Quick proofread:</b> select text and press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>.</li>
+        <li><b>Here:</b> paste text below, type <kbd>/</kbd> to pick a mode, and press <kbd>${mod}</kbd>+<kbd>Enter</kbd>.</li>
+      </ol>
+      <p class="fine">Each result here is separate: Proofr never sends earlier entries with a new one. This history stays on this computer.</p>
+    </div>`;
     return;
   }
   refs.thread.innerHTML = '';
@@ -921,7 +1007,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     'mark', 'providerPill', 'providerPillText', 'btnClearHistory', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'welcomeCard', 'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
-    'keySection', 'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
+    'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
+    'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
     'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
     'btnBrowseModels', 'modelMenu', 'modelMenuSearch', 'modelMenuList',
     'apiKeyInput', 'btnToggleKeyEye', 'btnSaveKey', 'btnClearKey', 'keyHint',
@@ -983,13 +1070,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       Settings.set({ srHoverAssist: false }).then(async () => {
         await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
         refs.hoverHint.textContent = '';
-        // A custom endpoint may have been relying on that broad access.
+        // A provider outside the CORS-verified presets may have been relying on that broad access.
         const cfg = await CloudProvider.getConfig();
-        if (cfg.id === 'custom' && cfg.apiKey && cfg.baseURL) {
+        if (needsHostAccess(cfg.id) && providerReady(cfg)) {
           let origin = null;
           try { origin = new URL(cfg.baseURL).origin + '/*'; } catch { /* invalid URL */ }
           if (origin && !(await chrome.permissions.contains({ origins: [origin] }))) {
-            refs.hoverHint.textContent = 'Your custom endpoint needs access again: open Cloud provider and press Save on its key.';
+            refs.hoverHint.textContent = `${cfg.displayName} needs access again: under AI provider, press ${cfg.keyless ? 'Connect' : 'Save'}.`;
           }
         }
         showSavedToast();
@@ -1019,7 +1106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!item) return;
     closeCloudMenu();
     const previous = await CloudProvider.getConfig();
-    if (previous.id === 'custom' && item.dataset.value !== 'custom') await releaseCustomEndpointAccess(previous.baseURL);
+    if (needsHostAccess(previous.id) && item.dataset.value !== previous.id) await releaseEndpointAccess(previous.baseURL);
     await CloudProvider.setActiveService(item.dataset.value);
     keyEditing = false;
     await refreshCloudSection();
@@ -1038,7 +1125,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   refs.customBaseURLInput.addEventListener('change', async () => {
     const previous = (await CloudProvider.getConfig('custom')).baseURL;
-    if (previous && previous !== refs.customBaseURLInput.value.trim()) await releaseCustomEndpointAccess(previous);
+    if (previous && previous !== refs.customBaseURLInput.value.trim()) await releaseEndpointAccess(previous);
     await CloudProvider.setCustomBaseURL(refs.customBaseURLInput.value.trim());
     showSavedToast();
   });

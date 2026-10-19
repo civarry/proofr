@@ -38,14 +38,25 @@ class CloudProvider {
     // Legacy single-key storage (pre-multi-provider) — carries an already-saved Groq key forward.
     const apiKey = keys[keyField] || (id === 'groq' ? (keys.groqAPIKey || '') : '');
     const baseURL = id === 'custom' ? (r.srCloudCustomBaseURL || '') : meta.baseURL;
-    const model = r[modelField] || meta.defaultModel;
-    return { id, displayName: meta.name, baseURL, model, apiKey };
+    const model = r[modelField] || meta.defaultModel || '';
+    // Local servers (Ollama, LM Studio, a custom localhost URL) take no key.
+    // Presets for local servers (Ollama, LM Studio) take no key at all. A custom
+    // endpoint on this computer may or may not want one (LiteLLM does), so
+    // there the key is optional rather than hidden, as in lasso's form.
+    const keyless = !!meta.keyless;
+    const keyOptional = keyless || (typeof SR_isLocalURL === 'function' && SR_isLocalURL(baseURL));
+    return { id, displayName: meta.name, baseURL, model, apiKey, keyless, keyOptional };
   }
 
-  static async hasKey(serviceId) {
-    const cfg = await this.getConfig(serviceId);
-    return !!(cfg.apiKey && cfg.apiKey.trim().length > 0);
+  // Ready to send a request: a key, or a provider that doesn't need one.
+  static async isReady(serviceId) {
+    return providerReady(await this.getConfig(serviceId));
   }
+}
+
+function providerReady(cfg) {
+  if (typeof SR_providerReady === 'function') return SR_providerReady(cfg);
+  return !!(cfg && cfg.baseURL && (cfg.apiKey || cfg.keyless));
 }
 
 async function getSettings() {
@@ -79,7 +90,7 @@ async function aiStatus() {
   return {
     settings,
     provider,
-    hasKey: !!provider.apiKey,
+    hasKey: providerReady(provider),
     deviceNow: availability === 'available',
     deviceNeedsSetup: availability === 'downloadable' || availability === 'downloading',
   };
@@ -99,8 +110,8 @@ function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup 
   }
   if (!deviceNow && !hasKey) {
     return deviceNeedsSetup
-      ? { title, message: 'On-device AI needs a one-time setup. Click the Proofr toolbar icon and choose "Set up on-device AI", or connect a free Groq key there instead.' }
-      : { title, message: 'No AI is set up yet. Click the Proofr toolbar icon to connect a free Groq key, since Chrome’s built-in AI isn’t available here.' };
+      ? { title, message: 'On-device AI needs a one-time setup. Click the Proofr toolbar icon and choose "Set up on-device AI", or connect an AI provider there instead.' }
+      : { title, message: 'No AI is set up yet. Chrome’s built-in AI isn’t available here, so click the Proofr toolbar icon and connect an AI provider (Groq has a free tier; Ollama and LM Studio need no key).' };
   }
   return null;
 }
@@ -268,7 +279,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // async sendResponse
   }
   if (message.action === 'hasCloudKey') {
-    CloudProvider.hasKey().then((hasKey) => sendResponse({ hasKey }), () => sendResponse({ hasKey: false }));
+    CloudProvider.isReady().then((hasKey) => sendResponse({ hasKey }), () => sendResponse({ hasKey: false }));
     return true; // async sendResponse
   }
   return false;
@@ -295,8 +306,8 @@ async function handleHoverRewrite(message, sendResponse) {
 async function handleHoverAskAI(message, sendResponse) {
   try {
     const provider = await CloudProvider.getConfig();
-    if (!provider.apiKey) {
-      sendResponse({ error: 'setup', title: 'Set up Proofr', message: `Add a ${provider.displayName} API key in the Proofr side panel to ask about text.` });
+    if (!providerReady(provider)) {
+      sendResponse({ error: 'setup', title: 'Set up Proofr', message: 'Connect an AI provider in the Proofr side panel to ask about text.' });
       return;
     }
     const text = await SR_askCloud(provider, message.text, message.instruction);
@@ -344,8 +355,8 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang } =
     let message = error.message || 'Something went wrong.';
     // On-device failures (too long, unsupported language, timeout) have a
     // cloud fallback the user may not know about.
-    if (!(await CloudProvider.hasKey()) && !/key/i.test(message)) {
-      message += ' A free cloud key (set up in the Proofr side panel) handles longer text and more languages.';
+    if (!(await CloudProvider.isReady()) && !/key|provider/i.test(message)) {
+      message += ' Connecting an AI provider in the Proofr side panel handles longer text and more languages.';
     }
     inject(tabId, showErrorMessage, [message]);
   }

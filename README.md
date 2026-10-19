@@ -5,7 +5,8 @@ Proofread, rewrite in any tone, and translate text on any web page. Proofr is a 
 ## How it runs
 
 - **On-device (default when available):** Chrome's built-in AI (Gemini Nano). Your text never leaves your computer. This needs desktop Chrome with built-in AI support and enough disk and memory to download the model. Many machines can't run it.
-- **Cloud (bring your own key):** if on-device isn't available, or you pick the Cloud engine, Proofr calls Groq, OpenAI, OpenRouter, or any OpenAI-compatible endpoint with your own API key. The request goes straight from your browser to that provider. A free Groq key takes about a minute to get at [console.groq.com/keys](https://console.groq.com/keys).
+- **Cloud (bring your own key):** if on-device isn't available, or you pick the Cloud engine, Proofr calls the provider you choose with your own API key: Groq, OpenAI, OpenRouter, Google Gemini, Mistral, DeepSeek, Together AI, or any OpenAI-compatible endpoint. The request goes straight from your browser to that provider.
+- **Local server (no key):** Ollama, LM Studio, or a custom endpoint on your own computer or network. Proofr asks once for access to that address. A free Groq key takes about a minute to get at [console.groq.com/keys](https://console.groq.com/keys).
 
 The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-device first and falls back to your cloud key.
 
@@ -35,7 +36,7 @@ The browser tests load a copy of the extension in Chrome for Testing through [pu
 # On-device language handling, with a stubbed Prompt API (no browser needed)
 node test/device-langs.mjs
 
-# Cloud call handling: cut-off answers, retired models, model picking (no browser needed)
+# Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
 
 # UI end-to-end: welcome tab, key save, side panel, rating ask, translate,

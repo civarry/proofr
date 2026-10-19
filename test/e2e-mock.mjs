@@ -106,8 +106,16 @@ try {
     await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
     // DOM-level input and clicks: puppeteer's mouse/visibility helpers need painted
     // frames, which a sleeping display (or a busy machine) stops producing.
-    const ready = await waitFor(() => panel.evaluate(() => { const e = document.getElementById('apiKeyInput'); return !!e && e.offsetParent !== null && !e.readOnly; }), 8000);
-    check(ready, 'side panel: first run shows an editable key field');
+    // A local endpoint with a model is ready without a key, so the panel opens the
+    // composer; open Settings (a toggle, and bound after async init, so retry while hidden).
+    const ready = await waitFor(() => panel.evaluate(() => {
+      if (document.getElementById('settingsPanel').classList.contains('hidden')) document.getElementById('btnSettings').click();
+      const e = document.getElementById('apiKeyInput');
+      return !!e && e.offsetParent !== null && !e.readOnly;
+    }), 8000);
+    check(ready, 'side panel: Settings shows an editable (optional) key field for a local endpoint');
+    // Opening Settings re-renders the key field asynchronously (clearing it); let that land first.
+    await sleep(1000);
     await panel.evaluate((k) => {
       const input = document.getElementById('apiKeyInput');
       input.value = k;
@@ -118,7 +126,8 @@ try {
       const [l, s] = await Promise.all([chrome.storage.local.get('srCloudKey_custom'), chrome.storage.sync.get('srCloudKey_custom')]);
       return l.srCloudKey_custom === k || s.srCloudKey_custom === k;
     }, KEY), 8000);
-    check(saved, 'side panel: pasting a key into the empty field and clicking Save stores it');
+    const hint = saved ? '' : ` (hint: ${JSON.stringify(await panel.evaluate(() => document.getElementById('keyHint').textContent.trim()))})`;
+    check(saved, `side panel: pasting a key into the empty field and clicking Save stores it${hint}`);
   });
 
   // Seed the key directly too, so later checks don't depend on check 1.
