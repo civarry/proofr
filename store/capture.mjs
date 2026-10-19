@@ -31,7 +31,7 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      const prompt = JSON.parse(body).messages.map((m) => m.content).join('\n');
+      const msgs = JSON.parse(body).messages; const prompt = `${msgs[0].content}\n${msgs.at(-1).content}`; // skip example turns
       const text = (REPLIES.find(([re]) => re.test(prompt)) || [null, 'Done.'])[1];
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: text } }] }));

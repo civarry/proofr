@@ -442,6 +442,7 @@
     .prog-row .word { font-weight: 600; color: var(--ink); }
     .prog-row .from { color: var(--ink-soft); text-decoration: line-through; }
     .prog-row .to { color: var(--live-ink); font-weight: 600; }
+    .prog-row .eg { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-faint); }
     .prog-row .rule { margin-top: 2px; font-size: 12px; color: var(--ink-soft); }
     .prog-icon { width: 18px; height: 18px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
     .prog-icon svg { width: 11px; height: 11px; display: block; }
@@ -907,6 +908,10 @@
             <svg class="prog-spark" id="progSpark" viewBox="0 0 320 64" role="img"></svg>
             <div class="prog-axis" id="progAxis"><span>8 weeks ago</span><span>this week</span></div>
             <div class="prog-note" id="progBasis"></div>
+          </section>
+          <section class="prog-card" id="progHabitsCard" hidden>
+            <div class="prog-label">Your patterns</div>
+            <div class="prog-list" id="progHabits"></div>
           </section>
           <section class="prog-card prog-focus" id="progFocus" hidden>
             <div class="prog-label">This week's focus</div>

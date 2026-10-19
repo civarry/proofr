@@ -18,8 +18,11 @@ The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-d
 - **Change guard:** a Proofread is not pasted in if it changed more than half the words (in text of 6 words or more), or removed a number, a likely name, a hedge like "maybe" or "I think", or added or removed a negation like "not". It opens in the dialog instead, with the reason and a "Replace anyway" button. The 50% line is the 95th percentile of how much human correctors changed in the [JFLEG](https://github.com/keisks/jfleg) corpus.
 - **Side panel:** click the toolbar icon to paste or type text, pick a mode with `/`, and keep a local history of results. If your Chrome can run on-device AI but hasn't downloaded the model yet, the panel has a one-time setup button.
 - **Progress tab:** the side panel's Progress tab shows your mistakes per 100 words this week with an 8-week chart, a weekly focus, words you've mastered (no fix for 14 days while you kept writing), and words you're still working on, each with a one-line rule. It is built from corrected word pairs and word counts kept on this computer, never your sentences, and can be turned off in Settings. A Proofread the change guard flagged is not learned from. "Get writing tips" sends only that word list to your AI, shows only tips that name your own words, and asks once per list.
+- **Your patterns:** habits read from your own repeated fixes ("You leave out apostrophes in contractions", "You mix up your and you're"), shown only once your fixes support one, so each person's Progress tab reads differently. A mistake is only taught after it repeats, so one wrong fix by the AI never becomes a lesson.
 - **Practice:** two-minute rounds of sentences built on this computer from your own common mistakes, checked locally with the rule for anything missed.
 - **Coach mode (off by default):** Proofread marks the spots in your text box instead of fixing them. "I'll fix them" returns you to the box; "Show fixes" opens the usual diff with Apply to text box.
+- **Small models learn from a big one:** on-device Nano, local servers (Ollama, LM Studio) and small cloud models (about 14B parameters or less) get a couple of worked examples per task, written and checked by a strong model, including one that treats an instruction inside the text as text. Big models skip them and their cost. `store/distill.mjs` measures the examples on a real small model against a big model's answers, and only replaces them with a set that scores better than both the shipped examples and none: `GROQ_API_KEY=... node store/distill.mjs grammar`.
+- **Cost on your key:** instructions are about 240 tokens per request, and the answer budget fits the text, so a short fix can't run away and a long one isn't cut off.
 - **Prompt-injection defenses:** the text you select is sent inside a tag with a random id that page text can't close, with a rule before and after it saying it is data, not instructions. Cloud calls send the rules as a separate system message. A reply that repeats Proofr's instructions is refused and never pasted.
 - **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate. With a cloud key there is also an "Ask about this…" box for a freeform instruction. Results open in a dialog; the page text is never changed.
 
@@ -50,11 +53,18 @@ node test/guard.mjs
 # Writing insights: which corrected word pairs are kept (no names, numbers, links or phrases), counts, practice (no browser needed)
 node test/insights.mjs
 
+# Learning: six simulated writers over 8 weeks get habits, focus, rules and practice that fit them,
+# never the model's one-off wrong fixes, and nothing stored beyond corrected words (no browser needed)
+node test/learning-sim.mjs
+
 # Prompt-injection defenses: fencing, rules around the text, system/user split, leaked replies refused (no browser needed)
 node test/injection.mjs
 
 # Cost on your own key: instruction size, answer budget per request, tips grounded in your words (no browser needed)
 node test/efficiency.mjs
+
+# Teacher examples: which models get them, how they're sent, and that each passes the live checks (no browser needed)
+node test/distill.mjs
 
 # Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
 node test/cloud-call.mjs
