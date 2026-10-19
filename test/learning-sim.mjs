@@ -122,7 +122,7 @@ const FILLER = new Set(`quick update just so you know for tomorrow i wrote in th
 think old version works we make call today file open on my laptop room booked yet link work me update go out time
 package arrived going to rain later dog wagged tail running a bit late sent draft plan now sending it team shared slides
 notes are over welcome join thanks help this is easier than looks eat first and then talk takes hour need new were
-hoping more meeting was short hope can see starts`.split(/\s+/));
+hoping more meeting was short hope can see starts let if should`.split(/\s+/));
 const fill = (s, wrong, pick) => s.replace(/\[([^|\]]*)\|([^\]]*)\]/g, (_, a, b) => (wrong() ? (pick.push(`${a}|${b}`), a) : b))
   .replace(/\{([^|}]*)\|([^}]*)\}/g, (_, a, b) => (wrong() ? a : b));
 const words = (t) => String(t).match(/[\p{L}\p{N}]+/gu) || [];
