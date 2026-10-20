@@ -50,8 +50,10 @@ const TIPS = '1. You wrote "recieve" for receive: i before e, except after c.\n2
 // Mock provider: records request bodies, answers /models and /chat/completions.
 const mockRequests = [];
 // Practice batches answer after GEN_MS, so a question shown while one is pending proves nothing waited on it.
-let genPending = 0;
+let genPending = 0, genN = 0;
 const GEN_MS = 1500;
+// Waits out any batch still in flight (its Proofread included), so a check never races one.
+const settle = async (pg) => { for (let i = 0; i < 60 && (genPending > 0 || await pg.evaluate(() => refilling)); i++) await sleep(100); };
 const mock = http.createServer((req, res) => {
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type' };
   if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
@@ -73,10 +75,12 @@ const mock = http.createServer((req, res) => {
     // obey an injection and repeat its instructions.
     // Practice: one full sentence per "word | topic" line as JSON (plus the first
     // again, as small models do), and Proofread of the numbered batch returns it unchanged.
+    // Each batch after the first ends its sentences differently, as a real model's would.
     const gen = /For each line of the list/.test(prompt);
+    const end = gen && genN++ ? ` ${['again', 'as well', 'once more', 'too', 'still', 'by now', 'for sure', 'all week'][genN % 8]}.` : '';
     const lines = gen ? input.split('\n').map((l) => l.split(' | ')).filter(([w]) => w && w.trim()) : null;
     const content = lines ? JSON.stringify({ questions: [...lines, lines[0]].map(([word, topic], i) => ({ word, topic,
-      sentence: i % 2 ? `Please make sure ${word} looks right in the email.` : `We checked that ${word} fits here today.` })) })
+      sentence: (i % 2 ? `Please make sure ${word} looks right in the email.` : `We checked that ${word} fits here today.`).replace(/\.$/, end || '.') })) })
       : /^1\. /.test(input) ? input
       : /Write exactly 3 tips/.test(prompt) ? TIPS
       : FIXES[input] || (/LEAK/.test(input) ? parsed.messages[0].content : `R(${input})`);
@@ -540,8 +544,45 @@ await shot(panel, '9-progress.png');
 // Practice: one question per mistake, one answer each, feedback inline.
 const isGen = (r) => /For each line of the list/.test(JSON.stringify(r));
 const isCheck = (r) => /<text-[0-9a-f]{12}>\\n1\. /.test(JSON.stringify(r));
+// Audio is counted, never played: a stand-in AudioContext, before the first round, so the
+// sounds-off check covers every round below.
+await panel.evaluate(() => {
+  window.__ac = 0; window.__osc = [];
+  window.AudioContext = class {
+    constructor() { window.__ac++; this.currentTime = 0; this.destination = {}; }
+    createOscillator() { return { frequency: { value: 0 }, connect: (g) => g, start() { window.__osc.push(this.frequency.value); }, stop() {} }; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: (d) => d }; }
+  };
+});
 mockRequests.length = 0;
 await clk(panel, '#btnPractice'); await sleep(300);
+const OWN = ['receive', 'Friday', 'were'];
+const cardState = () => panel.evaluate((own) => {
+  const card = document.getElementById('prChoose');
+  const tiles = [...document.querySelectorAll('#prTiles .pr-tile')];
+  return {
+    card: !card.hidden, stage: document.getElementById('prStage').hidden, asked: !!practice.cur,
+    why: document.getElementById('prWhy').textContent,
+    best: document.getElementById('prBestLine').hidden ? null : document.getElementById('prBestLine').textContent,
+    named: own.filter((w) => new RegExp(`\\b${w}\\b`, 'i').test(card.innerText)),
+    // [mode, disabled, line, width, top, title on one line, border color]
+    tiles: tiles.map((b) => [b.dataset.mode, b.disabled, b.querySelector('.pr-tile-text span').textContent, Math.round(b.getBoundingClientRect().width), Math.round(b.getBoundingClientRect().top), b.querySelector('b').getClientRects().length === 1 && b.querySelector('b').offsetHeight < 24, getComputedStyle(b).borderTopColor + getComputedStyle(b).borderTopWidth]),
+    focus: document.activeElement?.id,
+    fits: card.scrollHeight <= card.clientHeight,
+  };
+}, OWN);
+const m1 = await cardState();
+const tileLayout = (t) => t.length === 3 && t[0][4] === t[1][4] && t[2][4] > t[0][4] && t[2][3] > t[0][3] * 1.9 && t.every((x) => x[5]);
+const alike = (t) => new Set(t.map((x) => x[6])).size === 1;
+check('M1: Practice now (keyboard) opens the game modes in place: Quick and Keep going side by side, Mix-ups across below, all alike, Quick focused, nothing asked yet', m1.card && m1.stage && !m1.asked && m1.focus === 'prQuick' && m1.tiles.map((t) => t[0]).join() === 'quick,keep,mixups' && m1.tiles.every((t) => !t[1]) && alike(m1.tiles) && tileLayout(m1.tiles) && m1.best === null, JSON.stringify(m1));
+check('card: no word of the user\'s own on the start screen, just the count', m1.named.length === 0 && m1.why === '3 of your words need practice', JSON.stringify(m1));
+await panel.keyboard.press('ArrowRight');
+const arrowA = await panel.evaluate(() => document.activeElement?.id);
+await panel.keyboard.press('ArrowLeft'); await panel.keyboard.press('ArrowLeft');
+const arrowB = await panel.evaluate(() => document.activeElement?.id);
+await panel.keyboard.press('ArrowRight');
+check('card: arrow keys move between the tiles (and wrap)', arrowA === 'prKeep' && arrowB === 'prMix' && await panel.evaluate(() => document.activeElement?.id) === 'prQuick', JSON.stringify([arrowA, arrowB]));
+await panel.keyboard.press('Enter'); await sleep(300);
 const cur = () => panel.evaluate(() => ({ to: practice.cur.target.to, level: practice.cur.level, again: !!practice.queue[practice.q].again, sentence: document.getElementById('prSentence').textContent, opts: [...document.querySelectorAll('#prChoices .pr-choice')].map((b) => b.dataset.word) }));
 const p1 = await panel.evaluate(() => ({
   open: !document.getElementById('practicePanel').classList.contains('hidden'),
@@ -609,6 +650,7 @@ const missed = Object.entries(st).filter(([, v]) => v.wrongLast).map(([k]) => k.
 check('practice remembers each word pair and its level (no sentences)', Object.keys(st).length > 0 && Object.entries(st).every(([k, v]) => /^[^ ]+→[^ ]+$/.test(k) && Object.keys(v).sort().join() === 'last,level,right,seen,streak,wrongLast' && v.level >= 1 && v.level <= 4), JSON.stringify(st).slice(0, 200));
 check('R5: a word missed then got right on the retry still comes early next time', missedAt < 0 || missed.includes(shown[missedAt].to), JSON.stringify({ missed }));
 // The AI batch: words only, one generate and one Proofread call, kept for next time.
+await settle(panel);
 const pool = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticePool'])).srPracticePool || {});
 const poolItems = Object.values(pool.words || {}).flat();
 check('R4: AI questions wait in the v2 pool, each one checked', pool.v === 2 && poolItems.length > 0 && poolItems.every((x) => /^(We checked that|Please make sure) ___ /.test(x.s) && x.c === true), JSON.stringify(pool).slice(0, 240));
@@ -618,7 +660,8 @@ check('R3/R8: each batch is exactly 2 provider calls, generate then one Proofrea
 const genBodies = mockRequests.filter(isGen).map((r) => JSON.stringify(r));
 check('R8: the batch request holds the words and topics and none of the user\'s sentences', genBodies.length > 0 && genBodies.every((b) => /receive \| /.test(b) && !/hoping|Jane|3pm/.test(b)), genBodies[0]?.slice(0, 300));
 const seenStore = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticeSeen'])).srPracticeSeen || []);
-await clk(panel, '#btnPracticeAgain'); await sleep(400);
+await clk(panel, '#btnPracticeAgain'); await sleep(200);
+await clk(panel, '#prChoose [data-mode="quick"]'); await sleep(400);
 const r2 = await panel.evaluate(() => ({ first: practice.cur?.target.to, source: practice.cur?.source || 'none shown', text: document.getElementById('prSentence').textContent }));
 for (let i = 0; i < 50 && !(await panel.evaluate(() => !!practice.cur)); i++) await sleep(100);
 check('practice: the word missed last round comes first', !missed.length || missed.includes(r2.first), JSON.stringify({ missed, first: r2.first }));
@@ -641,11 +684,12 @@ const levelOf = await panel.evaluate(async () => {
   const plan = SR_practicePlan(progressView, (await chrome.storage.local.get(['srPracticeStats'])).srPracticeStats, 8, Date.now());
   const { srPracticeStats: s = {} } = await chrome.storage.local.get(['srPracticeStats']);
   const out = {};
-  plan.forEach((t, i) => { const k = `${t.from}→${t.to}`; s[k] = { ...(s[k] || { seen: 1, right: 1, last: 0, wrongLast: false, streak: 0 }), level: 2 + (i % 3) }; out[t.to] = 2 + (i % 3); });
+  plan.forEach((t, i) => { const k = SR_practiceKey(t); s[k] = { ...(s[k] || { seen: 1, right: 1, last: 0, wrongLast: false, streak: 0 }), level: 2 + (i % 3) }; out[t.to] = 2 + (i % 3); });
   await chrome.storage.local.set({ srPracticeStats: s });
   return out;
 });
-await clk(panel, '#btnPractice'); await sleep(300);
+await clk(panel, '#btnPractice'); await sleep(200);
+await clk(panel, '#prChoose [data-mode="quick"]'); await sleep(300);
 const lv = {};
 for (let guard = 0; guard < 30; guard++) {
   const s = await panel.evaluate(() => ({ done: !document.getElementById('prDone').hidden, sheet: practice.sheetOpen, level: practice.cur.level, to: practice.cur.target.to, from: practice.cur.target.from, again: !!practice.queue[practice.q].again }));
@@ -704,14 +748,17 @@ await clk(panel, '#btnPracticeBack'); await sleep(300);
 // R8: the daily provider budget and the learning switch both stop generation.
 const genBefore = () => mockRequests.filter(isGen).length;
 const tryGen = async (prep) => {
+  await settle(panel); // a batch landing late would save its pool and budget over the setup below
   await panel.evaluate(prep);
   await panel.evaluate(() => chrome.storage.local.remove(['srPracticePool']));
   const n = genBefore();
-  await clk(panel, '#btnPractice'); await sleep(GEN_MS + 800);
+  await clk(panel, '#btnPractice'); await sleep(200);
+  await clk(panel, '#prChoose [data-mode="quick"]'); await sleep(GEN_MS + 800);
   await clk(panel, '#btnPracticeBack'); await sleep(200);
   return genBefore() - n;
 };
-check('R8: generation runs when under budget (control)', await tryGen(() => chrome.storage.local.set({ srPracticeGenDay: { date: SR_dayKey(Date.now()), count: 38 } })) === 1);
+const genControl = await tryGen(() => chrome.storage.local.set({ srPracticeGenDay: { date: SR_dayKey(Date.now()), count: 38 } }));
+check('R8: generation runs when under budget (control)', genControl === 1, String(genControl));
 check('R8: the daily cap stops calls', await tryGen(() => chrome.storage.local.set({ srPracticeGenDay: { date: SR_dayKey(Date.now()), count: 39 } })) === 0);
 check('R8: learning off: no generation', await tryGen(async () => { await chrome.storage.local.remove(['srPracticeGenDay']); await chrome.storage.sync.set({ srInsightsOn: false }); }) === 0);
 await panel.evaluate(() => chrome.storage.sync.set({ srInsightsOn: true }));
@@ -725,13 +772,15 @@ const give = await panel.evaluate(async () => {
   if (!day || !a) return { skipped: JSON.stringify(words) };
   // a first (missed last time), Friday next (never practiced), the rest after (seen, right).
   const st = {};
-  for (const t of words) st[`${t.from}→${t.to}`] = { seen: 1, right: 1, last: Date.now(), wrongLast: false, level: 1, streak: 0 };
-  st[`${a.from}→${a.to}`] = { ...st[`${a.from}→${a.to}`], wrongLast: true };
-  delete st[`${day.from}→${day.to}`];
+  for (const t of words) st[SR_practiceKey(t)] = { seen: 1, right: 1, last: Date.now(), wrongLast: false, level: 1, streak: 0 };
+  st[SR_practiceKey(a)] = { ...st[SR_practiceKey(a)], wrongLast: true };
+  delete st[SR_practiceKey(day)];
   const leak = 'We checked that ___ fits here on Friday.';
   await chrome.storage.local.set({ srPracticeStats: st, srPracticeSeen: [], srPracticePool: { v: 2, words: { [a.to]: [{ s: leak, c: true }] } } });
   await chrome.storage.sync.set({ srInsightsOn: false }); // no refill: only the pool above
   document.getElementById('btnPractice').click();
+  await new Promise((r) => setTimeout(r, 200));
+  document.querySelector('#prChoose [data-mode="quick"]').click();
   await new Promise((r) => setTimeout(r, 400));
   const out = { first: practice.cur.target.to, a: a.to, later: practice.queue.slice(1).map((x) => x.target.to), source: practice.cur.source, text: document.getElementById('prSentence').textContent, pool: practice.pool.words[a.to] };
   document.getElementById('btnPracticeBack').click();
@@ -742,6 +791,173 @@ const give = await panel.evaluate(async () => {
 check('no giveaway: a sentence showing a later word\'s fix is held back (template used, sentence kept)',
   !give.skipped && give.first === give.a && give.later.includes('Friday') && give.source === 'template' && !/Friday/.test(give.text) && give.pool?.length === 1,
   JSON.stringify(give));
+
+// Parts 3-4: modes, checkpoints, moments, sound. A fixed word list (12 spelling
+// pairs) so rounds are long enough; learning off so no AI calls interfere.
+const MANY = [['recieve', 'receive'], ['definately', 'definitely'], ['seperate', 'separate'], ['occured', 'occurred'], ['untill', 'until'], ['wich', 'which'], ['beleive', 'believe'], ['tommorow', 'tomorrow'], ['neccessary', 'necessary'], ['accomodate', 'accommodate'], ['goverment', 'government'], ['enviroment', 'environment']];
+await panel.evaluate(() => chrome.storage.sync.set({ srInsightsOn: false }));
+// Starts a round on a word list (null: the user's own) and plays it. policy(i, cur) says
+// right or wrong; at a checkpoint, onCheck(n) returns 'enter' | 'esc' | 'more' | 'stop'.
+const playRound = (mode, words, opts = {}) => panel.evaluate(async (mode, words, opts) => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  await chrome.storage.local.remove(['srPracticeStats', 'srPracticePool', 'srPracticeSeen']);
+  if (opts.stats) await chrome.storage.local.set({ srPracticeStats: opts.stats });
+  if (words) progressView = { ...progressView, working: words.map(([from, to]) => ({ from, to, kind: 'spelling', n: 3 })) };
+  if (opts.lastMode) await chrome.storage.local.set({ srPracticeMode: opts.lastMode });
+  document.getElementById(opts.entry || 'btnPractice').click(); await wait(150);
+  const card = { why: document.getElementById('prWhy').textContent, text: document.getElementById('prChoose').innerText, best: document.getElementById('prBestLine').hidden ? null : document.getElementById('prBestLine').textContent, focus: document.activeElement?.id, disabled: [...document.querySelectorAll('#prTiles .pr-tile:disabled')].map((b) => b.dataset.mode) };
+  const realRandom = Math.random;
+  if (opts.random) Math.random = () => opts.random;
+  document.querySelector(`#prChoose [data-mode="${mode}"]`).click(); await wait(250);
+  const plan = practice.plan.map((t) => ({ to: t.to, starter: !!t.starter }));
+  const log = [], checks = [];
+  const key = (k) => document.getElementById('practicePanel').dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+  for (let guard = 0; guard < 80; guard++) {
+    if (!document.getElementById('prDone').hidden) break;
+    if (!document.getElementById('prCheckpoint').hidden) {
+      const n = practice.recent.length, act = opts.onCheck ? opts.onCheck : 'enter';
+      if (act === 'pause') { Math.random = realRandom; return { paused: n }; }
+      checks.push({ n, text: document.getElementById('prCheckText').textContent, focus: document.activeElement?.id, act: act === 'esc-at-10' && n === 10 ? 'esc' : 'enter' });
+      key(checks.at(-1).act === 'esc' ? 'Escape' : 'Enter'); await wait(60);
+      if (checks.at(-1).act === 'enter') checks.at(-1).after = { stage: !document.getElementById('prStage').hidden, q: practice.q, asked: practice.cur && !practice.answered };
+      continue;
+    }
+    const c = practice.cur, to = c.target.to, right = !(opts.wrongAt || []).includes(log.length);
+    const k = SR_practiceKey(c.target), before = practice.stats[k]?.level || 1;
+    if (c.level <= 2) [...document.querySelectorAll('.pr-choice')].find((b) => (b.dataset.word === to) === right).click();
+    else if (c.level === 3) [...document.querySelectorAll('.pr-chip')].find((b) => (Number(b.dataset.j) === c.k) === right).click();
+    else { document.getElementById('prInput').value = right ? to : 'zzzz'; document.getElementById('prType').requestSubmit(); }
+    await wait(20);
+    if (!practice.stats[k]) { log.push({ error: 'not recorded', to, level: c.level, right, sheet: practice.sheetOpen, answered: practice.answered, q: practice.q, queue: practice.queue.map((x) => x.target.to) }); break; }
+    const combo = document.getElementById('prCombo'), lvl = document.getElementById('prSheetLevel');
+    log.push({ to, starter: !!c.target.starter, right, combo: combo.hidden ? '' : combo.className, comboText: combo.hidden ? '' : combo.textContent, before, after: practice.stats[k].level, line: lvl.hidden ? '' : lvl.textContent, tally: document.getElementById('prTally').hidden ? null : document.getElementById('prTally').textContent, bar: !document.getElementById('prBar').hidden, cont: document.getElementById('prContinue').textContent });
+    document.getElementById('prContinue').click(); await wait(20);
+  }
+  await wait(50);
+  Math.random = realRandom;
+  const out = { card, plan, log, checks, done: !document.getElementById('prDone').hidden, open: !document.getElementById('practicePanel').classList.contains('hidden'), text: document.getElementById('prDoneText').textContent, words: document.querySelectorAll('#prWords .pr-word').length, best: (await chrome.storage.local.get(['srPracticeBest'])).srPracticeBest, mode: (await chrome.storage.local.get(['srPracticeMode'])).srPracticeMode };
+  document.getElementById('btnPracticeBack').click(); await wait(100);
+  return out;
+}, mode, words, opts);
+
+// M2: Quick is 10 questions on 12 words, all right.
+const quick = await playRound('quick', MANY);
+check('M2: Quick ends at 10 (12 words, all right)', quick.done && quick.log.length === 10 && quick.words === 10 && quick.log.every((x) => x.bar && x.tally === null) && quick.log.at(-1).cont === 'See results', JSON.stringify({ n: quick.log.length, words: quick.words, last: quick.log.at(-1) }));
+check('M1: the mode picked is saved', quick.mode === 'quick', String(quick.mode));
+check('F4: sounds off (the default): no AudioContext made in any round so far', await panel.evaluate(() => window.__ac) === 0);
+// M1: the mode is remembered.
+await panel.evaluate(() => chrome.storage.local.set({ srPracticeMode: 'keep' }));
+await clk(panel, '#btnPractice'); await sleep(250);
+const m1k = await cardState();
+check('M1: opened from the keyboard, the last mode used has focus; the tiles still look alike', m1k.focus === 'prKeep' && alike(m1k.tiles), JSON.stringify(m1k));
+// Opened with the mouse: nothing focused, nothing highlighted; Enter starts the last mode.
+await clk(panel, '#btnPracticeBack'); await sleep(200);
+await panel.click('#btnPractice'); await panel.mouse.move(200, 790); await sleep(250); // pointer off the tiles: hover is its own state
+const mouse = await cardState();
+check('M1: opened with the mouse, no tile has focus and all look alike', mouse.card && !/^pr(Quick|Keep|Mix)$/.test(mouse.focus || '') && alike(mouse.tiles), JSON.stringify(mouse));
+await panel.keyboard.press('Enter'); await sleep(300);
+const mouseEnter = await panel.evaluate(() => ({ mode: practice.mode, asked: !!practice.cur && !document.getElementById('prStage').hidden }));
+check('M1: then Enter starts the last mode used', mouseEnter.mode === 'keep' && mouseEnter.asked, JSON.stringify(mouseEnter));
+await clk(panel, '#btnPracticeBack'); await sleep(200);
+await clk(panel, '#btnPractice'); await sleep(250);
+// Compact: the card with a best run fits a 380x700 panel with no scroll; light and dark rendered for review.
+await clk(panel, '#btnPracticeBack'); await sleep(200);
+await panel.evaluate((words) => { progressView = { ...progressView, working: words.map(([from, to]) => ({ from, to, kind: 'spelling', n: 3 })) }; document.getElementById('btnPractice').click(); }, MANY);
+await panel.setViewport({ width: 380, height: 700 }); await sleep(250);
+const small = await cardState();
+const wide = await panel.evaluate(() => ({ doc: document.documentElement.scrollWidth, card: document.getElementById('prChoose').scrollWidth, cardW: document.getElementById('prChoose').clientWidth, vw: innerWidth }));
+await panel.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]); await sleep(150);
+await shot(panel, '9-practice-start-light.png');
+await panel.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]); await sleep(150);
+await shot(panel, '9-practice-start-dark.png');
+await panel.emulateMediaFeatures([]);
+await panel.setViewport({ width: 400, height: 800 });
+check('card: no page scroll at 380x700', small.best && small.fits && wide.card <= wide.cardW && wide.doc <= wide.vw && tileLayout(small.tiles), JSON.stringify({ small, wide }));
+await clk(panel, '#btnPracticeBack'); await sleep(200);
+
+// M3/M4: Keep going on 12 words, all right: checkpoints at 10 and 20, each word right twice, then the natural end.
+const keep = await playRound('keep', MANY);
+const per = {}; keep.log.forEach((x) => { per[x.to] = (per[x.to] || 0) + 1; });
+check('M4: Keep going: a checkpoint at 10 and 20, never anywhere else', JSON.stringify(keep.checks.map((c) => c.n)) === '[10,20]', JSON.stringify(keep.checks));
+check('M3: the checkpoint shows the stretch score and best run, "10 more" focused; Enter continues', keep.checks.every((c) => /This stretch: 10\/10\. Best run: \d+ in a row\./.test(c.text) && c.focus === 'btnPrMore' && c.after?.stage && c.after?.asked), JSON.stringify(keep.checks));
+check('M3: Keep going stops once every word is right twice, never the word just asked twice running', keep.log.length === 24 && Object.values(per).every((n) => n === 2) && keep.log.every((x, i) => !i || x.to !== keep.log[i - 1].to), JSON.stringify(keep.log.map((x) => x.to)));
+check('M3: the natural end: "That\'s everything you needed today." with the total answered and best run', keep.done && /^That's everything you needed today\. 24 answered\. Best run: 24 in a row\./.test(keep.text) && keep.words === 12 && keep.mode === 'keep', keep.text);
+check('M3: the top bar counts answers and the best run instead of a fill bar', keep.log.every((x, i) => !x.bar && x.tally === `${i + 1} answered · best run ${i + 1}`), JSON.stringify(keep.log.slice(0, 2)));
+check('F1: a bigger pop at 5 and 10 in a row, the usual one otherwise', keep.log.every((x, i) => (i + 1 < 2 ? !x.combo : /\bbig\b/.test(x.combo) === (i + 1 === 5 || i + 1 === 10) && /\bbump\b/.test(x.combo) !== /\bbig\b/.test(x.combo))) && keep.log[4].comboText === '5 in a row', JSON.stringify(keep.log.slice(0, 11).map((x) => x.combo)));
+const ups = keep.log.filter((x) => x.after > x.before);
+const NAMES = { 2: 'pick from three', 3: 'spot it yourself', 4: 'type it yourself' };
+check('F2: a level-up adds one line naming the word, the level and what it means; no line otherwise', ups.length > 0 && keep.log.every((x) => x.line === (x.after > x.before ? `${x.to}: level ${x.after}, ${NAMES[x.after]}.` : '')), JSON.stringify(keep.log.map((x) => [x.before, x.after, x.line])));
+check('F3: a run beating the stored best says "New best" and is kept', /New best\./.test(keep.text) && keep.best === 24, JSON.stringify({ text: keep.text, best: keep.best }));
+
+// M4: Esc at a checkpoint is "done for now": the summary, not closed.
+const esc = await playRound('keep', MANY, { onCheck: 'esc-at-10' });
+check('M3: Esc at the checkpoint shows the summary (10 answered)', esc.done && esc.open && esc.log.length === 10 && /^10 answered\./.test(esc.text) && !/That's everything/.test(esc.text), JSON.stringify({ n: esc.log.length, text: esc.text }));
+// "Done for now" with focus: a real Enter keypress ends the session there.
+const paused = await playRound('keep', MANY, { onCheck: 'pause' });
+await panel.focus('#btnPrStop');
+await panel.keyboard.press('Enter'); await sleep(150);
+const stopped = await panel.evaluate(() => ({ done: !document.getElementById('prDone').hidden, text: document.getElementById('prDoneText').textContent }));
+await clk(panel, '#btnPracticeBack'); await sleep(200);
+check('M3: Enter on a focused "Done for now" ends the session, not "10 more"', paused.paused === 10 && stopped.done && /^10 answered\./.test(stopped.text), JSON.stringify({ paused, stopped }));
+check('F3: a shorter run is no new best, and the stored best stays', !/New best/.test(esc.text) && esc.best === 24, JSON.stringify({ text: esc.text, best: esc.best }));
+// 4 words (no starters at 4): the natural end comes before any checkpoint.
+const few = await playRound('keep', MANY.slice(0, 4));
+check('M4: 4 words: Keep going ends naturally at 8, before 10, no checkpoint', few.done && few.checks.length === 0 && few.log.length === 8 && few.plan.every((t) => !t.starter) && /^That's everything/.test(few.text), JSON.stringify({ n: few.log.length, checks: few.checks, text: few.text }));
+// 2 words: the card lists both and 4 common mix-ups; the round asks both kinds, own words first.
+const insightsBefore = JSON.stringify(await insights());
+const pair = await playRound('quick', MANY.slice(0, 2));
+check('card: 2 own words: the count, never the words', pair.card.why === '2 of your words need practice' && !/receive|definitely/i.test(pair.card.text), JSON.stringify(pair.card));
+check('starters: the round asks own words first, then the mix-ups', pair.done && pair.plan.length === 6 && pair.plan.slice(0, 2).every((t) => !t.starter) && pair.plan.slice(2).every((t) => t.starter) && new Set(pair.log.filter((x) => x.starter).map((x) => x.to)).size === 4, JSON.stringify(pair.plan));
+const pst = await panel.evaluate(async () => (await chrome.storage.local.get(['srPracticeStats'])).srPracticeStats || {});
+check('starters: their results are kept under starter: keys, and Progress and insights never change', Object.keys(pst).filter((k) => k.startsWith('starter:')).length === 4 && JSON.stringify(await insights()) === insightsBefore, JSON.stringify(Object.keys(pst)));
+check('card: Best run shows once there is one; the last mode has focus', pair.card.best === 'Best run: 24' && few.card.focus === 'prKeep' && pair.card.focus === 'prKeep', JSON.stringify([pair.card, few.card.focus]));
+// Mix-ups: starters only, one pass.
+const mix = await playRound('mixups', MANY.slice(0, 2));
+check('Mix-ups: the round asks only common mix-ups, each once, then the score', mix.done && mix.plan.length >= 6 && mix.plan.every((t) => t.starter) && mix.log.length === mix.plan.length && mix.log.every((x) => x.starter) && mix.mode === 'mixups', JSON.stringify(mix.plan));
+// No practicable words of their own: Quick and Keep going wait; Mix-ups is focused and plays.
+const none = await playRound('mixups', [], { lastMode: 'quick' });
+check('Mix-ups with 0 own words: Quick and Keep going disabled ("Proofread more to unlock"), Mix-ups focused and playable', none.card.disabled.join() === 'quick,keep' && /Proofread more to unlock/.test(none.card.text) && none.card.focus === 'prMix' && none.done && none.plan.every((t) => t.starter), JSON.stringify(none.card));
+// A miss resets the combo; misses keep a word coming until it's right twice.
+const miss = await playRound('keep', MANY.slice(0, 4), { wrongAt: [2] });
+check('F1: a miss resets the combo', miss.log[1].comboText === '2 in a row' && miss.log[2].combo === '' && miss.log[3].combo === '', JSON.stringify(miss.log.slice(0, 4).map((x) => x.comboText)));
+check('M3: a missed word keeps coming until it\'s right twice', miss.log.filter((x) => x.to === miss.log[2].to && x.right).length === 2 && miss.log.length === 9, JSON.stringify(miss.log.map((x) => [x.to, x.right])));
+
+// 4 words, the first missed and (random pinned high) put back last: the refill must not lead with it again.
+const two = await playRound('keep', MANY.slice(0, 4), { wrongAt: [0], random: 0.99 });
+check('M3: the word just asked never comes again straight away', two.done && two.log.length === 9 && two.log[4].to === two.log[0].to && two.log.every((x, i) => !i || x.to !== two.log[i - 1].to), JSON.stringify(two.log.map((x) => x.to)));
+
+// A brand-new user (empty history): the empty Progress card offers Mix-ups, hidden with
+// learning off, and a round from it never writes to the history.
+const keptInsights = await panel.evaluate(async () => {
+  const { srInsights } = await chrome.storage.local.get(['srInsights']);
+  await chrome.storage.local.remove(['srInsights']);
+  await chrome.storage.sync.set({ srInsightsOn: true });
+  await renderProgress();
+  return srInsights;
+});
+const emptyOn = await panel.evaluate(() => ({ empty: !document.getElementById('progEmpty').hidden, btn: !document.getElementById('btnProgMixups').hidden, text: document.getElementById('btnProgMixups').textContent }));
+await panel.evaluate(async () => { await chrome.storage.sync.set({ srInsightsOn: false }); await renderProgress(); });
+const emptyOff = await panel.evaluate(() => !document.getElementById('btnProgMixups').hidden);
+await panel.evaluate(async () => { await chrome.storage.sync.set({ srInsightsOn: true }); await renderProgress(); });
+check('new user: the empty Progress card offers "Practice common mix-ups", not with learning off', emptyOn.empty && emptyOn.btn && emptyOn.text === 'Practice common mix-ups' && !emptyOff, JSON.stringify({ emptyOn, emptyOff }));
+const fresh0 = await playRound('mixups', null, { entry: 'btnProgMixups', lastMode: 'quick' });
+const insightsAfter = await panel.evaluate(async () => (await chrome.storage.local.get(['srInsights'])).srInsights ?? null);
+check('new user: it opens the start screen with Quick and Keep going locked, Mix-ups focused, and the round plays', fresh0.card.disabled.join() === 'quick,keep' && fresh0.card.focus === 'prMix' && fresh0.done && fresh0.plan.length >= 6 && fresh0.plan.every((t) => t.starter), JSON.stringify({ card: fresh0.card, plan: fresh0.plan.length }));
+check('new user: a Mix-ups round never writes to the history (srInsights)', insightsAfter === null, JSON.stringify(insightsAfter).slice(0, 200));
+await panel.evaluate(async (ins) => { await chrome.storage.local.set({ srInsights: ins }); await chrome.storage.sync.set({ srInsightsOn: false }); await renderProgress(); }, keptInsights).catch(() => {});
+await panel.evaluate(async () => renderProgress());
+
+// F4: the Settings toggle turns sounds on; then a right answer chimes (two notes), a wrong one a low tone.
+await clk(panel, '#btnSettings'); await sleep(400);
+await clk(panel, '#soundToggle'); await sleep(300);
+check('F4: the Practice sounds toggle saves', (await sw.evaluate(async () => (await chrome.storage.sync.get(['srPracticeSound'])).srPracticeSound)) === true);
+await clk(panel, '#btnSettingsBack'); await sleep(200);
+await clk(panel, '#tabProgress'); await sleep(300);
+await panel.evaluate(() => { window.__osc = []; });
+const loud = await playRound('quick', MANY.slice(0, 2), { wrongAt: [1] });
+const osc = await panel.evaluate(() => ({ ac: window.__ac, osc: window.__osc }));
+check('F4: sounds on: one AudioContext, two notes for right, one low tone for wrong', loud.done && osc.ac === 1 && osc.osc.length >= 3 && osc.osc[0] < osc.osc[1] && osc.osc[2] < osc.osc[0], JSON.stringify(osc));
+await panel.evaluate(async () => { await chrome.storage.sync.set({ srPracticeSound: false, srInsightsOn: true }); await chrome.storage.local.remove(['srPracticeStats', 'srPracticeBest', 'srPracticeMode']); await renderProgress(); });
 
 // Tips send the word list, nothing else.
 mockRequests.length = 0;
@@ -874,6 +1090,26 @@ check('empty progress shows only the empty-state card', empty.emptyCard && !empt
 // Nothing hidden by attribute is still on screen anywhere in the panel.
 const leaks = await panel.evaluate(() => [...document.querySelectorAll('[hidden]')].filter((e) => e.getClientRects().length > 0).map((e) => e.id || e.className));
 check('hidden elements are really hidden', leaks.length === 0, JSON.stringify(leaks));
+
+// History but nothing of theirs to drill: Practice still opens, on Mix-ups.
+await panel.bringToFront();
+await panel.evaluate(async () => {
+  const now = Date.now();
+  const st = SR_mergeInsights(null, [{ from: ',', to: ';' }], now, 40, 1, 'a, b');
+  await chrome.storage.local.set({ srInsights: st });
+});
+await clk(panel, '#tabWrite'); await clk(panel, '#tabProgress'); await sleep(400);
+const noFocus = await panel.evaluate(() => ({ card: !document.getElementById('progFocus').hidden, title: document.getElementById('progFocusTitle').textContent, btn: !document.getElementById('btnPractice').hidden }));
+check('history with nothing to drill still offers Mix-ups', noFocus.card && noFocus.title === 'Common mix-ups' && noFocus.btn, JSON.stringify(noFocus));
+// A first-ever round has nothing to beat.
+const firstBest = await panel.evaluate(async () => {
+  await chrome.storage.local.remove(['srPracticeBest']);
+  Object.assign(practice, { prevBest: 0, best: 4 });
+  try { finishPractice(); } catch (_) { /* the summary may need a round; the text is what matters */ }
+  await new Promise((r) => setTimeout(r, 50));
+  return document.getElementById('prDoneText').textContent;
+});
+check('no "New best" on a first round', !/New best/.test(firstBest), firstBest);
 
 // (A runtime font-request check was removed: content-script CSS requests aren't visible to
 // page.on('request'), so it passed on the old code too. The static modal.css check covers it.)
