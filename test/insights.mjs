@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 globalThis.self = globalThis;
 new Function(fs.readFileSync(process.env.CONSTANTS || new URL('../constants.js', import.meta.url), 'utf8'))();
-for (const f of ['SR_practiceHas', 'SR_extractCorrections', 'SR_classifyCorrection', 'SR_mergeInsights', 'SR_insightsView', 'SR_buildTipsPrompt']) {
+for (const f of ['SR_practiceHas', 'SR_extractCorrections', 'SR_classifyCorrection', 'SR_mergeInsights', 'SR_insightsView', 'SR_buildTipsPrompt', 'SR_progressHero', 'SR_wordRows', 'SR_masteredLine', 'SR_tipsState']) {
   assert.equal(typeof globalThis[f], 'function', `${f} is exported`);
 }
 const DAY = 86400000;
@@ -113,8 +113,8 @@ const view = SR_insightsView({
 assert.deepEqual(view.week, { fixes: 4, words: 400, per100: 1 });
 assert.deepEqual(view.prevWeek, { fixes: 12, words: 300, per100: 4 });
 assert.equal(view.trend, -3, 'fewer fixes per 100 words is the improvement');
-assert.deepEqual(view.mastered, [{ from: 'teh', to: 'the', n: 4, streak: 3 }]);
-assert.deepEqual(view.working, [{ from: 'was', to: 'were', n: 3, kind: 'grammar', h: 'mmmgg', streak: 2 }, { from: 'u', to: 'you', n: 2, kind: 'other', h: '', streak: 0 }]);
+assert.deepEqual(view.mastered, [{ from: 'teh', to: 'the', n: 4, kind: 'spelling', streak: 3 }]);
+assert.deepEqual(view.working, [{ from: 'was', to: 'were', n: 3, kind: 'grammar', h: 'mmmgg', streak: 2, last: NOW - 10 * DAY }, { from: 'u', to: 'you', n: 2, kind: 'other', h: '', streak: 0, last: NOW - DAY }]);
 assert.deepEqual(view.kinds, { spelling: 4, grammar: 3, apostrophe: 1, other: 2 });
 // A recent pair fixed once may be the model's mistake: it's never in working.
 {
@@ -165,7 +165,7 @@ assert.deepEqual(SR_insightsView(counted, NOW).total, { proofreads: 2, words: 50
   st = SR_mergeInsights(st, [], T(15), 5, 0, 'Received, thanks.');
   assert.deepEqual(SR_newlyMastered(before15, st), ['receive'], 'crossed into mastered on this merge (14 days since the fix)');
   assert.deepEqual(SR_newlyMastered(st, SR_mergeInsights(st, [], T(16), 5, 0, 'receive')), [], 'already mastered is not new');
-  assert.deepEqual(SR_insightsView(st, T(15)).mastered, [{ from: 'recieve', to: 'receive', n: 2, streak: 3 }]);
+  assert.deepEqual(SR_insightsView(st, T(15)).mastered, [{ from: 'recieve', to: 'receive', n: 2, kind: 'spelling', streak: 3 }]);
   assert.deepEqual(SR_insightsView(st, T(15)).working, [], 'mastered words leave working');
   st = SR_mergeInsights(st, [{ from: 'recieve', to: 'receive' }], T(17), 5, 1, 'recieve');
   assert.deepEqual([rec().h, rec().streak], ['mmgggm', 0], 'a fix resets the streak; h keeps the last 6');
@@ -305,6 +305,69 @@ assert.deepEqual(SR_checkPractice(item, "it's its, they're, friday").right, ["th
   // Only the pairs and kind counts are sent (injection defenses are in test/injection.mjs).
   const { user } = SR_buildTipsPrompt([{ from: 'teh', to: 'the', n: 4 }, { from: 'was', to: 'were', n: 3 }], { spelling: 4, grammar: 3, other: 0 }, 'text-000000000000');
   assert.ok(user.startsWith('<text-000000000000>\nCorrections:\n- "teh" → "the" (4x)\n- "was" → "were" (3x)\n\nBy kind: spelling 4, grammar 3\n</text-000000000000>'));
+}
+
+// Progress hero: this week against the oldest week with 200+ words, k weeks back.
+{
+  const wk = (words, per100) => ({ words, fixes: 0, per100 });
+  const view = (weeks, proofreads = 12) => ({ weeks, total: { proofreads } });
+  const pad = (list) => [...Array(8 - list.length).fill(wk(0, null)), ...list];
+  // 7 weeks back (the oldest of the 8) at 1.25 per 100, now 0.8: 36% fewer.
+  let h = SR_progressHero(view([wk(300, 1.25), ...Array(6).fill(wk(0, null)), wk(400, 0.8)]));
+  assert.deepEqual([h.state, h.lead, h.text, h.k], ['better', '36% fewer', ' mistakes than 7 weeks ago', 7]);
+  assert.equal(h.line, 'About 1 in every 125 words this week, down from 1 in 80. Based on 12 proofreads.');
+  // The real k: the oldest rated week here is 3 weeks back; a thin week (under 200 words) doesn't count.
+  h = SR_progressHero(view(pad([wk(150, 9), wk(250, 2), wk(0, null), wk(0, null), wk(300, 2.5)])));
+  assert.deepEqual([h.state, h.text, h.k], ['worse', '25% more mistakes than 3 weeks ago', 3], JSON.stringify(h));
+  assert.equal(h.lead, '', 'worse is never in the "better" color');
+  assert.match(h.line, /^About 1 in every 40 words this week, up from 1 in 50\./);
+  h = SR_progressHero(view(pad([wk(300, 2), wk(300, 2.08)])));
+  assert.deepEqual([h.state, h.text], ['flat', 'About the same as last week'], 'within 5%: the same; k 1 reads "last week"');
+  h = SR_progressHero(view(pad([wk(300, 2), wk(300, 0)])));
+  assert.equal(h.line, 'No mistakes this week. Based on 12 proofreads.');
+  h = SR_progressHero(view(pad([wk(300, 2), wk(300, 2), wk(120, 1)]), 1));
+  assert.deepEqual([h.state, h.text, h.line], ['light', 'Proofread a bit more this week to see your rate', 'Based on 1 proofread.'], 'history but a thin week: not "first weeks"');
+  h = SR_progressHero(view(pad([wk(500, 2)])));
+  assert.deepEqual([h.state, h.text], ['first', 'Your first weeks with Proofr']);
+  assert.match(h.line, /^About 1 in every 50 words this week\. Based on/);
+  assert.equal(SR_progressHero(view(pad([wk(90, 4)]))).line, 'Based on 12 proofreads.', 'no rate line from a thin week');
+  assert.equal(SR_progressHero(null).state, 'first');
+}
+
+// Your words: one row per drillable word, a meter out of 3, honest labels.
+{
+  const DAYMS = 86400000;
+  const working = [
+    { from: 'its', to: "it's", kind: 'apostrophe', n: 6, h: 'mmgggg', streak: 2, last: NOW - DAYMS },
+    { from: 'thanks', to: 'Thanks', kind: 'capitalization', n: 5, h: 'mm', streak: 0, last: NOW },
+    { from: 'we', to: 'We', kind: 'capitalization', n: 4, h: 'mm', streak: 0, last: NOW },
+    { from: 'i', to: 'I', kind: 'capitalization', n: 4, h: 'mg', streak: 1, last: NOW },
+    { from: 'friday', to: 'Friday', kind: 'capitalization', n: 3, h: 'mm', streak: 0, last: NOW },
+    { from: ',', to: ';', kind: 'punctuation', n: 9, h: 'm', streak: 0, last: NOW },
+    { from: 'recieve', to: 'receive', kind: 'spelling', n: 2, h: 'mggg', streak: 3, last: NOW - 4 * DAYMS },
+  ];
+  const rows = SR_wordRows({ working }, { 'friday→Friday': { seen: 1 } }, NOW);
+  assert.deepEqual(rows.map((r) => r.to), ["it's", 'I', 'Friday', 'receive'], 'no punctuation, no sentence-start capitals; "I" and days kept');
+  assert.deepEqual(rows.map((r) => r.label), ['2 of 3 to master', '1 of 3', '0 of 3', 'Mastered in 10 days'], 'practiced but no right use yet is "0 of 3", not New');
+  assert.deepEqual(rows.map((r) => r.meter), [2 / 3, 1 / 3, 0, 1]);
+  assert.equal(rows[0].history, 'Last 6 times: fixed 2, right 4.');
+  assert.match(rows[0].rule, /it is/);
+  assert.equal(SR_wordRows({ working: [{ from: 'teh', to: 'the', kind: 'spelling', n: 2, h: 'mm', streak: 0, last: NOW }] }, {}, NOW)[0].label, 'New');
+  assert.equal(SR_wordRows({ working: [{ ...working[6], last: NOW - 20 * DAYMS }] }, {}, NOW)[0].label, 'Mastered in 1 day', 'never 0 or negative days');
+  assert.deepEqual(SR_wordRows(null), []);
+  const mastered = ['separate', 'receive', 'friend', 'which', 'until', 'tomorrow', 'believe'].map((to) => ({ from: `${to}x`, to, kind: 'spelling' }));
+  assert.equal(SR_masteredLine({ mastered: [...mastered, { from: 'we', to: 'We', kind: 'capitalization' }] }), 'Mastered: separate, receive, friend, which, until +2');
+  assert.equal(SR_masteredLine({ mastered: [] }), '');
+}
+
+// AI tips cache: up to date while it covers every word shown.
+{
+  const cache = { words: ["it's", 'receive'], date: NOW, tips: { "it's": 'Swap in "it is".' } };
+  assert.equal(SR_tipsState(null, ["it's"]).state, 'none');
+  assert.equal(SR_tipsState({ key: 'old', tips: ['a list from before'] }, ["it's"]).state, 'none', 'the old 3-tip cache counts as none');
+  assert.equal(SR_tipsState(cache, ["it's", 'receive']).state, 'fresh', 'counts changing (not in the key) keep it up to date');
+  assert.equal(SR_tipsState(cache, ['receive']).state, 'fresh', 'a word leaving is not stale');
+  assert.deepEqual(SR_tipsState(cache, ["it's", 'receive', 'were']), { state: 'stale', added: ['were'], date: NOW });
 }
 
 console.log('insights: all checks passed');

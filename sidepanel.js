@@ -1182,16 +1182,8 @@ async function loadShortcut() {
 // Built from srInsights in local storage: corrected word pairs and daily word
 // counts, never sentences. background.js writes it (the panel's own
 // Proofreads are sent there too, so every write goes through one queue).
-// Tips send the word list, and nothing else, to whichever AI is set up, and
-// only when asked.
-const FOCUS_COPY = {
-  apostrophe: 'Apostrophes in contractions',
-  spelling: 'Words you often misspell',
-  grammar: 'Word choice and agreement',
-  capitalization: 'Capital letters',
-  punctuation: 'Punctuation',
-  other: 'Your most common fixes',
-};
+// AI tips send the word list, and nothing else, to whichever AI is set up,
+// and only when asked.
 let progressView = null;
 
 function recordInsights(before, after) {
@@ -1223,59 +1215,42 @@ function syncChrome() {
   refs.btnClearHistory.hidden = settingsOpen || practicing || !onWrite;
 }
 
-const fmt = (n) => Number(n || 0).toLocaleString();
-
 // Line through the weeks that have a rate; weeks with no words are gaps in x.
 function sparkSvg(weeks) {
   const pts = weeks.map((w, i) => (w.per100 == null ? null : { i, v: w.per100 })).filter(Boolean);
   if (pts.length < 2) return '';
   const max = Math.max(...pts.map((p) => p.v), 1);
   const x = (i) => 8 + (i * 304) / (weeks.length - 1);
-  const y = (v) => 56 - (v / max) * 48;
+  const y = (v) => 34 - (v / max) * 28;
   const line = pts.map((p) => `${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
   const last = pts[pts.length - 1];
-  return `<line class="axis" x1="0" y1="63" x2="320" y2="63"/><polyline class="line" points="${line}"/><circle class="dot" cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="4"/>`;
+  return `<polyline class="line" points="${line}"/><circle class="dot" cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="4"/>`;
 }
 
-const KIND_NAMES = { apostrophe: 'Apostrophes', spelling: 'Spelling', capitalization: 'Capitals', grammar: 'Grammar', punctuation: 'Punctuation', other: 'Other' };
+const CHEVRON = '<svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 7 5 3 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const PROG_ROWS = 6; // rows before "Show all"
+let progShowAll = false;
+let progTipsBusy = false;
 
-// The last 6 times a word came up, oldest first: a ring when Proofr fixed it,
-// a filled dot when the user got it right. Shape, not only color, tells them apart.
-function dotsHtml(h) {
-  const events = String(h || '').slice(-6).split('').filter((c) => c === 'm' || c === 'g');
-  if (!events.length) return '';
-  const fixed = events.filter((c) => c === 'm').length;
-  const right = events.length - fixed;
-  const cells = [...events.map((c) => `<i class="${c === 'g' ? 'right' : 'fixed'}"></i>`), ...Array(6 - events.length).fill('<i class="empty"></i>')];
-  return `<span class="prog-dots" role="img" aria-label="Last ${events.length} times: fixed ${fixed}, right ${right}">${cells.join('')}</span>`;
+// The AI a tips request would go to, or null with none: the connected
+// provider, else Chrome's on-device model (downloadable counts: the click
+// can start it).
+async function tipsTarget() {
+  const provider = await CloudProvider.getConfig();
+  const { engine } = await Settings.get();
+  const device = await SR_deviceAvailability();
+  const deviceOk = !!SR_deviceModel() && device !== 'unavailable';
+  if (providerReady(provider) && (engine === 'cloud' || device !== 'available')) {
+    return { provider, label: provider.model ? `${provider.displayName} · ${provider.model}` : provider.displayName };
+  }
+  return deviceOk ? { provider: null, label: 'On this computer' } : null;
 }
 
-function pairHtml(p) {
-  return `<span class="from">${escapeHtml(p.from)}</span> <span aria-hidden="true">→</span><span class="visually-hidden"> to </span> <span class="to">${escapeHtml(p.to)}</span>`;
-}
-
-// The focus is the kind of mistake Practice can drill most: sentence-start
-// capitals and punctuation have no wrong word to type over, so they never
-// lead. With nothing to practice, the most common word fix is shown instead.
-function pickFocus(view) {
-  const items = typeof SR_buildPractice === 'function' ? SR_buildPractice(view, 3, 0) : [];
-  const practicable = new Set(items.flatMap((it) => it.targets.map((t) => `${t.from}→${t.to}`)));
-  const pool = view.working.filter((p) => practicable.has(`${p.from}→${p.to}`));
-  const from = pool.length ? pool : view.working.filter((p) => p.kind !== 'punctuation');
-  const counts = {};
-  for (const p of from) counts[p.kind] = (counts[p.kind] || 0) + p.n;
-  const kind = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
-  if (!kind) return null;
-  const words = from.filter((p) => p.kind === kind).slice(0, 3).map((p) => p.to);
-  return { kind, words, canPractice: pool.length > 0 };
-}
-
-// Punctuation pairs ("," → ";") read as noise in a word list.
-const wordPairs = (list) => list.filter((p) => p.kind !== 'punctuation');
+const shortDate = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 async function renderProgress() {
   if (typeof SR_insightsView !== 'function') return null;
-  const { srInsights } = await chrome.storage.local.get(['srInsights']);
+  const { srInsights, srPracticeStats, srTipsCache } = await chrome.storage.local.get(['srInsights', 'srPracticeStats', 'srTipsCache']);
   const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
   const view = SR_insightsView(srInsights, Date.now());
   progressView = view;
@@ -1293,135 +1268,112 @@ async function renderProgress() {
     return view;
   }
 
-  // Rate, trend, chart
-  const rate = view.week.per100;
-  refs.progRate.textContent = rate == null ? '-' : rate.toFixed(1);
-  const t = view.trend;
-  refs.progTrend.className = `prog-trend${t != null && t < 0 ? ' down' : ''}`;
-  refs.progTrend.textContent = rate == null ? 'Proofread something this week to see your rate.'
-    : t == null ? 'A trend shows once you have proofread 200 words in each of two weeks.'
-      : t < 0 ? `↓ ${Math.abs(t).toFixed(1)} fewer than last week`
-        : t > 0 ? `↑ ${t.toFixed(1)} more than last week` : 'Same as last week';
+  // Hero: the headline in plain words (SR_progressHero), the trend, Practice.
+  const hero = SR_progressHero(view);
+  refs.progHeadLead.textContent = hero.lead;
+  refs.progHeadText.textContent = hero.text;
+  refs.progLine.textContent = hero.line;
   const spark = sparkSvg(view.weeks);
   refs.progSpark.innerHTML = spark;
   refs.progSpark.hidden = !spark;
-  refs.progAxis.hidden = !spark;
   const rated = view.weeks.filter((w) => w.per100 != null);
   refs.progSpark.setAttribute('aria-label', rated.length ? `Mistakes per 100 words by week: ${rated.map((w) => w.per100).join(', ')}` : '');
-  refs.progBasis.textContent = `Based on ${fmt(view.total.proofreads)} proofread${view.total.proofreads === 1 ? '' : 's'}, ${fmt(view.total.words)} words. Switching AI can move it too.`;
+  const rows = SR_wordRows(view, srPracticeStats, Date.now());
+  const masteredLine = SR_masteredLine(view);
+  const masteredCount = masteredLine ? view.mastered.filter(SR_practicable).length : 0;
+  refs.progMasteredChip.hidden = !masteredCount;
+  refs.progMasteredChip.textContent = `${masteredCount} mastered`;
+  refs.progPracticeChip.hidden = !rows.length;
+  refs.progPracticeChip.textContent = `${rows.length} in practice`;
+  // Nothing of theirs to drill: Practice still opens, on Mix-ups.
+  refs.progPracticeNote.hidden = SR_practicePlan(view, srPracticeStats, 1, Date.now()).some((t) => !t.starter);
 
-  // Focus
-  const focus = pickFocus(view);
-  // Nothing of theirs to drill right now: Practice still opens, on Mix-ups.
-  refs.progFocus.hidden = !focus && srInsightsOn === false;
-  if (!focus && srInsightsOn !== false) {
-    refs.progFocusTitle.textContent = 'Common mix-ups';
-    refs.progFocusText.textContent = 'None of your words need practice right now. Try the words most people mix up.';
-    refs.btnPractice.hidden = false;
-  }
-  if (focus) {
-    refs.progFocusTitle.textContent = FOCUS_COPY[focus.kind] || FOCUS_COPY.other;
-    const list = focus.words.map((w) => `<b>${escapeHtml(w)}</b>`).join(', ');
-    refs.progFocusText.innerHTML = focus.canPractice
-      ? `Most of your recent fixes are words like ${list}. Two minutes of practice, using your own mistakes.`
-      : `Most of your recent fixes are like ${list}. Watch for these the next time you write.`;
-    refs.btnPractice.hidden = false; // with no practicable words of their own, Mix-ups still plays
-  }
-
-  // Your patterns: habits read from this person's own repeated fixes
-  // (SR_habits), so two people's Progress tabs read differently.
+  // Your main habit (SR_habits): one headline, one example line, at most one "Also".
   const habits = typeof SR_habits === 'function' ? SR_habits(view) : [];
-  // What you fix: the share of each kind over the last 4 weeks, and the
-  // biggest shift from the 4 before (only with enough fixes in both).
-  const now = view.kindsNow || null, then = view.kindsThen || null;
-  const kinds = now ? Object.entries(now).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 5) : [];
-  refs.progKinds.innerHTML = kinds.map(([k, v]) =>
-    `<div class="prog-bar"><span>${escapeHtml(KIND_NAMES[k] || k)}</span><i role="img" aria-label="${v}%"><b style="width:${Math.max(2, Math.min(100, v))}%"></b></i><em>${v}%</em></div>`).join('');
-  let shift = null;
-  if (now && then) {
-    for (const k of Object.keys(then)) {
-      const d = (then[k] || 0) - (now[k] || 0);
-      if (Math.abs(d) >= 10 && (!shift || Math.abs(d) > Math.abs(shift.d))) shift = { k, d };
-    }
-  }
-  refs.progKindsNote.hidden = !shift;
-  refs.progKindsNote.textContent = shift ? `Four weeks ago, ${(KIND_NAMES[shift.k] || shift.k).toLowerCase()} was ${then[shift.k]}% of your fixes.` : '';
-  refs.progHabitsCard.hidden = !habits.length && !kinds.length;
-  refs.progHabits.innerHTML = habits.map((h) => {
+  refs.progHabitsCard.hidden = !habits.length;
+  if (habits.length) {
+    const [top, next] = habits;
+    refs.progHabitTitle.textContent = top.label;
     // Examples the label already names ('You write "i" for "I"') add nothing.
-    const eg = h.examples.slice(0, 3).filter((w) => !h.label.includes(`"${w}"`));
-    return `<div class="prog-row"><div><span class="word">${escapeHtml(h.label)}</span>${eg.length ? `<span class="eg">${eg.map(escapeHtml).join(', ')}</span>` : ''}</div></div>`;
-  }).join('');
+    const eg = top.examples.filter((w) => !top.label.includes(`"${w}"`)).slice(0, 2);
+    refs.progHabitEg.hidden = !eg.length;
+    refs.progHabitEg.textContent = eg.length ? `Like ${eg.join(' and ')}.` : '';
+    refs.progHabitAlso.hidden = !next;
+    refs.progHabitAlso.textContent = next ? `Also: ${next.label[0].toLowerCase()}${next.label.slice(1)}` : '';
+  }
 
-  // Mastered / Still working on
-  const mastered = wordPairs(view.mastered), working = wordPairs(view.working);
-  refs.progMasteredCard.hidden = !mastered.length;
-  refs.progMastered.innerHTML = mastered.slice(0, 5).map((p) =>
-    `<div class="prog-row"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span class="word">${escapeHtml(p.to)}</span><span class="meta">${p.streak || 3} right in a row</span></div>`).join('');
-  refs.progWorkingCard.hidden = !working.length;
-  refs.progWorking.innerHTML = working.slice(0, 5).map((p) => {
-    const rule = typeof SR_ruleFor === 'function' ? SR_ruleFor(p) : null;
-    const streak = p.streak || 0;
-    // Mastery needs right uses on 3 different days and 2 weeks with no fix,
-    // so the line never promises it sooner than that.
-    const sub = streak >= 3 ? `${streak} right in a row. Mastered after 2 weeks with no fix.`
-      : streak === 2 ? '2 right in a row.'
-        : streak === 1 ? 'Right once since the last fix.' : rule;
-    return `<div class="prog-row"><div>${pairHtml(p)}${sub ? `<div class="rule">${escapeHtml(sub)}</div>` : ''}</div>${dotsHtml(p.h)}</div>`;
+  // Your words: a row per word, its tip (when the AI wrote one) inside.
+  refs.progWordsCard.hidden = !rows.length && !masteredLine;
+  const tipWords = rows.slice(0, SR_TIPS_MAX).map((r) => r.to);
+  const tips = SR_tipsState(srTipsCache, tipWords);
+  const tipFor = (to) => (tips.state === 'none' ? null : srTipsCache.tips[to] || null);
+  const shown = progShowAll ? rows : rows.slice(0, PROG_ROWS);
+  refs.progWords.innerHTML = shown.map((r, i) => {
+    const tip = tipFor(r.to);
+    return `<div class="prog-word"><button type="button" class="prog-word-row" aria-expanded="false" aria-controls="progWord${i}">`
+      + `<span class="w"><b>${escapeHtml(r.to)}</b>${tip ? '<i class="prog-tip-badge">TIP</i>' : ''}</span>`
+      + `<span class="prog-meter" role="img" aria-label="${escapeHtml(r.label)}"><b style="width:${Math.round(r.meter * 100)}%"></b></span>`
+      + `<span class="lbl">${escapeHtml(r.label)}</span>${CHEVRON}</button>`
+      + `<div class="prog-word-more" id="progWord${i}" hidden><p><s>${escapeHtml(r.from)}</s> → <span class="to">${escapeHtml(r.to)}</span>.${r.rule ? ` ${escapeHtml(r.rule)}` : ''}</p>`
+      + `${r.history ? `<p>${escapeHtml(r.history)}</p>` : ''}${tip ? `<p class="ai"><i>AI TIP</i>${escapeHtml(tip)}</p>` : ''}</div></div>`;
   }).join('');
-  refs.progLegend.hidden = !working.some((p) => p.h);
+  refs.btnAllWords.hidden = rows.length <= PROG_ROWS;
+  refs.btnAllWords.textContent = progShowAll ? 'Show fewer' : `Show all ${rows.length}`;
+  refs.progMasteredLine.hidden = !masteredLine;
+  refs.progMasteredLine.textContent = masteredLine;
+
+  // The tips action: none yet, writing, up to date, stale, or no AI to ask.
+  const target = rows.length ? await tipsTarget() : null;
+  const state = progTipsBusy ? 'busy' : tips.state === 'fresh' ? 'fresh' : !target ? (rows.length ? 'noai' : 'off') : tips.state;
+  refs.btnTips.hidden = !['none', 'stale', 'busy'].includes(state);
+  refs.btnTips.disabled = state === 'busy';
+  refs.btnTips.textContent = state === 'busy' ? 'Writing tips…' : state === 'stale' ? 'Refresh AI tips' : 'Get AI tips';
+  refs.progTipsState.hidden = state !== 'fresh';
+  refs.progTipsState.textContent = state === 'fresh' ? `AI tips · ${shortDate(tips.date)} · up to date` : '';
+  const note = state === 'none' ? `One request to ${target.label}. Only these words are sent. New tips when your words change.`
+    : state === 'stale' ? `Written ${shortDate(tips.date)}. Your words changed since then (new: ${tips.added.join(', ')}).`
+      : state === 'noai' ? 'Connect an AI in Settings to get tips.' : '';
+  if (!progTipsBusy || note) {
+    refs.progTipsNote.hidden = !note;
+    refs.progTipsNote.textContent = note;
+  }
   return view;
 }
 
-// Tips: the connected provider, else Chrome's on-device model (from this
-// click, so a first-time download is allowed). The list is fenced as data,
-// the reply checked like any other (SR_cleanOutput), and only tips naming the
-// user's own words are kept (SR_checkTips). The same list asks once: the
-// answer is kept until the list changes, so repeat clicks cost nothing.
+// Tips: one request for up to SR_TIPS_MAX of the words shown, to the AI from
+// tipsTarget (from this click, so an on-device first download is allowed).
+// The list is fenced as data, the reply checked like any other
+// (SR_cleanOutput), and a tip kept only when it is about its own word
+// (SR_checkTips). Kept until a new word shows up (SR_tipsState).
 async function getTips() {
-  const view = await renderProgress();
-  if (!view) return;
-  const pairs = [...view.working, ...view.mastered].filter((p) => p.kind !== 'punctuation').slice(0, 15);
-  if (!pairs.length) {
-    refs.insTipsStatus.textContent = 'Tips need a few repeated fixes first. Keep proofreading and try again later.';
-    return;
-  }
-  const key = pairs.map((p) => `${p.from}→${p.to}:${p.n}`).join('|');
-  const { srTipsCache } = await chrome.storage.local.get(['srTipsCache']);
-  if (srTipsCache && srTipsCache.key === key && Array.isArray(srTipsCache.tips)) { showTips(srTipsCache.tips); return; }
-
-  const prompt = SR_buildTipsPrompt(pairs, view.kinds);
-  refs.btnTips.disabled = true;
-  refs.insTipsStatus.textContent = 'Looking at your list…';
-  refs.insTips.hidden = true;
+  const view = progressView;
+  if (!view || progTipsBusy) return;
+  const { srPracticeStats } = await chrome.storage.local.get(['srPracticeStats']);
+  const rows = SR_wordRows(view, srPracticeStats, Date.now()).slice(0, SR_TIPS_MAX);
+  const target = rows.length ? await tipsTarget() : null;
+  if (!target) { renderProgress(); return; }
+  const prompt = SR_buildTipsPrompt(rows, view.kinds);
+  progTipsBusy = true;
+  await renderProgress();
   try {
-    const provider = await CloudProvider.getConfig();
-    const { engine } = await Settings.get();
-    const deviceNow = (await SR_deviceAvailability()) === 'available';
     let text;
-    if (providerReady(provider) && (engine === 'cloud' || !deviceNow)) {
-      text = await SR_callCloud(provider, prompt, 0.4, 400);
+    if (target.provider) {
+      text = await SR_callCloud(target.provider, prompt, 0.4, 60 * rows.length + 60);
     } else {
-      const LM = SR_deviceModel();
-      if (!LM) throw new Error('Connect an AI provider in Settings to get tips.');
-      const session = await LM.create({ expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] });
+      const session = await SR_deviceModel().create({ expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] });
       try { text = await session.prompt(SR_joinPrompt(prompt)); } finally { try { session.destroy(); } catch { /* ignore */ } }
     }
-    const tips = SR_checkTips(SR_cleanOutput(text, { fence: prompt.fence }), pairs);
-    if (!tips.length) throw new Error('The AI\'s tips didn\'t match your words, so Proofr didn\'t show them. Try again.');
-    await chrome.storage.local.set({ srTipsCache: { key, tips } });
-    showTips(tips);
+    const tips = SR_checkTips(SR_cleanOutput(text, { fence: prompt.fence }), rows);
+    if (!Object.keys(tips).length) throw new Error('The AI\'s tips didn\'t match your words, so Proofr didn\'t show them. Try again.');
+    await chrome.storage.local.set({ srTipsCache: { words: rows.map((r) => r.to), date: Date.now(), tips } });
+    progTipsBusy = false;
+    await renderProgress();
   } catch (error) {
-    refs.insTipsStatus.textContent = error.message || 'Couldn\'t get tips right now. Try again.';
-  } finally {
-    refs.btnTips.disabled = false;
+    progTipsBusy = false;
+    await renderProgress();
+    refs.progTipsNote.hidden = false;
+    refs.progTipsNote.textContent = error.message || 'Couldn\'t get tips right now. Try again.';
   }
-}
-
-function showTips(tips) {
-  refs.insTips.textContent = tips.map((t, i) => `${i + 1}. ${t}`).join('\n');
-  refs.insTips.hidden = false;
-  refs.insTipsStatus.textContent = '';
 }
 
 // === Practice ===
@@ -1600,16 +1552,25 @@ function showQuestion() {
   const cur = practice.cur = buildQuestion(practice.queue[practice.q].target);
   const { tokens, k, target, level } = cur;
   practice.answered = false;
-  // Level 3 shows the user's own mistake in place, every word a chip to tap;
-  // the others show the blank to fill.
-  refs.prSentence.innerHTML = tokens.map((t, j) => {
-    if (t.punct) return `<span class="pr-punct">${escapeHtml(t.text)}</span>`;
-    const lead = j ? ' ' : '';
-    if (level === 3) return `${lead}<button type="button" class="pr-chip" data-j="${j}">${escapeHtml(j === k ? target.from : t.text)}</button>`;
-    if (j === k) return `${lead}<span class="pr-blank" id="prBlank" aria-label="blank"></span>`;
-    return lead + escapeHtml(t.text);
-  }).join('');
+  // Level 3 shows the user's own mistake in place, every word a plain button to
+  // tap; the others show the blank to fill. Punctuation is text, kept with its
+  // word in one unbreakable .pr-w (opening marks with the next word).
+  const words = [];
+  let open = '';
+  tokens.forEach((t, j) => {
+    if (t.punct) {
+      if (words.length) words[words.length - 1].after += escapeHtml(t.text);
+      else open += escapeHtml(t.text);
+      return;
+    }
+    const html = level === 3 ? `<button type="button" class="pr-chip" data-j="${j}">${escapeHtml(j === k ? target.from : t.text)}</button>`
+      : j === k ? '<span class="pr-blank" id="prBlank" aria-label="blank"></span>' : escapeHtml(t.text);
+    words.push({ before: open, html, after: '' });
+    open = '';
+  });
+  refs.prSentence.innerHTML = words.map((w) => `<span class="pr-w">${w.before}${w.html}${w.after}</span>`).join(' ') + open;
   refs.prAsk.textContent = PRACTICE_ASK[level];
+  refs.prHint.hidden = level !== 3;
   refs.prLeft.textContent = practice.mode === 'keep' ? '' : `${practice.q + 1} of ${practice.queue.length}`;
   refs.prChoices.hidden = level > 2;
   refs.prType.hidden = level !== 4;
@@ -1631,8 +1592,15 @@ function showQuestion() {
     refs.prInput.disabled = false;
     refs.prCheck.disabled = false;
     refs.prInput.focus();
-  } else (level === 3 ? refs.prSentence.querySelector('.pr-chip') : refs.prChoices.querySelector('.pr-choice'))?.focus();
+  } else if (level === 3) {
+    // No word looks picked: after a key, focus waits on the sentence so one Tab reaches the first word.
+    if (practiceByKey) refs.prSentence.focus();
+    else document.activeElement?.blur();
+  } else refs.prChoices.querySelector('.pr-choice')?.focus();
 }
+
+// The last input in Practice: a key (true) or a pointer (false).
+let practiceByKey = false;
 
 function onChoice(word) {
   if (practice.answered || practice.sheetOpen || !practice.cur || practice.cur.level > 2) return;
@@ -1919,11 +1887,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
-    'progRate', 'progTrend', 'progSpark', 'progAxis', 'progBasis', 'progFocus', 'progFocusTitle', 'progFocusText', 'btnPractice',
-    'progHabitsCard', 'progHabits', 'progKinds', 'progKindsNote', 'progLegend', 'progMasteredCard', 'progMastered', 'progWorkingCard', 'progWorking',
-    'btnTips', 'insTipsStatus', 'insTips', 'btnClearInsights', 'insightsToggle', 'coachToggle', 'soundToggle',
+    'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
+    'progHabitsCard', 'progHabitTitle', 'progHabitEg', 'progHabitAlso', 'progWordsCard', 'progTipsState', 'progTipsNote', 'progWords', 'btnAllWords', 'progMasteredLine',
+    'btnTips', 'btnClearInsights', 'insightsToggle', 'coachToggle', 'soundToggle',
     'prChoose', 'prWhy', 'prBestLine', 'prTiles', 'prQuick', 'prKeep', 'prMix', 'prTally', 'prCheckpoint', 'prCheckText', 'btnPrMore', 'btnPrStop', 'prSheetLevel',
-    'practicePanel', 'btnPracticeBack', 'prBar', 'prBarFill', 'prCombo', 'prStage', 'prAsk', 'prLeft', 'prSentence', 'prChoices', 'prType', 'prInput', 'prCheck',
+    'practicePanel', 'btnPracticeBack', 'prBar', 'prBarFill', 'prCombo', 'prStage', 'prAsk', 'prLeft', 'prSentence', 'prHint', 'prChoices', 'prType', 'prInput', 'prCheck',
     'prDone', 'prRing', 'prRingSvg', 'prScore', 'prDoneTitle', 'prDoneText', 'prWords', 'btnPracticeAgain', 'btnPracticeDone',
     'prSheet', 'prSheetIcon', 'prSheetTitle', 'prSheetText', 'prContinue',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
@@ -2227,9 +2195,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   refs.btnProgEmpty.addEventListener('click', () => toggleSettingsPanel(true));
   refs.btnTips.addEventListener('click', getTips);
+  refs.progWords.addEventListener('click', (e) => {
+    const b = e.target.closest('.prog-word-row');
+    if (!b) return;
+    const open = b.getAttribute('aria-expanded') !== 'true';
+    b.setAttribute('aria-expanded', String(open));
+    document.getElementById(b.getAttribute('aria-controls')).hidden = !open;
+  });
+  refs.btnAllWords.addEventListener('click', () => { progShowAll = !progShowAll; renderProgress(); });
   refs.btnClearInsights.addEventListener('click', async () => {
     await chrome.storage.local.remove(['srInsights', 'srTipsCache', 'srPracticeStats', 'srPracticePool', 'srPracticeSeen', 'srPracticeBest', 'srPracticeMode']);
-    refs.insTips.hidden = true;
     renderProgress();
   });
   refs.insightsToggle.addEventListener('change', async () => {
@@ -2262,7 +2237,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   refs.prType.addEventListener('submit', (e) => { e.preventDefault(); onTyped(); });
   refs.prContinue.addEventListener('click', onContinue);
   // Keyboard: 1-3 picks a choice, Enter continues, Escape closes.
+  refs.practicePanel.addEventListener('pointerdown', () => { practiceByKey = false; });
   refs.practicePanel.addEventListener('keydown', (e) => {
+    practiceByKey = true;
     // Checkpoint: Enter is "10 more" (unless "Done for now" has focus), Esc is done.
     if (!refs.prCheckpoint.hidden && (e.key === 'Escape' || (e.key === 'Enter' && e.target !== refs.btnPrStop))) { e.preventDefault(); closeCheckpoint(e.key === 'Enter'); return; }
     if (e.key === 'Escape') { e.preventDefault(); closePractice(); return; }

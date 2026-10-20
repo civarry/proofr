@@ -40,26 +40,32 @@ for (const n of [0, 10, 100, 4000, 20000]) {
   assert.equal(body.max_tokens, SR_maxTokens('teh report are ready', 'grammar'));
 }
 
-// 3. Tips: only lines that use the user's own words survive; a line that
-// quotes a word that isn't in their list (a made-up example) is dropped.
+// 3. Tips: one per word, as "word | tip" lines. A tip survives only when its
+// word is one of the user's, it names that word, and every word it quotes is
+// theirs (a made-up example is dropped). The rest of the words just get none.
 assert.equal(typeof SR_checkTips, 'function', 'SR_checkTips is exported');
 const pairs = [{ from: 'dont', to: "don't", n: 5 }, { from: 'recieve', to: 'receive', n: 3 }];
 {
   const reply = [
-    '1. You often write "dont": the apostrophe stands for the missing o in "do not".',
-    '2. Remember "i before e except after c", as in receive.',
-    '3. Watch "affect" and "effect" in formal writing.',
+    '1. don\'t | You often write "dont": the apostrophe stands for the missing o in "do not".',
+    '- receive | Remember i before e except after c, as in receive.',
+    'affect | Watch affect and effect in formal writing.',
   ].join('\n');
   const tips = SR_checkTips(reply, pairs);
-  assert.equal(tips.length, 2, JSON.stringify(tips));
-  assert.ok(tips.every((t) => !/affect/.test(t)), 'the tip about words they never got wrong is dropped');
-  assert.ok(tips.every((t) => !/^\d\./.test(t)), 'numbering removed, the list renders its own');
+  assert.deepEqual(Object.keys(tips).sort(), ["don't", 'receive'], JSON.stringify(tips));
+  assert.ok(Object.values(tips).every((t) => !/^\d|\|/.test(t)), 'numbering and the word column removed');
 }
-assert.deepEqual(SR_checkTips('1. Proofread carefully.\n2. Read it aloud.', pairs), [], 'generic tips are dropped');
-assert.deepEqual(SR_checkTips('', pairs), []);
-assert.deepEqual(SR_checkTips('1. Like dont, you also wrote "cant" without its apostrophe.', pairs), [], 'an example they never wrote is dropped');
-assert.equal(SR_checkTips('1. a\n2. dont b\n3. dont c\n4. dont d\n5. dont e', pairs).length, 3, 'at most 3');
-// A quoted "rule" phrase is fine as long as the tip names their word.
-assert.equal(SR_checkTips('1. Write "do not" as don\'t, never dont.', pairs).length, 1);
+assert.deepEqual(SR_checkTips("don't | Proofread carefully.\nreceive | Read it aloud.", pairs), {}, 'a tip that never names its word is dropped');
+assert.deepEqual(SR_checkTips('', pairs), {});
+assert.deepEqual(SR_checkTips('1. Proofread carefully.\n2. Read it aloud.', pairs), {}, 'lines without a word column are dropped');
+assert.deepEqual(SR_checkTips('don\'t | Like dont, you also wrote "cant" without its apostrophe.', pairs), {}, 'an example they never wrote is dropped');
+assert.deepEqual(SR_checkTips("don't | dont needs it.\ndon't | Write don't, a second time.", pairs), { "don't": 'dont needs it.' }, 'one tip per word, the first');
+assert.ok(SR_checkTips('dont | Write dont as don\'t.', pairs)["don't"], 'the wrong form names the row too');
+// A quoted phrase (a rule, not an example) is fine as long as the tip names their word.
+assert.ok(SR_checkTips('don\'t | Write "do not" as don\'t, never dont.', pairs)["don't"]);
+{
+  const many = Array.from({ length: 9 }, (_, i) => ({ from: `w${i}x`, to: `w${i}`, n: 2 }));
+  assert.equal(Object.keys(SR_checkTips(many.map((p) => `${p.to} | Spell ${p.to} right.`).join('\n'), many)).length, SR_TIPS_MAX, 'at most 6');
+}
 
 console.log('efficiency: all checks passed');
