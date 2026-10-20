@@ -430,6 +430,9 @@
     .prog-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
     .prog-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
     .prog-spark { display: block; width: 100%; height: auto; margin-top: 12px; overflow: visible; }
+    .prog-start { margin-top: 12px; }
+    .prog-start[hidden] { display: none; }
+    .prog-start p { margin-top: 6px; font-size: 12px; color: var(--ink-faint); }
     .prog-spark .axis { stroke: var(--line); }
     .prog-spark .line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
     .prog-spark .dot { fill: var(--accent); }
@@ -1061,6 +1064,7 @@
             <h2 class="prog-head"><span class="up" id="progHeadLead"></span><span id="progHeadText"></span></h2>
             <p class="prog-line" id="progLine"></p>
             <svg class="prog-spark" id="progSpark" viewBox="0 0 320 40" role="img"></svg>
+            <div class="prog-start" id="progStart" hidden><span class="prog-meter"><b id="progStartFill"></b></span><p id="progStartText"></p></div>
             <div class="prog-chips"><span class="prog-chip ok" id="progMasteredChip" hidden></span><span class="prog-chip" id="progPracticeChip" hidden></span></div>
             <button type="button" class="btn-solid prog-practice" id="btnPractice">Practice<span>· about 2 min</span></button>
             <p class="prog-note" id="progPracticeNote" hidden>None of your words need practice right now, so Practice uses common mix-ups.</p>

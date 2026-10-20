@@ -858,7 +858,7 @@ const playRound = (mode, words, opts = {}) => panel.evaluate(async (mode, words,
     await wait(20);
     if (!practice.stats[k]) { log.push({ error: 'not recorded', to, level: c.level, right, sheet: practice.sheetOpen, answered: practice.answered, q: practice.q, queue: practice.queue.map((x) => x.target.to) }); break; }
     const combo = document.getElementById('prCombo'), lvl = document.getElementById('prSheetLevel');
-    log.push({ to, starter: !!c.target.starter, right, combo: combo.hidden ? '' : combo.className, comboText: combo.hidden ? '' : combo.textContent, before, after: practice.stats[k].level, line: lvl.hidden ? '' : lvl.textContent, tally: document.getElementById('prTally').hidden ? null : document.getElementById('prTally').textContent, bar: !document.getElementById('prBar').hidden, cont: document.getElementById('prContinue').textContent });
+    log.push({ to, sentence: document.getElementById('prSentence').textContent, starter: !!c.target.starter, right, combo: combo.hidden ? '' : combo.className, comboText: combo.hidden ? '' : combo.textContent, before, after: practice.stats[k].level, line: lvl.hidden ? '' : lvl.textContent, tally: document.getElementById('prTally').hidden ? null : document.getElementById('prTally').textContent, bar: !document.getElementById('prBar').hidden, cont: document.getElementById('prContinue').textContent });
     document.getElementById('prContinue').click(); await wait(20);
   }
   await wait(50);
@@ -931,6 +931,46 @@ check('F3: a shorter run is no new best, and the stored best stays', !/New best/
 // 4 words (no starters at 4): the natural end comes before any checkpoint.
 const few = await playRound('keep', MANY.slice(0, 4));
 check('M4: 4 words: Keep going ends naturally at 8, before 10, no checkpoint', few.done && few.checks.length === 0 && few.log.length === 8 && few.plan.every((t) => !t.starter) && /^That's everything/.test(few.text), JSON.stringify({ n: few.log.length, checks: few.checks, text: few.text }));
+// One clearly right answer: "from" has no built-in sentence (form/from are both words),
+// so without an AI it sits the round out; no question is a "I wrote ___ in the email" frame.
+const MENTION = /\b(wrote|says)\b|check .* again/;
+const noAi = await playRound('quick', [['form', 'from'], ['recieve', 'receive'], ['beleive', 'believe'], ['wiht', 'with']]);
+check('one right answer: without an AI, a word with no built-in sentence is left out, and every sentence is a real one',
+  noAi.done && !noAi.plan.some((t) => t.to === 'from') && noAi.log.length > 0 && noAi.log.every((x) => x.sentence.length > 12 && !MENTION.test(x.sentence)),
+  JSON.stringify({ plan: noAi.plan, sentences: noAi.log.map((x) => x.sentence) }));
+// With an AI, that word waits for its sentence: the next word is asked first, then "from" in the AI's sentence.
+const waits = await panel.evaluate(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const real = { writer: window.practiceWriter, refill: window.refillPracticePool };
+  await chrome.storage.local.remove(['srPracticeStats', 'srPracticePool', 'srPracticeSeen']);
+  progressView = { ...progressView, working: [['form', 'from'], ['recieve', 'receive'], ['beleive', 'believe'], ['wiht', 'with']].map(([from, to]) => ({ from, to, kind: 'spelling', n: 3 })) };
+  let asked = 0;
+  window.practiceWriter = async () => ({ onDevice: true, provider: null });
+  window.refillPracticePool = () => { asked++; return wait(150).then(() => { SR_practicePoolAdd(practice.pool, [{ target: { from: 'form', to: 'from', kind: 'spelling' }, sentence: 'The parcel came ___ Spain.', filled: 'The parcel came from Spain.', spot: 'The parcel came form Spain.', checked: true }], practice.seen); }); };
+  try {
+    document.getElementById('btnPractice').click(); await wait(150);
+    document.querySelector('#prChoose [data-mode="quick"]').click(); await wait(100);
+    const first = practice.cur?.target.to;
+    const seen = [];
+    for (let guard = 0; guard < 30 && document.getElementById('prDone').hidden; guard++) {
+      for (let i = 0; i < 20 && (!practice.cur || practice.answered); i++) await wait(50);
+      const c = practice.cur;
+      seen.push({ to: c.target.to, source: c.source, sentence: document.getElementById('prSentence').textContent });
+      [...document.querySelectorAll('.pr-choice')].find((b) => b.dataset.word === c.target.to).click(); await wait(20);
+      document.getElementById('prContinue').click(); await wait(20);
+    }
+    for (let i = 0; i < 20 && document.getElementById('prDone').hidden; i++) await wait(50);
+    return { first, seen, asked, done: !document.getElementById('prDone').hidden };
+  } finally {
+    Object.assign(window, { practiceWriter: real.writer, refillPracticePool: real.refill });
+    document.getElementById('btnPracticeBack').click(); await wait(100);
+    await chrome.storage.local.set({ srPracticeMode: 'keep' }); // the mode the checks below last used
+  }
+});
+const fromQ = waits.seen.find((x) => x.to === 'from');
+check('one right answer: with an AI, a word with no built-in sentence waits for one and is asked in it',
+  waits.done && waits.seen[0]?.to !== 'from' && fromQ && fromQ.source === 'ai' && /came\s+from\s+Spain|came\s+Spain/.test(fromQ.sentence) && waits.seen.every((x) => !MENTION.test(x.sentence)),
+  JSON.stringify(waits));
 // 2 words: the card lists both and 4 common mix-ups; the round asks both kinds, own words first.
 const insightsBefore = JSON.stringify(await insights());
 const pair = await playRound('quick', MANY.slice(0, 2));
@@ -987,6 +1027,23 @@ const osc = await panel.evaluate(() => ({ ac: window.__ac, osc: window.__osc }))
 check('F4: sounds on: one AudioContext, two notes for right, one low tone for wrong', loud.done && osc.ac === 1 && osc.osc.length >= 3 && osc.osc[0] < osc.osc[1] && osc.osc[2] < osc.osc[0], JSON.stringify(osc));
 await panel.evaluate(async () => { await chrome.storage.sync.set({ srPracticeSound: false, srInsightsOn: true }); await chrome.storage.local.remove(['srPracticeStats', 'srPracticeBest', 'srPracticeMode']); await renderProgress(); });
 
+// Early weeks: no empty chart box; a bar toward the first trend instead.
+{
+  const savedInsights = await panel.evaluate(async () => (await chrome.storage.local.get(['srInsights'])).srInsights);
+  await panel.evaluate(async () => {
+    const st = SR_mergeInsights(null, [{ from: 'recieve', to: 'receive' }, { from: 'recieve', to: 'receive' }], Date.now(), 60, 2, 'recieve');
+    await chrome.storage.local.set({ srInsights: st });
+  });
+  await clk(panel, '#tabWrite'); await clk(panel, '#tabProgress'); await sleep(500);
+  const early = await panel.evaluate(() => {
+    const sp = document.getElementById('progSpark'), stt = document.getElementById('progStart');
+    return { sparkShown: sp.getClientRects().length > 0 && sp.getBoundingClientRect().height > 0, start: stt.getClientRects().length > 0 ? document.getElementById('progStartText').textContent : null, fill: document.getElementById('progStartFill').style.width };
+  });
+  await panel.evaluate(async (st) => chrome.storage.local.set({ srInsights: st }), savedInsights);
+  await clk(panel, '#tabWrite'); await clk(panel, '#tabProgress'); await sleep(500);
+  check('early weeks: no empty chart space; a bar toward the first trend', !early.sparkShown && /^60 of 200 words this week\. Your trend line starts at 200\.$/.test(early.start || '') && early.fill === '30%', JSON.stringify(early));
+}
+
 // AI tips: one request for the words shown, one tip per word, kept until a new word shows up.
 const tipsUi = () => panel.evaluate(() => {
   const btn = document.getElementById('btnTips'), st = document.getElementById('progTipsState'), note = document.getElementById('progTipsNote');
@@ -1006,7 +1063,22 @@ await clk(panel, '#btnTips'); await sleep(1200);
 const tipsReqs = mockRequests.filter((r) => /one line per word/.test(JSON.stringify(r)));
 check('one click on Get AI tips is exactly 1 request, with the word list only', mockRequests.length === 1 && tipsReqs.length === 1 && /recieve/.test(JSON.stringify(tipsReqs[0])) && !/hoping|Jane|3pm/.test(JSON.stringify(tipsReqs[0])), JSON.stringify(mockRequests.map((r) => JSON.stringify(r).slice(0, 80))));
 const t1 = await tipsUi();
-check('AI tips up to date: muted "AI tips · date · up to date", TIP on the words that got one, meters still lined up', t1.btn === null && /^AI tips · [A-Z][a-z]{2} \d{1,2} · up to date$/.test(t1.state || '') && t1.badges.includes('receive') && t1.badges.includes('were') && !t1.badges.includes('definitely') && new Set(t1.meters).size === 1, JSON.stringify(t1));
+check('AI tips: TIP on the words that got one, meters still lined up', t1.badges.includes('receive') && t1.badges.includes('were') && new Set(t1.meters).size === 1, JSON.stringify(t1));
+// Never stuck after tips: words the AI left without one can be asked for, alone.
+const lacking = await panel.evaluate(async () => { const c = (await chrome.storage.local.get(['srTipsCache'])).srTipsCache; return c.words.filter((w) => !c.tips[w]); });
+if (lacking.length) {
+  check('some words without a tip: "Get tips for N more" and which ones', t1.btn?.[0] === `Get tips for ${lacking.length} more` && (t1.note || '').includes(`No tip yet for ${lacking.join(', ')}`), JSON.stringify({ t1, lacking }));
+  mockRequests.length = 0;
+  await clk(panel, '#btnTips'); await sleep(1200);
+  const only = JSON.stringify(mockRequests.at(-1) || {});
+  const kept = await panel.evaluate(async () => Object.keys((await chrome.storage.local.get(['srTipsCache'])).srTipsCache.tips));
+  check('asking for the missing ones sends only those words and keeps the other tips', mockRequests.length === 1 && lacking.every((w) => only.includes(w)) && !only.includes('recieve') && kept.includes('receive'), JSON.stringify({ kept, req: only.slice(-300) }));
+}
+// Every word has a tip: a quiet "Write new tips" is still there.
+await panel.evaluate(async () => { const c = (await chrome.storage.local.get(['srTipsCache'])).srTipsCache; for (const w of c.words) c.tips[w] = c.tips[w] || `Remember ${w}.`; await chrome.storage.local.set({ srTipsCache: c }); });
+await reopenProgress();
+const t1b = await tipsUi();
+check('all words have tips: "Write new tips" stays available, and says it costs one request', t1b.btn?.[0] === 'Write new tips' && /one request/.test(t1b.note || ''), JSON.stringify(t1b));
 const tipOpen = await panel.evaluate(() => {
   const b = [...document.querySelectorAll('.prog-word-row')].find((x) => x.querySelector('.w b').textContent === 'receive');
   b.click();
@@ -1017,7 +1089,7 @@ check('expanding a word shows its AI tip under its rule', /Spelled r-e-c-e-i-v-e
 check('no word is explained twice on the page', (tipOpen.page.match(/r-e-c-e-i-v-e/g) || []).length === 1 && (tipOpen.page.match(/i before e/g) || []).length === 1, String((tipOpen.page.match(/r-e-c-e-i-v-e/g) || []).length));
 mockRequests.length = 0;
 await reopenProgress();
-check('viewing again while up to date makes no request', mockRequests.length === 0 && (await tipsUi()).state !== null);
+check('viewing again while up to date makes no request', mockRequests.length === 0 && /^Write new tips$/.test((await tipsUi()).btn?.[0] || ''));
 // A new word: the tips are stale and say which word is new.
 await panel.evaluate(async () => {
   let st = (await chrome.storage.local.get(['srInsights'])).srInsights;

@@ -367,7 +367,10 @@ assert.deepEqual(SR_checkPractice(item, "it's its, they're, friday").right, ["th
   assert.equal(SR_tipsState({ key: 'old', tips: ['a list from before'] }, ["it's"]).state, 'none', 'the old 3-tip cache counts as none');
   assert.equal(SR_tipsState(cache, ["it's", 'receive']).state, 'fresh', 'counts changing (not in the key) keep it up to date');
   assert.equal(SR_tipsState(cache, ['receive']).state, 'fresh', 'a word leaving is not stale');
-  assert.deepEqual(SR_tipsState(cache, ["it's", 'receive', 'were']), { state: 'stale', added: ['were'], date: NOW });
+  assert.deepEqual(SR_tipsState(cache, ["it's", 'receive', 'were']), { state: 'stale', added: ['were'], missing: ['receive'], date: NOW });
+  // A word the AI wrote no tip for can be asked for on its own; a new word is "added", not "missing".
+  assert.deepEqual(SR_tipsState(cache, ["it's", 'receive']).missing, ['receive']);
+  assert.deepEqual(SR_tipsState({ ...cache, tips: { "it's": 'a', receive: 'b' } }, ["it's", 'receive']).missing, []);
 }
 
 console.log('insights: all checks passed');
