@@ -7,9 +7,6 @@ import assert from 'node:assert/strict';
 
 globalThis.self = globalThis;
 new Function(fs.readFileSync(process.env.CONSTANTS || new URL('../constants.js', import.meta.url), 'utf8'))();
-// The side panel's own focus pick, so the test follows it if it changes.
-const panel = fs.readFileSync(new URL('../sidepanel.js', import.meta.url), 'utf8');
-const pickFocus = new Function(`${panel.match(/^function pickFocus\(view\) \{[\s\S]*?^\}$/m)[0]}\nreturn pickFocus;`)();
 
 const DAY = 86400000;
 const START = new Date(2026, 7, 3, 9).getTime(); // a Monday, local time
@@ -33,7 +30,7 @@ function rng(seed) {
 const PROFILES = {
   apostrophe: {
     chance: (w) => Math.max(0, 0.8 - 0.16 * w), // improves, clean from week 5
-    must: ['apostrophe'], may: [], focus: ['apostrophe'],
+    must: ['apostrophe'], may: [],
     sentences: [
       'I [dont|don\'t] think Maria saw the draft yet.',
       '[its|it\'s] on the shared drive under Q4 plans.',
@@ -45,7 +42,7 @@ const PROFILES = {
   },
   esl: {
     chance: () => 0.6, // flat
-    must: ['agreement'], may: ['a-an'], focus: ['grammar'],
+    must: ['agreement'], may: ['a-an'],
     sentences: [
       'Yesterday we [was|were] at the office with Kenji until 7.',
       'The reports [is|are] ready for review.',
@@ -57,7 +54,7 @@ const PROFILES = {
   },
   typist: {
     chance: (w) => Math.max(0.05, 0.7 - 0.1 * w), // improves
-    must: ['letters'], may: ['order', 'ie-ei'], focus: ['spelling'],
+    must: ['letters'], may: ['order', 'ie-ei'],
     sentences: [
       'I will send [teh|the] slides to Priya after lunch.',
       'Did you [recieve|receive] the invoice for order {5521|5512}?',
@@ -71,7 +68,7 @@ const PROFILES = {
   },
   lowercase: {
     chance: () => 0.85, // flat
-    must: ['lowercase-i', 'days'], may: ['sentence-start'], focus: ['capitalization'],
+    must: ['lowercase-i', 'days'], may: ['sentence-start'],
     sentences: [
       '[i|I] can join the call with Ahmed at 10.',
       'see you on [friday|Friday] then.',
@@ -84,7 +81,7 @@ const PROFILES = {
   },
   careful: {
     chance: () => 0.01, // mostly correct
-    must: [], may: [], focus: [null],
+    must: [], may: [],
     sentences: [
       'Thanks, Elena, the summary looks good to me.',
       'We moved the review to room 4B on the 9th.',
@@ -95,7 +92,7 @@ const PROFILES = {
   },
   mixed: {
     chance: () => 0.5, // flat
-    must: ['their', 'your'], may: ['apostrophe', 'ie-ei', 'then'], focus: ['grammar'],
+    must: ['their', 'your'], may: ['apostrophe', 'ie-ei', 'then'],
     sentences: [
       'The vendors sent [there|their] pricing to Omar last week.',
       'Let me know if [your|you\'re] free on Thursday.',
@@ -181,7 +178,7 @@ for (const run of runs) {
   const atAll = (fn) => snapshots.forEach((s) => fn(s.view, s));
   run.masteredWeeks = snapshots.map((x) => x.view.mastered.map((m) => m.to));
 
-  // (a) habits and focus fit the profile.
+  // (a) habits fit the profile.
   const ids = SR_habits(mid).map((h) => h.id);
   for (const id of profile.must) assert.ok(ids.includes(id), `${name}: expected habit ${id}, got ${ids}`);
   for (const id of ids) assert.ok(profile.must.includes(id) || profile.may.includes(id), `${name}: habit ${id} doesn't fit`);
@@ -189,10 +186,8 @@ for (const run of runs) {
     assert.ok(!/[—–]/.test(h.label), `${name}: no em dash in "${h.label}"`);
     for (const ex of h.examples) assert.ok(mid.working.some((p) => p.to === ex), `${name}: example ${ex} is the user's own`);
   }
-  const focus = pickFocus(mid);
-  assert.ok(profile.focus.includes(focus ? focus.kind : null), `${name}: focus ${focus && focus.kind}`);
-  run.signature = JSON.stringify([ids, focus]);
-  checks += 2;
+  run.signature = JSON.stringify(ids);
+  checks += 1;
 
   atAll((view, snap) => {
     const tag = `${name} week ${snap.week + 1}`;
@@ -203,10 +198,9 @@ for (const run of runs) {
     });
     const practice = [0, 1, 2, 3, 4, 5, 6, 7].flatMap((seed) => SR_buildPractice(view, 3, seed));
     const habits = SR_habits(view);
-    const f = pickFocus(view);
 
     // (c) the model's one-off wrong fixes are never taught.
-    const taught = [...view.working.map(key), ...practice.flatMap((it) => it.targets.map(key)), ...(f ? f.words : [])];
+    const taught = [...view.working.map(key), ...practice.flatMap((it) => it.targets.map(key))];
     for (const k of NOISE_KEYS) {
       assert.ok(!taught.includes(k) && !taught.includes(k.split('→')[1]), `${tag}: noise ${k} taught`);
       assert.ok(!habits.some((h) => h.examples.includes(k.split('→')[1])), `${tag}: noise ${k} in a habit`);
