@@ -417,7 +417,7 @@
     /* Write | Progress tabs */
     .tabs { flex: none; display: flex; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--paper); }
     /* A display rule would otherwise beat the hidden attribute. */
-    .tabs[hidden], .icon-btn[hidden], .prog[hidden], .prog-axis[hidden], .prog-spark[hidden], .prog-legend[hidden], .prog-note[hidden], .prog-bars[hidden], .pr-choices[hidden], .pr-type[hidden], .pr-stage[hidden], .pr-combo[hidden] { display: none; }
+    .tabs[hidden], .icon-btn[hidden], .prog[hidden], .prog-axis[hidden], .prog-spark[hidden], .prog-legend[hidden], .prog-note[hidden], .prog-bars[hidden], .pr-choices[hidden], .pr-type[hidden], .pr-stage[hidden], .pr-combo[hidden], .pr-tally[hidden], .pr-bar[hidden], .pr-today[hidden] { display: none; }
     .tab {
       background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
       padding: 8px 10px; font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer;
@@ -488,6 +488,31 @@
     .pr-bar i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--live); transition: width 320ms cubic-bezier(0, 0, 0, 1); }
     .pr-combo { flex: none; font-size: 12px; font-weight: 700; color: var(--accent-ink); background: var(--accent-tint); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
     .pr-combo.bump { animation: pr-pop 260ms cubic-bezier(0, 0, 0, 1); }
+    .pr-combo.big { animation: pr-pop-big 280ms cubic-bezier(0, 0, 0, 1); }
+    .pr-tally { flex: 1; font-size: 12px; font-weight: 600; color: var(--ink-faint); white-space: nowrap; }
+    .pr-today { flex: 1 1 auto; overflow-y: auto; padding: 8px 18px 24px; display: flex; flex-direction: column; gap: 8px; }
+    .pr-today h3 { font-size: 18px; margin-top: 6px; color: var(--ink); }
+    .pr-why { font-size: 13px; color: var(--ink-soft); }
+    .pr-why[hidden] { display: none; }
+    /* Game modes: calm cards, two per row; Mix-ups spans both below. */
+    .pr-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+    .pr-tile {
+      min-width: 0; min-height: 96px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+      padding: 12px; text-align: left; cursor: pointer; color: var(--ink); background: var(--card);
+      border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 12px; transition: transform 80ms ease;
+    }
+    .pr-tile.mix { grid-column: 1 / -1; flex-direction: row; align-items: center; min-height: 0; }
+    .pr-tile:hover:not(:disabled) { border-color: var(--line-focus); }
+    .pr-tile:active:not(:disabled) { transform: translateY(2px); border-bottom-width: 1px; }
+    .pr-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .pr-tile:disabled { cursor: default; opacity: .55; }
+    .pr-tile:disabled .pr-tile-text span { white-space: normal; } /* the reason it's locked is never cut off */
+    .pr-tile-icon { flex: none; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent-tint); color: var(--accent-ink); }
+    .pr-tile-icon svg { width: 18px; height: 18px; }
+    .pr-tile-text { min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 2px; }
+    .pr-tile-text b { font: 700 15px var(--sans); white-space: nowrap; }
+    .pr-tile-text span { font: 400 12px var(--sans); color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pr-sheet p.pr-level { font-weight: 600; }
     .pr-stage { flex: 1 1 auto; overflow-y: auto; padding: 8px 18px 24px; }
     .pr-stage.enter { animation: pr-slide 240ms cubic-bezier(0, 0, 0, 1); }
     .pr-ask { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 6px 0 14px; }
@@ -570,11 +595,13 @@
     .pr-done .practice-actions button { width: 100%; }
     .practice-actions { display: flex; gap: 8px; margin-top: 12px; }
     @keyframes pr-pop { 0% { transform: scale(.9); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
+    @keyframes pr-pop-big { 0% { transform: scale(.85); } 60% { transform: scale(1.2); } 100% { transform: scale(1); } }
     @keyframes pr-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
     @keyframes pr-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
     @keyframes pr-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
       .practice *, .practice *::before { animation: none !important; transition: none !important; }
+      .pr-tile:active:not(:disabled) { transform: none; }
     }
     .settings-header {
       flex: none;
@@ -1014,6 +1041,7 @@
           <b id="progEmptyTitle">Nothing here yet</b>
           <span id="progEmptyText">Proofread something you wrote. The words Proofr fixes for you show up here, and so does how your mistake rate changes week to week.</span>
           <br><button type="button" class="btn-outline" id="btnProgEmpty" hidden>Turn on in Settings</button>
+          <button type="button" class="btn-outline" id="btnProgMixups" hidden>Practice common mix-ups</button>
         </div>
         <div class="prog" id="progBody" hidden>
           <section class="prog-card">
@@ -1065,7 +1093,18 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
         <div class="pr-bar" id="prBar" role="progressbar" aria-label="Round progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="prBarFill"></i></div>
+        <span class="pr-tally" id="prTally" hidden></span>
         <span class="pr-combo" id="prCombo" hidden></span>
+      </div>
+      <div class="pr-today" id="prChoose" hidden>
+        <h3>Practice</h3>
+        <p class="pr-why" id="prWhy"></p>
+        <p class="pr-why" id="prBestLine" hidden></p>
+        <div class="pr-tiles" id="prTiles" role="group" aria-label="Game mode">
+          <button type="button" class="pr-tile quick" id="prQuick" data-mode="quick"><i class="pr-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></i><span class="pr-tile-text"><b>Quick</b><span>10 questions</span></span></button>
+          <button type="button" class="pr-tile keep" id="prKeep" data-mode="keep"><i class="pr-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg></i><span class="pr-tile-text"><b>Keep going</b><span>Until you're done</span></span></button>
+          <button type="button" class="pr-tile mix" id="prMix" data-mode="mixups"><i class="pr-tile-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></i><span class="pr-tile-text"><b>Mix-ups</b><span>its/it's, then/than</span></span></button>
+        </div>
       </div>
       <div class="pr-stage" id="prStage">
         <div class="pr-ask"><b id="prAsk">Tap the mistake</b><span class="pr-left" id="prLeft"></span></div>
@@ -1078,7 +1117,16 @@
         <div class="pr-sheet" id="prSheet" role="status" aria-live="polite">
           <div class="pr-sheet-head"><span class="pr-sheet-icon" id="prSheetIcon" aria-hidden="true"></span><b id="prSheetTitle"></b></div>
           <p id="prSheetText"></p>
+          <p class="pr-level" id="prSheetLevel" hidden></p>
           <button type="button" class="pr-continue" id="prContinue">Continue</button>
+        </div>
+      </div>
+      <div class="pr-done" id="prCheckpoint" hidden>
+        <h3>10 more, or done for now?</h3>
+        <p id="prCheckText"></p>
+        <div class="practice-actions">
+          <button type="button" class="btn-solid" id="btnPrMore">10 more</button>
+          <button type="button" class="btn-outline" id="btnPrStop">Done for now</button>
         </div>
       </div>
       <div class="pr-done" id="prDone" hidden>
@@ -1208,6 +1256,13 @@
             <span class="settings-hint">Proofread marks the mistakes in your text box instead of fixing them, so you can fix them yourself. Show fixes is one click away.</span>
           </span>
           <input type="checkbox" id="coachToggle">
+        </label>
+        <label class="toggle-row" for="soundToggle">
+          <span>
+            <b>Practice sounds</b>
+            <span class="settings-hint">A soft chime for a right answer and a low tone for a wrong one, made on this computer.</span>
+          </span>
+          <input type="checkbox" id="soundToggle">
         </label>
 
         <details class="advanced" id="advancedSection">

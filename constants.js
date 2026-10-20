@@ -1567,6 +1567,13 @@ const SR_PRACTICE_PHRASES = {
   then: 'we eat first and {x} we talk', an: 'it takes {x} hour', a: 'we need {x} new plan',
   were: 'we {x} hoping for more', was: 'the meeting {x} short', i: 'let me know if {x} should call',
 };
+// Classic mix-ups that top up a round when the user has few words of their own
+// (SR_practicePlan). Each answer needs a context phrase above, so its template
+// has exactly one right choice, and a rule in SR_WORD_RULES.
+const SR_PRACTICE_STARTERS = [['its', "it's"], ["it's", 'its'], ['their', "they're"], ['there', 'their'], ['your', "you're"], ['then', 'than'], ['than', 'then'], ['a', 'an'], ['was', 'were']]
+  .map(([from, to]) => ({ from, to, kind: 'grammar', starter: true }));
+const SR_PRACTICE_STARTER_BELOW = 4; // fewer own words than this get starters
+const SR_PRACTICE_STARTER_FILL = 6; // ...up to this many words in all
 const SR_PRACTICE_GENERIC = ['I wrote {x} in the email', 'please check {x} again', 'the note says {x}'];
 const SR_PRACTICE_OPENERS = ['Quick update: ', 'Just so you know, ', 'For tomorrow: '];
 
@@ -1742,7 +1749,7 @@ function SR_mergePracticeStats(stats, results, now = Date.now()) {
   }
   for (const r of Array.isArray(results) ? results : []) {
     if (!r || typeof r.from !== 'string' || typeof r.to !== 'string' || !r.from || !r.to) continue;
-    const k = `${r.from}→${r.to}`;
+    const k = SR_practiceKey(r);
     const v = out[k] || { seen: 0, right: 0, last: 0, wrongLast: false, level: 1, streak: 0 };
     out[k] = { seen: v.seen + 1, right: v.right + (r.right ? 1 : 0), last: now, wrongLast: r.again ? v.wrongLast || !r.right : !r.right, ...SR_practiceLevelStep(v, !!r.right, r.served) };
   }
@@ -1753,14 +1760,36 @@ function SR_mergePracticeStats(stats, results, now = Date.now()) {
   return out;
 }
 
+// A word's key in srPracticeStats; starters have their own, so a user's own
+// pair with the same words never shares their stats.
+function SR_practiceKey(t) {
+  return `${t && t.starter ? 'starter:' : ''}${t && t.from}→${t && t.to}`;
+}
+
 // The words for the next round, most needed first: missed last time, then
 // never practiced (most-fixed first), then the rest by accuracy, with words
 // got right very recently last (spaced: they rest before coming back).
+// The user's own words come first; with fewer than SR_PRACTICE_STARTER_BELOW
+// of them, starters (marked starter: true) fill the round to SR_PRACTICE_STARTER_FILL.
 function SR_practicePlan(view, stats, n = 6, now = Date.now()) {
   const st = stats && typeof stats === 'object' ? stats : {};
-  const pool = (Array.isArray(view && view.working) ? view.working : []).filter(SR_practicable);
+  const own = SR_planWords((Array.isArray(view && view.working) ? view.working : []).filter(SR_practicable), st, n, now, new Set());
+  if (own.length >= SR_PRACTICE_STARTER_BELOW || !own.length) return own;
+  const taken = new Set(own.map((t) => SR_practiceAnswer(t.to)));
+  return own.concat(SR_planWords(SR_PRACTICE_STARTERS, st, Math.min(n, SR_PRACTICE_STARTER_FILL) - own.length, now, taken));
+}
+
+// Mix-ups mode: starters only, most needed first.
+function SR_mixupPlan(stats, n = 10, now = Date.now()) {
+  return SR_planWords(SR_PRACTICE_STARTERS, stats && typeof stats === 'object' ? stats : {}, n, now, new Set());
+}
+
+const SR_practiceAnswer = (w) => String(w).toLowerCase().replace(/’/g, "'");
+
+// Up to n of `pool`, most needed first, one per answer (`seen` holds answers taken).
+function SR_planWords(pool, st, n, now, seen) {
   const scored = pool.map((p, order) => {
-    const s = st[`${p.from}→${p.to}`];
+    const s = st[SR_practiceKey(p)];
     let score;
     if (s && s.wrongLast) score = 0;
     else if (!s || !s.seen) score = 1;
@@ -1774,14 +1803,13 @@ function SR_practicePlan(view, stats, n = 6, now = Date.now()) {
   scored.sort((a, b) => a.score - b.score || a.order - b.order);
   // One question per right answer: their→they're and there→they're would
   // ask the same thing twice, and the second would be a giveaway.
-  const seen = new Set();
   const out = [];
   for (const { p } of scored) {
-    const key = p.to.toLowerCase().replace(/’/g, "'");
+    if (out.length >= n) break;
+    const key = SR_practiceAnswer(p.to);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ from: p.from, to: p.to, kind: p.kind });
-    if (out.length >= n) break;
+    out.push(p.starter ? { from: p.from, to: p.to, kind: p.kind, starter: true } : { from: p.from, to: p.to, kind: p.kind });
   }
   return out;
 }
@@ -2213,6 +2241,10 @@ if (typeof self !== 'undefined') {
   self.SR_practiceChoices = SR_practiceChoices;
   self.SR_practiceTokens = SR_practiceTokens;
   self.SR_practicePlan = SR_practicePlan;
+  self.SR_practiceKey = SR_practiceKey;
+  self.SR_mixupPlan = SR_mixupPlan;
+  self.SR_PRACTICE_STARTERS = SR_PRACTICE_STARTERS;
+  self.SR_PRACTICE_PHRASES = SR_PRACTICE_PHRASES;
   self.SR_mergePracticeStats = SR_mergePracticeStats;
   self.SR_practiceQuestion = SR_practiceQuestion;
   self.SR_validPracticeSentence = SR_validPracticeSentence;

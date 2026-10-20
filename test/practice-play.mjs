@@ -97,7 +97,7 @@ assert.deepEqual(SR_practiceTokens({ prompt: 'ok', targets: 'junk' }).map((t) =>
   }
 }
 // === Adapts to what the user needs ===
-for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestion', 'SR_validPracticeSentence']) {
+for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestion', 'SR_validPracticeSentence', 'SR_practiceKey', 'SR_ruleFor', 'SR_mixupPlan']) {
   assert.equal(typeof globalThis[f], 'function', `${f} is exported`);
 }
 {
@@ -138,8 +138,55 @@ for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestio
     { from: 'their', to: "they're", n: 5, kind: 'grammar' }, { from: 'there', to: "they're", n: 4, kind: 'grammar' },
     { from: 'theyre', to: "they're", n: 3, kind: 'apostrophe' }, { from: 'dont', to: "don't", n: 2, kind: 'apostrophe' },
   ] };
-  const plan = SR_practicePlan(view, {}, 8, Date.now()).map((t) => t.to);
-  assert.deepEqual(plan, ["they're", "don't"], 'each answer once, even across different mistakes');
+  const plan = SR_practicePlan(view, {}, 8, Date.now());
+  assert.deepEqual(plan.filter((t) => !t.starter).map((t) => t.to), ["they're", "don't"], 'each answer once, even across different mistakes');
+  assert.equal(new Set(plan.map((t) => t.to.toLowerCase())).size, plan.length, 'starters never repeat an answer either');
+}
+
+// Starters: classic mix-ups top up a round for a user with few words of their own.
+{
+  const own = (k) => ({ working: [
+    { from: 'recieve', to: 'receive', n: 5, kind: 'spelling' }, { from: 'was', to: 'were', n: 4, kind: 'grammar' },
+    { from: 'their', to: "they're", n: 3, kind: 'grammar' }, { from: 'teh', to: 'the', n: 2, kind: 'spelling' },
+  ].slice(0, k) });
+  const now = Date.now();
+  assert.ok(SR_practicePlan(own(4), {}, 10, now).every((t) => !t.starter), '4 own words: no starters');
+  for (const k of [1, 2, 3]) {
+    const plan = SR_practicePlan(own(k), {}, 10, now);
+    assert.equal(plan.length, 6, `${k} own words: topped up to 6`);
+    assert.deepEqual(plan.slice(0, k).map((t) => !!t.starter), Array(k).fill(false), 'own words first');
+    assert.ok(plan.slice(k).every((t) => t.starter), 'then starters');
+    const answers = plan.map((t) => t.to.toLowerCase());
+    assert.equal(new Set(answers).size, answers.length, 'no starter repeats an own answer');
+  }
+  assert.ok(!SR_practicePlan(own(2), {}, 10, now).some((t) => t.starter && t.to === 'were'), 'were is the user\'s own: no starter asks it');
+  assert.equal(SR_practicePlan(own(2), {}, Infinity, now).length, 6, 'never more than 6, even with no cap');
+  assert.equal(SR_practicePlan(own(2), {}, 3, now).length, 3, 'never more than the round');
+  assert.deepEqual(SR_practicePlan(own(0), {}, 10, now), [], 'no own words: no practice');
+  // Own keys and starter keys never collide; a missed starter comes first among starters.
+  let st = SR_mergePracticeStats({}, [{ from: 'was', to: 'were', right: true }, { from: 'was', to: 'were', starter: true, right: false }], now);
+  assert.ok(st['was→were'].right === 1 && st['starter:was→were'].right === 0, JSON.stringify(st));
+  assert.equal(SR_practiceKey(SR_PRACTICE_STARTERS[0]), `starter:${SR_PRACTICE_STARTERS[0].from}→${SR_PRACTICE_STARTERS[0].to}`);
+  const last = SR_PRACTICE_STARTERS.at(-1);
+  st = SR_mergePracticeStats({}, [{ ...last, right: false }], now);
+  assert.equal(SR_practicePlan(own(1), st, 10, now)[1].to, last.to, 'the starter missed last time comes first among starters');
+  // Mix-ups mode: starters only, each answer once, up to the round.
+  const mix = SR_mixupPlan({}, 10, now);
+  assert.ok(mix.length >= 6 && mix.length <= 10 && mix.every((t) => t.starter), JSON.stringify(mix));
+  assert.equal(new Set(mix.map((t) => t.to.toLowerCase())).size, mix.length);
+  assert.equal(SR_mixupPlan({}, 3, now).length, 3);
+  // Every starter: a context phrase (so its template has one right choice) and a rule.
+  for (const t of SR_PRACTICE_STARTERS) {
+    const phrase = SR_PRACTICE_PHRASES[t.to.toLowerCase()];
+    assert.ok(phrase, `starter ${t.to} has a context phrase`);
+    assert.ok(SR_ruleFor(t), `starter ${t.to} has a rule`);
+    for (const seed of [0, 1, 2]) {
+      const q = SR_practiceQuestion(t, null, seed);
+      const text = q.tokens.map((x) => x.text).join(' ');
+      assert.ok(text.includes(phrase.split('{x}')[1].trim() || phrase.split('{x}')[0].trim()), `${t.to}: the template uses its phrase: ${text}`);
+      assert.equal(q.tokens[q.k].target.to, t.to);
+    }
+  }
 }
 // === A question from a sentence (AI-written or template) ===
 {
