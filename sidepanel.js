@@ -1273,9 +1273,23 @@ async function renderProgress() {
   refs.progHeadLead.textContent = hero.lead;
   refs.progHeadText.textContent = hero.text;
   refs.progLine.textContent = hero.line;
-  const spark = sparkSvg(view.weeks);
+  // The trend line only once there is a trend (two weeks with enough
+  // writing); before that, how close this week is to counting. An <svg> has
+  // no .hidden property, so the attribute is set directly.
+  const trend = ['better', 'worse', 'flat'].includes(hero.state);
+  const spark = trend ? sparkSvg(view.weeks) : '';
   refs.progSpark.innerHTML = spark;
-  refs.progSpark.hidden = !spark;
+  refs.progSpark.toggleAttribute('hidden', !spark);
+  const week = view.weeks[view.weeks.length - 1] || { words: 0 };
+  const need = SR_TREND_MIN_WORDS;
+  refs.progStart.hidden = !!spark;
+  if (!spark) {
+    const w = Math.min(SR_count(week.words), need);
+    refs.progStartFill.style.width = `${Math.round((w / need) * 100)}%`;
+    refs.progStartText.textContent = w < need
+      ? `${w} of ${need} words this week. Your trend line starts at ${need}.`
+      : 'This week counts. Your trend line appears after one more week like it.';
+  }
   const rated = view.weeks.filter((w) => w.per100 != null);
   refs.progSpark.setAttribute('aria-label', rated.length ? `Mistakes per 100 words by week: ${rated.map((w) => w.per100).join(', ')}` : '');
   const rows = SR_wordRows(view, srPracticeStats, Date.now());
@@ -1325,14 +1339,21 @@ async function renderProgress() {
   // The tips action: none yet, writing, up to date, stale, or no AI to ask.
   const target = rows.length ? await tipsTarget() : null;
   const state = progTipsBusy ? 'busy' : tips.state === 'fresh' ? 'fresh' : !target ? (rows.length ? 'noai' : 'off') : tips.state;
-  refs.btnTips.hidden = !['none', 'stale', 'busy'].includes(state);
+  // Up to date still offers one action, so the user is never stuck: tips for
+  // the words the AI left without one, or else fresh wording for all of them.
+  const missing = state === 'fresh' ? tips.missing : [];
+  const canAsk = !!target;
+  refs.btnTips.hidden = !(['none', 'stale', 'busy'].includes(state) || (state === 'fresh' && canAsk));
   refs.btnTips.disabled = state === 'busy';
-  refs.btnTips.textContent = state === 'busy' ? 'Writing tips…' : state === 'stale' ? 'Refresh AI tips' : 'Get AI tips';
-  refs.progTipsState.hidden = state !== 'fresh';
-  refs.progTipsState.textContent = state === 'fresh' ? `AI tips · ${shortDate(tips.date)} · up to date` : '';
+  refs.btnTips.textContent = state === 'busy' ? 'Writing tips…' : state === 'stale' ? 'Refresh AI tips'
+    : state === 'fresh' ? (missing.length ? `Get tips for ${missing.length} more` : 'Write new tips') : 'Get AI tips';
+  refs.progTipsState.hidden = true;
+  refs.progTipsState.textContent = '';
   const note = state === 'none' ? `One request to ${target.label}. Only these words are sent. New tips when your words change.`
     : state === 'stale' ? `Written ${shortDate(tips.date)}. Your words changed since then (new: ${tips.added.join(', ')}).`
-      : state === 'noai' ? 'Connect an AI in Settings to get tips.' : '';
+      : state === 'fresh' && missing.length ? `AI tips from ${shortDate(tips.date)}. No tip yet for ${missing.join(', ')}.`
+        : state === 'fresh' ? `AI tips from ${shortDate(tips.date)}, one per word marked TIP. ${canAsk ? 'Write new tips asks again for fresh wording: one request.' : ''}`.trim()
+          : state === 'noai' ? 'Connect an AI in Settings to get tips.' : '';
   if (!progTipsBusy || note) {
     refs.progTipsNote.hidden = !note;
     refs.progTipsNote.textContent = note;
@@ -1348,8 +1369,12 @@ async function renderProgress() {
 async function getTips() {
   const view = progressView;
   if (!view || progTipsBusy) return;
-  const { srPracticeStats } = await chrome.storage.local.get(['srPracticeStats']);
-  const rows = SR_wordRows(view, srPracticeStats, Date.now()).slice(0, SR_TIPS_MAX);
+  const { srPracticeStats, srTipsCache } = await chrome.storage.local.get(['srPracticeStats', 'srTipsCache']);
+  const all = SR_wordRows(view, srPracticeStats, Date.now()).slice(0, SR_TIPS_MAX);
+  // Up to date but some words have no tip: ask for just those, keep the rest.
+  const now = SR_tipsState(srTipsCache, all.map((r) => r.to));
+  const only = now.state === 'fresh' && now.missing.length ? new Set(now.missing) : null;
+  const rows = only ? all.filter((r) => only.has(r.to)) : all;
   const target = rows.length ? await tipsTarget() : null;
   if (!target) { renderProgress(); return; }
   const prompt = SR_buildTipsPrompt(rows, view.kinds);
@@ -1365,7 +1390,8 @@ async function getTips() {
     }
     const tips = SR_checkTips(SR_cleanOutput(text, { fence: prompt.fence }), rows);
     if (!Object.keys(tips).length) throw new Error('The AI\'s tips didn\'t match your words, so Proofr didn\'t show them. Try again.');
-    await chrome.storage.local.set({ srTipsCache: { words: rows.map((r) => r.to), date: Date.now(), tips } });
+    const merged = only ? { ...srTipsCache.tips, ...tips } : tips;
+    await chrome.storage.local.set({ srTipsCache: { words: all.map((r) => r.to), date: Date.now(), tips: merged } });
     progTipsBusy = false;
     await renderProgress();
   } catch (error) {
@@ -1442,15 +1468,22 @@ async function beginPractice(mode) {
   chrome.storage.local.set({ srPracticeMode: mode }).catch(() => {});
   const seenList = SR_addSeen(srPracticeSeen, []);
   Object.assign(practice, {
-    mode, rights: new Map(), prevBest: SR_count(srPracticeBest), sound: srPracticeSound === true, plan, queue: plan.map((target) => ({ target })), q: 0, cur: null, seed: Math.floor(Math.random() * 1e6), total: plan.length,
+    mode, run: (practice.run || 0) + 1, rights: new Map(), prevBest: SR_count(srPracticeBest), sound: srPracticeSound === true, plan, queue: plan.map((target) => ({ target })), q: 0, cur: null, seed: Math.floor(Math.random() * 1e6), total: plan.length,
     firstTry: 0, combo: 0, best: 0, first: new Map(), recent: [], slots: [], requeued: 0, answered: false, sheetOpen: false,
     stats: SR_mergePracticeStats(srPracticeStats, []), pool: SR_practicePoolRead(srPracticePool), seen: new Set(seenList), seenList, session: new Set(),
   });
+  // Without an AI to write for them, words with no built-in sentence sit this round out.
+  if (!plan.every(canAsk) && !(await practiceWriter())) {
+    practice.plan = plan.filter(canAsk);
+    practice.queue = practice.queue.filter((x) => canAsk(x.target));
+    practice.total = practice.plan.length;
+    if (!practice.plan.length) { closePractice(); return; }
+  }
   refs.prStage.hidden = false;
   refs.prBar.hidden = mode === 'keep';
   refs.prTally.hidden = mode !== 'keep';
   setBar(0);
-  showQuestion(); // never waits on the AI: a waiting question or a template
+  askNext(); // a waiting question or a template; waits on the AI only for a word with neither
   refillPracticePool();
 }
 
@@ -1467,8 +1500,12 @@ function buildQuestion(target) {
   const ai = SR_poolTake(practice.pool, target, practice.seen, later);
   let q = ai && SR_practiceQuestion(target, ai.filled, practice.seed + practice.q);
   let print = ai && SR_questionPrint(ai);
-  if (!q || q.source !== 'ai') ({ q, print } = SR_freshTemplate(target, practice.seed + practice.q, practice.session, later));
-  else {
+  if (!q || q.source !== 'ai') {
+    // No built-in sentence either: this word waits for the AI (askNext).
+    const t = SR_freshTemplate(target, practice.seed + practice.q, practice.session, later);
+    if (!t) return null;
+    ({ q, print } = t);
+  } else {
     practice.seen.add(print);
     practice.seenList = SR_addSeen(practice.seenList, [print]);
   }
@@ -1485,23 +1522,37 @@ function buildQuestion(target) {
 // Quietly does nothing with learning off, without an AI, past the budget, or
 // on error: templates still work. practice.lastDrops keeps why sentences were
 // dropped (counts only), for measuring on a real model.
-let refilling = false;
-async function refillPracticePool() {
+// The AI Practice can write with right now: { onDevice, provider, budget }, or
+// null with learning off, no AI, or today's provider budget spent.
+async function practiceWriter() {
+  const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
+  if (srInsightsOn === false) return null;
+  const onDevice = (await SR_deviceAvailability()) === 'available';
+  if (onDevice) return { onDevice, provider: null };
+  const provider = await CloudProvider.getConfig();
+  if (!providerReady(provider)) return null;
+  const { srPracticeGenDay } = await chrome.storage.local.get(['srPracticeGenDay']);
+  const budget = SR_practiceBudget(srPracticeGenDay, SR_dayKey(Date.now()), 2);
+  return budget.ok ? { onDevice, provider, budget } : null;
+}
+
+// force: write even with enough waiting, for a word that has none. Returns the
+// refill under way, so a caller can wait for it.
+let refilling = null;
+function refillPracticePool(force) {
   const ready = () => practice.plan.reduce((n, t) => n + (practice.pool.words[t.to]?.length || 0), 0);
-  if (refilling || ready() >= PRACTICE_READY) return;
-  refilling = true;
+  if (refilling) return refilling;
+  if (!force && ready() >= PRACTICE_READY) return Promise.resolve();
+  refilling = writePracticeQuestions().finally(() => { refilling = null; });
+  return refilling;
+}
+
+async function writePracticeQuestions() {
   try {
-    const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
-    if (srInsightsOn === false) return;
-    const onDevice = (await SR_deviceAvailability()) === 'available';
-    const provider = onDevice ? null : await CloudProvider.getConfig();
-    if (!onDevice && !providerReady(provider)) return;
-    if (!onDevice) {
-      const { srPracticeGenDay } = await chrome.storage.local.get(['srPracticeGenDay']);
-      const budget = SR_practiceBudget(srPracticeGenDay, SR_dayKey(Date.now()), 2);
-      if (!budget.ok) return;
-      await chrome.storage.local.set({ srPracticeGenDay: budget.next });
-    }
+    const writer = await practiceWriter();
+    if (!writer) return;
+    const { onDevice, provider } = writer;
+    if (!onDevice) await chrome.storage.local.set({ srPracticeGenDay: writer.budget.next });
     const words = [...practice.plan].sort((a, b) => (practice.pool.words[a.to]?.length || 0) - (practice.pool.words[b.to]?.length || 0));
     const items = SR_practiceItems(words, onDevice ? 4 : 8, Math.floor(Math.random() * SR_PRACTICE_TOPICS.length));
     const proofread = async (text) => (await SR_rewriteAuto(text, 'grammar', { provider, engine: onDevice ? 'device' : 'cloud' })).text;
@@ -1511,9 +1562,7 @@ async function refillPracticePool() {
     practice.lastDrops = drops;
     SR_practicePoolAdd(practice.pool, questions, practice.seen);
     await savePractice();
-  } catch (_) { /* templates still work */ } finally {
-    refilling = false;
-  }
+  } catch (_) { /* templates still work */ }
 }
 
 // On-device sentence writer: a base session holding the rules and examples
@@ -1548,8 +1597,43 @@ function replay(el, cls) {
   el.classList.add(cls);
 }
 
+// A word with a built-in sentence or a waiting AI question can be asked now.
+function canAsk(target) {
+  return !!SR_practicePhrase(target) || !!practice.pool.words[target.to]?.length;
+}
+
+// Shows the next question. A word with no question yet (no built-in sentence,
+// none written by the AI) trades places with the next word that has one; with
+// none left, Practice waits for the AI to write, and drops what it still can't ask.
+async function askNext() {
+  const run = practice.run;
+  const buildable = () => (practice.cur = buildQuestion(practice.queue[practice.q].target)) !== null;
+  const swap = () => {
+    if (buildable()) return true;
+    const j = practice.queue.findIndex((x, i) => i > practice.q && canAsk(x.target));
+    if (j < 0) return false;
+    practice.queue.splice(practice.q, 0, ...practice.queue.splice(j, 1));
+    return buildable();
+  };
+  if (swap()) { showQuestion(); return; }
+  refs.prAsk.textContent = 'Writing a question…';
+  refs.prSentence.innerHTML = '';
+  refs.prChoices.hidden = true;
+  refs.prType.hidden = true;
+  refs.prHint.hidden = true;
+  await refillPracticePool(true);
+  if (run !== practice.run || refs.practicePanel.classList.contains('hidden')) return;
+  if (swap()) { showQuestion(); return; }
+  // Nothing more can be asked: drop the words left without a question.
+  const stuck = new Set(practice.queue.slice(practice.q).map((x) => x.target));
+  practice.queue.splice(practice.q);
+  practice.plan = practice.plan.filter((t) => !stuck.has(t));
+  if (practice.first.size) finishPractice(false);
+  else closePractice();
+}
+
 function showQuestion() {
-  const cur = practice.cur = buildQuestion(practice.queue[practice.q].target);
+  const cur = practice.cur;
   const { tokens, k, target, level } = cur;
   practice.answered = false;
   // Level 3 shows the user's own mistake in place, every word a plain button to
@@ -1714,7 +1798,7 @@ function onContinue() {
   if (practice.q + 1 >= practice.queue.length) { finishPractice(practice.mode === 'keep'); return; }
   if (practice.mode === 'keep' && practice.recent.length % PRACTICE_STRETCH === 0) { showCheckpoint(); return; }
   practice.q++;
-  showQuestion();
+  askNext();
 }
 
 function showCheckpoint() {
@@ -1731,7 +1815,7 @@ function closeCheckpoint(more) {
   if (!more) { finishPractice(false); return; }
   refs.prStage.hidden = false;
   practice.q++;
-  showQuestion();
+  askNext();
 }
 
 // Optional (srPracticeSound, off by default): a soft two-note chime for a
@@ -1887,7 +1971,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
-    'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
+    'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progStart', 'progStartFill', 'progStartText', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
     'progHabitsCard', 'progHabitTitle', 'progHabitEg', 'progHabitAlso', 'progWordsCard', 'progTipsState', 'progTipsNote', 'progWords', 'btnAllWords', 'progMasteredLine',
     'btnTips', 'btnClearInsights', 'insightsToggle', 'coachToggle', 'soundToggle',
     'prChoose', 'prWhy', 'prBestLine', 'prTiles', 'prQuick', 'prKeep', 'prMix', 'prTally', 'prCheckpoint', 'prCheckText', 'btnPrMore', 'btnPrStop', 'prSheetLevel',

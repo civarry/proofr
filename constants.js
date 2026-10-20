@@ -1566,6 +1566,33 @@ const SR_PRACTICE_PHRASES = {
   "you're": '{x} welcome to join', your: 'thanks for {x} help', than: 'this is easier {x} it looks',
   then: 'we eat first and {x} we talk', an: 'it takes {x} hour', a: 'we need {x} new plan',
   were: 'we {x} hoping for more', was: 'the meeting {x} short', i: 'let me know if {x} should call',
+  // Each phrase fits its word and none of the other choices for it (SR_CONFUSION_SETS,
+  // the user's own wrong form): "she {x} already left" is right only with has.
+  has: 'she {x} already left', have: 'they {x} already left', is: 'the report {x} ready', are: 'the files {x} ready',
+  do: 'they {x} not need a ride', does: 'she {x} not need a ride', to: 'we need {x} leave soon', too: 'this box is {x} heavy',
+  "who's": 'let me know {x} coming', whose: 'not sure {x} coat this is', lose: 'try not to {x} the keys',
+  loose: 'the handle feels {x}', affect: 'the noise can {x} sleep', effect: 'the change had a big {x}',
+  "we're": '{x} almost done', "we'll": '{x} call you at noon', "we've": '{x} sent the invite',
+  "you'll": '{x} get a copy by noon', "you've": '{x} done enough for today', "they'll": '{x} arrive at noon',
+  "they've": '{x} already signed', "he's": '{x} on his way', "she's": '{x} on her way', "there's": '{x} a call at noon',
+  "what's": 'tell me {x} next', "let's": '{x} meet at noon', "i'll": '{x} send it tonight', "i'd": '{x} like a copy',
+  "it'll": '{x} be quick', "aren't": 'the files {x} ready yet', "wasn't": 'the call {x} long', "weren't": 'we {x} told',
+  "couldn't": 'I {x} find the file', "wouldn't": 'the page {x} load', "shouldn't": 'this {x} take long',
+  "haven't": 'we {x} started yet',
+  // Words people often misspell: any natural sentence works, the wrong choices aren't words.
+  the: 'please send {x} file', receive: 'we should {x} the files today', separate: 'keep the two lists {x}',
+  definitely: 'I will {x} join', tomorrow: 'the call is {x} morning', until: 'wait {x} noon',
+  believe: 'I {x} the plan works', necessary: 'only bring what is {x}', which: 'tell me {x} file you need',
+  friend: 'my {x} sent the link', weird: 'the error looks {x}', really: 'that was {x} helpful',
+  because: 'we left early {x} of the rain', achieve: 'we can {x} the goal', recommend: 'I can {x} a good book',
+  occurred: 'the error {x} twice', beginning: 'we start at the {x} of the week', calendar: 'check the {x} first',
+  schedule: 'the {x} changed again', address: 'send me the {x} for the venue', business: 'the {x} opens at nine',
+  different: 'this file looks {x}', important: 'this part is {x}', probably: 'it will {x} rain later',
+  finally: 'the package {x} arrived', truly: 'I am {x} sorry', surprise: 'the party is a {x}',
+  restaurant: 'the {x} opens at six', government: 'the {x} changed the rule', environment: 'protect the {x}',
+  embarrassed: 'I felt {x} after the call', accommodate: 'the room can {x} ten people', though: 'it rained, {x} we still went',
+  through: 'we walked {x} the park', thought: 'I {x} the call was today', about: 'the call is {x} the budget',
+  with: 'come {x} us', write: 'I will {x} the summary', writing: 'I am {x} the summary',
 };
 // Classic mix-ups that top up a round when the user has few words of their own
 // (SR_practicePlan). Each answer needs a context phrase above, so its template
@@ -1574,8 +1601,11 @@ const SR_PRACTICE_STARTERS = [['its', "it's"], ["it's", 'its'], ['their', "they'
   .map(([from, to]) => ({ from, to, kind: 'grammar', starter: true }));
 const SR_PRACTICE_STARTER_BELOW = 4; // fewer own words than this get starters
 const SR_PRACTICE_STARTER_FILL = 6; // ...up to this many words in all
+// Only for the old typed practice (SR_buildPractice). Choice questions never use
+// these: "I wrote ___ in the email" makes no choice right, so a word without a
+// phrase waits for an AI sentence (SR_practiceQuestion returns null).
 const SR_PRACTICE_GENERIC = ['I wrote {x} in the email', 'please check {x} again', 'the note says {x}'];
-const SR_PRACTICE_OPENERS = ['Quick update: ', 'Just so you know, ', 'For tomorrow: '];
+const SR_PRACTICE_OPENERS = ['Quick update: ', 'Just so you know, ', 'Heads up: '];
 
 // Pairs that can be practiced: a wrong form to type over, and no sentence-start
 // capital (that needs the user's own sentence).
@@ -2053,11 +2083,13 @@ function SR_checkedQuestions(questions, reply) {
 
 // A local template question whose sentence isn't in `avoid` (fingerprints)
 // and gives nothing away for a `later` target, trying each opener in turn
-// (the first, if none is clean): { q, print }. Used when no AI question waits.
+// (the first, if none is clean): { q, print }, or null when the word has no
+// template. Used when no AI question waits.
 function SR_freshTemplate(target, seed, avoid, later) {
   let first;
   for (let i = 0; i < SR_PRACTICE_OPENERS.length; i++) {
     const q = SR_practiceQuestion(target, null, seed + i);
+    if (!q) return null;
     const text = q.tokens.map((t, j) => (j === q.k ? '___' : t.text)).join(' ');
     const x = { q, print: SR_practiceFingerprint(text, target.to) };
     first = first || x;
@@ -2182,8 +2214,16 @@ function SR_practiceBudget(state, today, calls) {
   return s.count + calls > SR_PRACTICE_DAILY_CALLS ? { ok: false, next: s } : { ok: true, next: { date: today, count: s.count + calls } };
 }
 
+// The built-in context for a word, or '' when it has none (then only an AI
+// sentence can ask it).
+function SR_practicePhrase(target) {
+  const key = String((target && target.to) || '').toLowerCase().replace(/’/g, "'");
+  if (SR_DAYS_MONTHS.has(key)) return /day$/.test(key) ? 'see you on {x}' : 'it starts in {x}';
+  return Object.hasOwn(SR_PRACTICE_PHRASES, key) ? SR_PRACTICE_PHRASES[key] : '';
+}
+
 // One question: the sentence (an AI one if given and valid, else the local
-// template) split into chunks, with k the chunk to blank. source: 'ai' | 'template'.
+// template; null with neither) split into chunks, with k the chunk to blank. source: 'ai' | 'template'.
 function SR_practiceQuestion(target, sentence, seed = 0) {
   const t = { from: target.from, to: target.to, kind: target.kind };
   const asTarget = (prompt) => {
@@ -2198,12 +2238,14 @@ function SR_practiceQuestion(target, sentence, seed = 0) {
     const q = asTarget(sentence);
     if (q) return { ...q, source: 'ai' };
   }
-  const key = t.to.toLowerCase().replace(/’/g, "'");
-  const phrase = SR_DAYS_MONTHS.has(key) ? (/day$/.test(key) ? 'see you on {x}' : 'it starts in {x}')
-    : SR_PRACTICE_PHRASES[key] || SR_PRACTICE_GENERIC[Math.abs(seed) % SR_PRACTICE_GENERIC.length];
-  const opener = SR_PRACTICE_OPENERS[Math.abs(seed) % SR_PRACTICE_OPENERS.length];
-  const prompt = `${opener}${phrase.replace('{x}', t.to)}.`;
-  return { ...(asTarget(prompt) || { tokens: [{ text: t.to, punct: false, target: { ...t, rule: null } }], k: 0 }), source: 'template' };
+  const phrase = SR_practicePhrase(t);
+  if (!phrase) return null;
+  // An opener holding the answer ("For tomorrow: ... ___ morning") is skipped.
+  const n = SR_PRACTICE_OPENERS.length;
+  const openers = Array.from({ length: n }, (_, i) => SR_PRACTICE_OPENERS[(Math.abs(seed) + i) % n]);
+  const opener = openers.find((o) => !SR_wordRegex(t).test(o)) ?? '';
+  const q = asTarget(`${opener}${phrase.replace('{x}', t.to)}.`);
+  return q && { ...q, source: 'template' };
 }
 
 // The only thing "Get AI tips" sends: up to SR_TIPS_MAX of the user's pairs and
@@ -2259,7 +2301,9 @@ function SR_tipsState(cache, words) {
   const ok = cache && Array.isArray(cache.words) && cache.tips && typeof cache.tips === 'object';
   if (!ok) return { state: 'none', added: [] };
   const added = (words || []).filter((w) => !cache.words.includes(w));
-  return { state: added.length ? 'stale' : 'fresh', added, date: cache.date };
+  // Words shown that the AI wrote no usable tip for: the user can ask for just those.
+  const missing = (words || []).filter((w) => cache.words.includes(w) && !cache.tips[w]);
+  return { state: added.length ? 'stale' : 'fresh', added, missing, date: cache.date };
 }
 
 // === Progress hero ===
@@ -2327,8 +2371,11 @@ if (typeof self !== 'undefined') {
   self.SR_mixupPlan = SR_mixupPlan;
   self.SR_PRACTICE_STARTERS = SR_PRACTICE_STARTERS;
   self.SR_PRACTICE_PHRASES = SR_PRACTICE_PHRASES;
+  self.SR_CONFUSION_SETS = SR_CONFUSION_SETS;
+  self.SR_GRAMMAR_SETS = SR_GRAMMAR_SETS;
   self.SR_mergePracticeStats = SR_mergePracticeStats;
   self.SR_practiceQuestion = SR_practiceQuestion;
+  self.SR_practicePhrase = SR_practicePhrase;
   self.SR_validPracticeSentence = SR_validPracticeSentence;
   self.SR_practiceLevel = SR_practiceLevel;
   self.SR_practiceLevelStep = SR_practiceLevelStep;

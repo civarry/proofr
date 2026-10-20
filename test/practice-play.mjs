@@ -221,13 +221,39 @@ for (const f of ['SR_practicePlan', 'SR_mergePracticeStats', 'SR_practiceQuestio
 // Every built-in sentence holds its answer exactly once (seen in use: "___ hope I
 // can make it", where the second "I" gave the answer away).
 {
-  const words = ["don't", "can't", "won't", "isn't", "doesn't", "didn't", "hasn't", "it's", 'its', "i'm", "i've", "that's", "they're", 'their', 'there', "you're", 'your', 'than', 'then', 'an', 'a', 'were', 'was', 'I', 'Friday', 'March', 'receive'];
+  const words = [...Object.keys(SR_PRACTICE_PHRASES).filter((w) => w !== 'i'), 'I', 'Friday', 'March'];
   for (const to of words) for (let seed = 0; seed < 6; seed++) {
     const kind = /^(I|Friday|March)$/.test(to) ? 'capitalization' : 'spelling';
     const q = SR_practiceQuestion({ from: to === 'I' ? 'i' : `${to}x`, to, kind }, null, seed);
     const shown = q.tokens.filter((_, j) => j !== q.k).map((t) => t.text);
     const same = (w) => (kind === 'capitalization' ? w === to : w.toLowerCase() === to.toLowerCase());
     assert.ok(!shown.some(same), `the template for "${to}" doesn't show the answer elsewhere: ${q.tokens.map((t) => t.text).join(' ')}`);
+  }
+}
+// Every choice question has one clearly right answer (seen in use: "Quick update: I
+// wrote ___ in the email." with have / has, where neither is right). A word that
+// can be confused with another real word has its own sentence, and a word with no
+// sentence gets no template: it waits for an AI one.
+{
+  const sets = [...SR_CONFUSION_SETS, ...SR_GRAMMAR_SETS];
+  for (const w of new Set(sets.flat())) assert.ok(SR_practicePhrase({ to: w }), `"${w}" has a built-in sentence`);
+  for (const [from, to] of [['has', 'have'], ['have', 'has'], ['are', 'is'], ['does', 'do'], ['too', 'to'], ['whose', "who's"], ['effect', 'affect']]) {
+    for (let seed = 0; seed < 6; seed++) {
+      const q = SR_practiceQuestion({ from, to, kind: 'grammar' }, null, seed);
+      const text = q.tokens.map((t, j) => (j === q.k ? '___' : t.text)).join(' ');
+      assert.ok(!/\b(wrote|says|check)\b/.test(text), `${to}: a real sentence, not a mention: ${text}`);
+      assert.equal(q.tokens[q.k].target.to, to);
+    }
+  }
+  assert.equal(SR_practiceQuestion({ from: 'form', to: 'from', kind: 'spelling' }, null, 0), null, 'no built-in sentence: no template question');
+  assert.equal(SR_freshTemplate({ from: 'form', to: 'from', kind: 'spelling' }, 0, new Set()), null);
+  // With an AI sentence it is asked as usual.
+  assert.equal(SR_practiceQuestion({ from: 'form', to: 'from', kind: 'spelling' }, 'The parcel came from Spain.', 0).source, 'ai');
+  // The opener never holds the answer, and no template ends in a question word with a period.
+  for (const to of Object.keys(SR_PRACTICE_PHRASES)) for (let seed = 0; seed < 3; seed++) {
+    const q = SR_practiceQuestion({ from: `${to}x`, to, kind: 'spelling' }, null, seed);
+    assert.ok(q, `${to}: a template`);
+    assert.ok(!/^(did|can|what|how|where|who|when|is|are|do|does)\b/i.test(SR_practicePhrase({ to })), `${to}: a statement, not a question`);
   }
 }
 console.log('practice-play: all checks passed');

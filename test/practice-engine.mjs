@@ -246,7 +246,10 @@ const json = (...items) => JSON.stringify({ questions: items });
     const text = x.q.tokens.map((t) => t.text).join(' ');
     assert.ok(!/tomorrow/i.test(text), `template gives nothing away: ${text}`);
   }
-  assert.ok([0, 1, 2].some((seed) => /tomorrow/i.test(SR_freshTemplate(RECV, seed, new Set()).q.tokens.map((t) => t.text).join(' '))), 'control: an opener does hold "tomorrow"');
+  // An opener word still to come: "Quick update: ..." is skipped while "update" is.
+  const UPD = { from: 'updaet', to: 'update', kind: 'spelling' };
+  for (let seed = 0; seed < 6; seed++) assert.ok(!/update/i.test(SR_freshTemplate(RECV, seed, new Set(), [UPD]).q.tokens.map((t) => t.text).join(' ')));
+  assert.ok([0, 1, 2].some((seed) => /update/i.test(SR_freshTemplate(RECV, seed, new Set()).q.tokens.map((t) => t.text).join(' '))), 'control: an opener does hold "update"');
 }
 
 // === Pool v2: shape, migration, caps ===
