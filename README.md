@@ -109,6 +109,13 @@ Each script exits non-zero if any check fails. On macOS, Chrome stops painting w
 
 `test/run_injection.mjs` is a live prompt-injection check against Groq and needs a real key: `GROQ_API_KEY=... node test/run_injection.mjs`.
 
+## What's new in 1.3.1
+
+- Practice is a short game: pick the fix, tap the mistake, or type the word, with each word's level rising as you get it right. Three modes: Quick (10 questions), Keep going (with a checkpoint every 10), and Mix-ups (classic confusions like its/it's).
+- Questions are written by your own AI around your words, checked by your Proofread, and never repeated. Every question has one clearly right answer.
+- The Progress tab is three cards: how your mistake rate changed, your main habit, and your words, each with a meter toward mastery and its AI tip inside the row.
+- AI tips can be asked for again: only for words without one, or fresh wording for all.
+
 ## What's new in 1.3.0
 
 - Side panel replaces the popup. On first install a setup tab explains whether on-device AI works on your computer and, if not, how to connect a free Groq key.
