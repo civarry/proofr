@@ -1888,27 +1888,25 @@ function closePractice() {
 }
 
 
-// === One-time rating ask ===
-// Shown once, under a successful result, after 5 successful rewrites (the
-// same rewriteStats counter every surface increments). Same ask for everyone,
-// no reward, never blocks anything; either choice retires it for good.
-const RATE_AFTER = 10; // after real use, not after a first try
-
+// === Rating ask ===
+// Under a successful result once SR_rateDue says so (the same rewriteStats
+// counter every surface increments). Same ask for everyone, no reward, never
+// blocks anything. "Rate it" retires it; "Not now" asks once more later.
 async function maybeShowRatePrompt() {
   const last = turns[turns.length - 1];
   if (!last || last.status !== 'done') return;
   const { rewriteStats, srRateAsked } = await chrome.storage.local.get(['rewriteStats', 'srRateAsked']);
-  if (srRateAsked || !rewriteStats || rewriteStats.totalRewrites < RATE_AFTER) return;
+  if (!SR_rateDue(rewriteStats, srRateAsked)) return;
   if (refs.thread.querySelector('.rate-line')) return;
   const line = document.createElement('div');
   line.className = 'rate-line';
   line.innerHTML = `<span>Finding Proofr useful? A rating helps other people find it.</span>
-    <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" data-rate="go">Rate it</a>
-    <button type="button" data-rate="later">Not now</button>`;
+    <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" data-rate="rate">Rate it</a>
+    <button type="button" data-rate="later">${SR_rateDecline(srRateAsked)}</button>`;
   line.addEventListener('click', async (e) => {
     const choice = e.target.closest('[data-rate]');
     if (!choice) return;
-    await chrome.storage.local.set({ srRateAsked: true });
+    await chrome.storage.local.set({ srRateAsked: SR_rateAfter(choice.dataset.rate, rewriteStats, srRateAsked) });
     line.remove();
   });
   refs.thread.appendChild(line);

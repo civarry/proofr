@@ -64,6 +64,9 @@ node test/injection.mjs
 # Cost on your own key: instruction size, answer budget per request, tips grounded in your words (no browser needed)
 node test/efficiency.mjs
 
+# Rating ask: shown after 10 successful results, once more after "Not now", never after "Rate it" (no browser needed)
+node test/rating.mjs
+
 # Practice game: tappable words and answer choices built from your own mistakes (no browser needed)
 node test/practice-play.mjs
 
@@ -115,6 +118,7 @@ Each script exits non-zero if any check fails. On macOS, Chrome stops painting w
 - Questions are written by your own AI around your words, checked by your Proofread, and never repeated. Every question has one clearly right answer.
 - The Progress tab is three cards: how your mistake rate changed, your main habit, and your words, each with a meter toward mastery and its AI tip inside the row.
 - AI tips can be asked for again: only for words without one, or fresh wording for all.
+- The rating ask comes after 10 successful results, in the side panel and on pages alike (pages used to ask after 5). "Rate it" ends it; "Not now" asks once more 30 rewrites later, as "No thanks", and that is the last time. Chrome doesn't tell extensions who rated, so clicking "Rate it" is what counts.
 
 ## What's new in 1.3.0
 
