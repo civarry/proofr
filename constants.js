@@ -270,12 +270,32 @@ function SR_getTemperature(tone, boost = 0) {
   return Math.min(1, (temperatures[tone] || 0.5) + boost);
 }
 
-// Listing reviews page, used by the one-time rate prompt (content.js, sidepanel.js).
 // The modes shown at the top of the right-click menu; the rest go under "More".
 // Shared so the store screenshot's menu replica can't drift from background.js.
 const SR_MENU_TOP = ['grammar', 'professional', 'friendly', 'short', 'simple', 'translate'];
 
+// Listing reviews page, used by the rating ask (content.js, sidepanel.js).
 const SR_REVIEWS_URL = 'https://chromewebstore.google.com/detail/dfhooimjbdefdbabhppgloclhkjolhfg/reviews';
+
+// The rating ask, the same on every surface. Chrome can't tell an extension
+// whether someone rated it, so "Rate it" counts as rated. srRateAsked is true
+// (done for good) or { again: n } after one "Not now": asked once more at n
+// successful rewrites, and that second ask ("No thanks") is the last.
+const SR_RATE_AFTER = 10; // after real use, not after a first try
+const SR_RATE_AGAIN = 30; // more rewrites before the one repeat
+function SR_rateDue(stats, asked) {
+  const total = SR_count(stats && stats.totalRewrites);
+  if (asked === true) return false;
+  if (asked && typeof asked === 'object') return Number.isFinite(asked.again) && total >= asked.again;
+  return total >= SR_RATE_AFTER;
+}
+// The button that declines: "Not now" the first time, "No thanks" when it is final.
+const SR_rateDecline = (asked) => (asked && typeof asked === 'object' ? 'No thanks' : 'Not now');
+// What to store after a choice: 'rate' | 'later'.
+function SR_rateAfter(choice, stats, asked) {
+  if (choice === 'rate' || (asked && typeof asked === 'object')) return true;
+  return { again: SR_count(stats && stats.totalRewrites) + SR_RATE_AGAIN };
+}
 
 // === Cloud providers ===
 // Every preset speaks the same OpenAI-compatible /chat/completions shape; only
@@ -2437,6 +2457,9 @@ if (typeof self !== 'undefined') {
   self.SR_needsHostAccess = SR_needsHostAccess;
   self.SR_pickAvailableModel = SR_pickAvailableModel;
   self.SR_REVIEWS_URL = SR_REVIEWS_URL;
+  self.SR_rateDue = SR_rateDue;
+  self.SR_rateDecline = SR_rateDecline;
+  self.SR_rateAfter = SR_rateAfter;
   self.SR_MENU_TOP = SR_MENU_TOP;
   self.SR_chatCompletionsURL = SR_chatCompletionsURL;
   self.SR_modelsURL = SR_modelsURL;

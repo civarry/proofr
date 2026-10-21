@@ -424,21 +424,21 @@
       this.maybeShowRatePrompt();
     }
 
-    // One-time, neutral ask after a few successful results. Same for everyone,
-    // no reward, never on errors (CWS spam policy: no incentives, no gating).
+    // Neutral rating ask after real use (SR_rateDue, the same as the side panel).
+    // Same for everyone, no reward, never on errors (CWS spam policy: no incentives, no gating).
     async maybeShowRatePrompt() {
       try {
         const { rewriteStats, srRateAsked } = await chrome.storage.local.get(['rewriteStats', 'srRateAsked']);
-        if (srRateAsked || !rewriteStats || rewriteStats.totalRewrites < 5) return;
+        if (!SR_rateDue(rewriteStats, srRateAsked)) return;
         const footer = document.getElementById('sr-modal-footer');
         if (!footer || footer.querySelector('.sr-rate')) return;
         const line = document.createElement('div');
         line.className = 'sr-rate';
-        line.innerHTML = `Finding Proofr useful? A rating helps other people find it. <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" id="sr-rate-link">Rate it</a> <button type="button" class="sr-rate-dismiss" id="sr-rate-dismiss">Not now</button>`;
+        line.innerHTML = `Finding Proofr useful? A rating helps other people find it. <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" id="sr-rate-link">Rate it</a> <button type="button" class="sr-rate-dismiss" id="sr-rate-dismiss">${SR_rateDecline(srRateAsked)}</button>`;
         footer.appendChild(line);
-        const done = () => { chrome.storage.local.set({ srRateAsked: true }); line.remove(); };
-        line.querySelector('#sr-rate-link').addEventListener('click', done);
-        line.querySelector('#sr-rate-dismiss').addEventListener('click', done);
+        const done = (choice) => { chrome.storage.local.set({ srRateAsked: SR_rateAfter(choice, rewriteStats, srRateAsked) }); line.remove(); };
+        line.querySelector('#sr-rate-link').addEventListener('click', () => done('rate'));
+        line.querySelector('#sr-rate-dismiss').addEventListener('click', () => done('later'));
       } catch (_) {
         // Storage unavailable (extension reloaded under the page): skip the ask.
       }

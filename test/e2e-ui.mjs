@@ -197,10 +197,20 @@ const card = await panel.evaluate(() => [...document.querySelectorAll('.turn')].
 check('side panel rewrite succeeds end-to-end', /^R\(we was going/.test(card), card.slice(0, 80));
 check('rating line shown after 10th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
 await shot(panel, '2-panel-result.png');
+check('rating line: the first decline says "Not now"', await panel.evaluate(() => document.querySelector('.rate-line [data-rate="later"]')?.textContent) === 'Not now');
 await clk(panel, '.rate-line [data-rate="later"]'); await sleep(300);
-check('Not now records srRateAsked', (await panel.evaluate(() => chrome.storage.local.get(['srRateAsked']))).srRateAsked === true);
+const later = (await panel.evaluate(() => chrome.storage.local.get(['srRateAsked']))).srRateAsked;
+check('Not now: asked once more, 30 rewrites later', later && later.again === 40, JSON.stringify(later));
 await panel.reload(); await sleep(800);
 check('rating line gone after Not now', await panel.evaluate(() => !document.querySelector('.rate-line')));
+// The one repeat: at 40 it shows again, says "No thanks", and that ends it for good.
+await panel.evaluate(() => chrome.storage.local.set({ rewriteStats: { totalRewrites: 39, styleUsage: {}, lastUsed: null } }));
+await focusSel(panel, '#ta'); await panel.keyboard.type('she dont like it');
+await clk(panel, '#sendBtn'); await sleep(2500);
+const again = await panel.evaluate(() => document.querySelector('.rate-line [data-rate="later"]')?.textContent || null);
+check('rating line: asked once more at 40, with "No thanks"', again === 'No thanks', String(again));
+await clk(panel, '.rate-line [data-rate="later"]'); await sleep(300);
+check('No thanks: never asked again', (await panel.evaluate(() => chrome.storage.local.get(['srRateAsked']))).srRateAsked === true);
 
 // 4b. Welcome try-it with a provider connected: real proofread, changes marked.
 {
