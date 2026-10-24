@@ -123,10 +123,11 @@
       flex: none;
     }
     .mark svg { width: 13px; height: 13px; display: block; }
-    .app-header h1 { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+    /* The title takes the free space, so the right-hand group stays right
+       whether or not Clear history is showing. */
+    .app-header h1 { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; margin-right: auto; }
 
     .provider-pill {
-      margin-left: auto;
       display: flex; align-items: center; gap: 5px;
       font-family: var(--sans); font-size: 12px; font-weight: 600;
       padding: 3px 8px 3px 7px;
@@ -1015,14 +1016,14 @@
   <div class="app-header">
     <div class="mark" id="mark"></div>
     <h1>Proofr</h1>
+    <button class="icon-btn" id="btnClearHistory" type="button" title="Clear history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+    </button>
     <button type="button" class="provider-pill" id="providerPill" aria-haspopup="menu" aria-expanded="false" aria-controls="engineMenu" title="Choose which AI Proofr uses">
       <span class="pulse"></span><span id="providerPillText">Checking…</span>
       <svg class="pill-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
     </button>
     <div class="engine-menu hidden" id="engineMenu" role="menu" aria-label="AI engine"></div>
-    <button class="icon-btn" id="btnClearHistory" type="button" title="Clear history">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
-    </button>
     <button class="icon-btn" id="btnSettings" type="button" title="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
