@@ -95,7 +95,7 @@ function recordInsights(before, after) {
     if (typeof SR_changeGuard === 'function' && !SR_changeGuard(before, after).ok) return [];
     const pairs = SR_extractCorrections(before, after);
     const words = (String(before).match(/[\p{L}\p{N}]+/gu) || []).length;
-    const ops = SR_wordDiff(before, after);
+    const ops = SR_wordDiffForDisplay(before, after, 'grammar');
     const fixes = ops ? SR_diffCount(ops) : pairs.length;
     const { srInsights } = await chrome.storage.local.get(['srInsights']);
     // `before` lets the merge see words the user already got right.
@@ -735,7 +735,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   // Coach mode: mark the spots, leave the text alone. The user fixes them in
   // the box, or reveals the usual diff with Apply to text box.
   // With nothing to mark, Coach says so the usual way: the small toast.
-  const coachSpots = coach && typeof SR_wordDiff === 'function' ? SR_diffCount(SR_wordDiff(originalText, rewrittenText) || [{ type: 'ins' }]) : 1;
+  const coachSpots = coach && typeof SR_wordDiffForDisplay === 'function' ? SR_diffCount(SR_wordDiffForDisplay(originalText, rewrittenText, 'grammar') || [{ type: 'ins' }]) : 1;
   if (coach && coachSpots > 0 && window.SmartRewriteModal && window.SmartRewriteModal.showCoach) {
     const opts = { notice: guardNotice, where };
     const apply = guardFailed ? replaceAnyway
@@ -814,17 +814,19 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   if (replaced) {
     if (window.SmartRewriteModal) {
       // Proofread says how much it fixed, so "nothing changed" is visible too.
-      const ops = (tone === 'grammar' && typeof SR_wordDiff === 'function') ? SR_wordDiff(originalText, rewrittenText) : null;
+      const ops = (tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function') ? SR_wordDiffForDisplay(originalText, rewrittenText, tone) : null;
       const fixes = ops && typeof SR_diffCount === 'function' ? SR_diffCount(ops) : null;
-      const what = fixes === 0 ? 'No changes needed.' : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
-      // "Nothing to fix" needs no Review or Undo; otherwise both are buttons.
+      const nothing = fixes === 0 && rewrittenText === originalText;
+      const what = nothing ? 'Nothing to fix.' : fixes === 0 ? 'Fixed the spacing.'
+        : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
+      // "Nothing to fix" needs no Review or Undo; otherwise both are buttons
+      // (showSuccess drops Review when only spacing changed).
       const review = { original: originalText, rewritten: rewrittenText, tone, provider, where,
         action: { label: 'Apply to text box', run: (accepted) => applyAccepted(accepted ?? rewrittenText) } };
       if (fixes !== 0) window.__srLastReview = review; // for the "review last change" shortcut
       // A word this proofread mastered is named in the same toast (no extra UI).
       const won = mastered && mastered.length ? { mastered } : {};
-      window.SmartRewriteModal.showSuccess(fixes === 0 ? 'Nothing to fix.' : what,
-        fixes === 0 ? won : { review, undo, ...won });
+      window.SmartRewriteModal.showSuccess(what, nothing ? won : { review, undo, ...won });
     }
     return;
   }
