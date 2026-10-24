@@ -529,6 +529,22 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  // 4b'. A Proofread that only fixed spacing: says so, keeps Undo, no Review (it would mark nothing).
+  await step('spacing only', async () => {
+    await page.evaluate(() => document.querySelectorAll('.sr-success-notification').forEach((n) => n.remove()));
+    const spaced = 'Proofr  mock  result .';
+    await selectField(spaced);
+    await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, spaced);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('.sr-success-notification')), 5000);
+    const toast = await page.evaluate(() => {
+      const n = document.querySelector('.sr-success-notification');
+      return n && { text: n.querySelector('.sr-success-text').textContent, review: !!n.querySelector('.sr-success-review'), undo: !!n.querySelector('.sr-success-undo') };
+    });
+    check(toast && toast.text === 'Fixed the spacing.' && toast.undo && !toast.review,
+      `spacing-only Proofread: "Fixed the spacing." with Undo, no Review (got ${JSON.stringify(toast)})`);
+    check(await page.evaluate(() => document.querySelector('#ta').value) === OUT, 'spacing-only Proofread: field has the cleaned text');
+  });
+
   // 4c. The change guard: a "proofread" that drops "not" must not replace the text.
   await step('change guard', async () => {
     const risky = 'I will not be there on Monday.';

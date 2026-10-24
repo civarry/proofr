@@ -76,6 +76,19 @@ for (const tone of ['grammar', 'professional', 'tldr', 'translate']) {
   const input = 'teh report are ready';
   const clean = (out) => SR_cleanOutput(out, { fence, input });
   assert.equal(clean('The report is ready.'), 'The report is ready.');
+  assert.equal(SR_cleanOutput('The  report is ready .', { fence, input, tone: 'grammar' }), 'The report is ready.', 'Proofread spacing is normalized');
+  assert.equal(SR_cleanOutput('First.\n\n\n\nSecond.', { fence, input, tone: 'grammar' }), 'First.\n\nSecond.', 'redundant blank lines are collapsed');
+  assert.equal(SR_cleanOutput('A  rewrite .', { fence, input, tone: 'friendly' }), 'A  rewrite .', 'other modes preserve spacing');
+  const proof = (out, src = input) => SR_cleanOutput(out, { fence, input: src, tone: 'grammar' });
+  assert.equal(proof('I use .NET and .env files, it costs .50 now'), 'I use .NET and .env files, it costs .50 now', 'a leading dot inside a word stays');
+  assert.equal(proof('Thanks a lot :) see you'), 'Thanks a lot :) see you', 'emoticons keep their space');
+  assert.equal(proof('Wait , what ?! Really ...'), 'Wait, what?! Really...', 'spaces before ending marks go');
+  assert.equal(proof('Bonjour ! Ça va ?', 'Bonjour ! Ca va ?'), 'Bonjour ! Ça va ?', 'French spacing kept when the user writes it');
+  assert.equal(proof('Prix : 10 €'), 'Prix : 10 €', 'no-break spaces untouched');
+  assert.equal(proof('- item\n  - nested\n\tcode()'), '- item\n  - nested\n\tcode()', 'indentation and tabs kept');
+  assert.equal(proof('Line one  \nLine two'), 'Line one  \nLine two', 'Markdown hard break kept');
+  assert.equal(proof('A.\n  \n\n \nB.'), 'A.\n\nB.', 'blank lines with stray spaces collapse');
+  assert.equal(proof('See ( this ) here'), 'See (this) here');
   assert.equal(clean(`<${fence}>\nThe report is ready.\n</${fence}>`), 'The report is ready.', 'echoed tags removed');
   assert.equal(clean("Here's the corrected text:\n\nThe report is ready."), 'The report is ready.', 'preamble removed');
   assert.equal(clean('Sure! Here is the rewritten version:\nThe report is ready.'), 'The report is ready.');
@@ -102,6 +115,8 @@ for (const tone of ['grammar', 'professional', 'tldr', 'translate']) {
   const provider = { id: 'openai', displayName: 'OpenAI', baseURL: 'https://api.openai.com/v1', apiKey: 'sk-test-0000000000000000', model: 'gpt-4o-mini' };
   await assert.rejects(SR_rewrite(provider, 'hello', 'grammar', 'en'), (e) => e.name === 'SuspectOutput', 'cloud rewrite refuses a leaked prompt');
   await assert.rejects(SR_askCloud(provider, 'hello', 'Summarize'), (e) => e.name === 'SuspectOutput', 'ask refuses a leaked prompt');
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'The  report is ready .' }, finish_reason: 'stop' }] }) });
+  assert.equal(await SR_rewrite(provider, 'teh report are ready', 'grammar', 'en'), 'The report is ready.', 'cloud Proofread normalizes spacing');
   globalThis.LanguageModel = {
     availability: async () => 'available',
     create: async () => ({ prompt: async (p) => p, destroy() {} }),

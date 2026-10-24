@@ -95,7 +95,7 @@ function SR_isOnDeviceLanguage(code) {
 }
 
 const SR_TONE_INSTRUCTIONS = {
-  grammar: `Correct only the grammar, spelling, and punctuation of the following text. Keep the author's wording, voice and style: do not rephrase, simplify, or change the meaning. Make the smallest edits needed. If the text is already correct, return it unchanged.`,
+  grammar: `Correct only the grammar, spelling, punctuation, and unnecessary spacing of the following text. Keep the author's wording, voice and style: do not rephrase, simplify, or change the meaning. Make the smallest edits needed. If the text is already correct, return it unchanged.`,
   friendly: `Rewrite the following text in a warm, approachable, and conversational tone. Use inclusive language, contractions, and positive phrasing. Keep the meaning intact while making it more engaging and personable.`,
   professional: `Rewrite the following text in a formal, polished, and business-appropriate tone. Use precise language, avoid colloquialisms, and structure logically while preserving important information.`,
   short: `Rewrite the following text concisely and directly. Eliminate redundancy and verbose expressions while keeping clarity and impact.`,
@@ -227,16 +227,36 @@ const SR_PROMPT_MARKERS = [
   'internally review for clarity',
 ];
 
+// Proofread treats repeated spaces between words, a space before punctuation and
+// extra blank lines as mistakes. It leaves what carries meaning: indentation,
+// tabs, no-break spaces, trailing spaces (a Markdown line break), ".NET" and
+// ":)" (the mark must end the word), and French spacing before ; : ! ? when
+// `source` (the user's text) already spaces them that way.
+function SR_normalizeProofreadSpacing(text, source = '') {
+  const end = `(?=[\\s"'”’»,.;:!?…]|$)`;
+  const marks = /[^\S\r\n][;:!?](?=\s|$)/.test(String(source || '')) ? ',.…' : ',.;:!?…';
+  return String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/(?<=\S) {2,}(?=\S)/g, ' ')
+    .replace(new RegExp(`(?<=\\S) +([${marks}])${end}`, 'g'), '$1')
+    .replace(/([([{]) +(?=\S)/g, '$1')
+    .replace(/(?<=\S) +([)\]}])/g, '$1')
+    .replace(/\n(?:[ \t]*\n){2,}/g, '\n\n')
+    .trim();
+}
+
 // Cleans a model reply before anything shows or inserts it: removes an echoed
-// fence and a chatty first line ("Here's the corrected text:"), and throws a
-// SuspectOutput error when the reply leaks the rules or the fence id.
-function SR_cleanOutput(out, { fence, input = '' } = {}) {
+// fence and a chatty first line ("Here's the corrected text:"), normalizes
+// Proofread spacing, and throws a SuspectOutput error when the reply leaks the
+// rules or the fence id.
+function SR_cleanOutput(out, { fence, input = '', tone } = {}) {
   let s = String(out || '').trim();
   const src = String(input || '');
   const tag = fence ? fence.replace(/[^\w-]/g, '') : 'text-[0-9a-f]{12}';
   s = s.replace(new RegExp(`^<${tag}>\\s*`), '').replace(new RegExp(`\\s*</${tag}>$`), '').trim();
   const preamble = /^(?:(?:sure|certainly|okay|ok|of course)\b[^\n]{0,80}|(?:here(?:'s|’s| is| are)|below is)\b[^\n]{0,80}):[ \t]*\n+/i;
   if (preamble.test(s) && !preamble.test(src.trim() + '\n')) s = s.replace(preamble, '').trim();
+  if (tone === 'grammar') s = SR_normalizeProofreadSpacing(s, src);
 
   const low = s.toLowerCase();
   const srcLow = src.toLowerCase();
@@ -483,7 +503,7 @@ function SR_maxTokens(text, tone, targetLang) {
 async function SR_rewrite(provider, text, tone, targetLang, temperatureBoost = 0, signal) {
   const parts = SR_buildPromptParts(text, tone, targetLang, undefined, { examples: SR_isSmallModel(provider) });
   const out = await SR_callCloud(provider, parts, SR_getTemperature(tone, temperatureBoost), SR_maxTokens(text, tone, targetLang), signal);
-  return SR_cleanOutput(out, { fence: parts.fence, input: text });
+  return SR_cleanOutput(out, { fence: parts.fence, input: text, tone });
 }
 
 // Shared request path for SR_rewrite / SR_askCloud — same wire shape, only the
@@ -991,7 +1011,7 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
     }
 
     if (!(out || '').trim()) throw new Error('The on-device model returned nothing. Try again.');
-    return SR_cleanOutput(out, { fence, input: text });
+    return SR_cleanOutput(out, { fence, input: text, tone });
   } finally {
     try { session.destroy && session.destroy(); } catch (_) { /* ignore */ }
   }
@@ -1005,12 +1025,15 @@ async function SR_rewriteAuto(text, tone, opts = {}) {
   const engine = opts.engine || 'auto';
   const boost = opts.temperatureBoost || 0;
   const hasProvider = SR_providerReady(opts.provider);
+  const normalizeResult = (result) => tone === 'grammar'
+    ? { ...result, text: SR_normalizeProofreadSpacing(result.text, text) }
+    : { ...result };
   // The same text, mode and model again (Undo, then proofread again): answer
   // at once. "Try again" (boost > 0) always asks the model.
   const cacheKey = boost ? null : SR_cacheKey(text, tone, opts);
   const cached = cacheKey && SR_cacheGet(cacheKey);
-  if (cached) { SR_timing = { path: 'cache', totalMs: 0, at: Date.now() }; return { ...cached }; }
-  const done = (result) => { if (cacheKey) SR_cachePut(cacheKey, result); return { ...result }; };
+  if (cached) { SR_timing = { path: 'cache', totalMs: 0, at: Date.now() }; return normalizeResult(cached); }
+  const done = (result) => { const normalized = normalizeResult(result); if (cacheKey) SR_cachePut(cacheKey, normalized); return { ...normalized }; };
 
   if (engine !== 'cloud') {
     // Chrome's Translator first for translation: dedicated models, more
@@ -1106,6 +1129,14 @@ function SR_wordDiff(before, after) {
   flush();
   if (suf) same(a.slice(a.length - suf).join(''));
   return ops;
+}
+
+// The Proofread diff people see and count: spacing cleanup is applied without
+// asking, so it isn't marked as a change (a struck-through space is invisible)
+// or counted as a fix. Undo, not a rejected mark, brings the old spacing back.
+function SR_wordDiffForDisplay(before, after, tone) {
+  const source = tone === 'grammar' ? SR_normalizeProofreadSpacing(before, before) : before;
+  return SR_wordDiff(source, after);
 }
 
 // Change-group id per op (-1 for unchanged text): each run of del/ins between
@@ -2476,6 +2507,7 @@ if (typeof self !== 'undefined') {
   self.SR_rewriteOnDevice = SR_rewriteOnDevice;
   self.SR_rewriteAuto = SR_rewriteAuto;
   self.SR_wordDiff = SR_wordDiff;
+  self.SR_wordDiffForDisplay = SR_wordDiffForDisplay;
   self.SR_diffTokens = SR_diffTokens;
   self.SR_diffCount = SR_diffCount;
   self.SR_diffGroups = SR_diffGroups;

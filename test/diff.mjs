@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 globalThis.self = globalThis;
 new Function(fs.readFileSync(process.env.CONSTANTS || new URL('../constants.js', import.meta.url), 'utf8'))();
 assert.equal(typeof SR_wordDiff, 'function', 'SR_wordDiff is exported');
+assert.equal(typeof SR_wordDiffForDisplay, 'function', 'SR_wordDiffForDisplay is exported');
 
 const join = (ops, keep) => ops.filter((o) => o.type === 'same' || o.type === keep).map((o) => o.text).join('');
 const roundTrip = (before, after) => {
@@ -32,6 +33,20 @@ assert.equal(SR_diffCount(p), 1);
 roundTrip("Je n’ai pas reçu ton courriel 😅\nMerci", "Je n’ai pas reçu ton courriel. 😅\n\nMerci beaucoup");
 roundTrip('東京は 晴れ です', '東京は 雨 です');
 assert.equal(SR_diffCount(SR_wordDiff("it's done", "it's done")), 0);
+
+// Proofread spacing is already applied, so the UI diff should not show every
+// collapsed space as an old/new word change.
+{
+  const before = 'I  have  been  working  on  the  project  for  several  weeks .';
+  const after = 'I have been working on the project for several weeks.';
+  const display = SR_wordDiffForDisplay(before, after, 'grammar');
+  assert.equal(SR_diffCount(display), 0);
+  assert.equal(join(display, 'ins'), after);
+  // A real fix next to spacing is still one marked change.
+  assert.equal(SR_diffCount(SR_wordDiffForDisplay('We  was  late .', 'We were late.', 'grammar')), 1);
+  // Other modes diff the text as written.
+  assert.ok(SR_diffCount(SR_wordDiffForDisplay('a  b', 'a b', 'friendly')) > 0);
+}
 
 // Edge cases: empty sides, identical text, everything changed.
 assert.deepEqual(SR_wordDiff('', ''), []);

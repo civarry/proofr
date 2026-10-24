@@ -353,7 +353,8 @@
       // Proofread shows what changed; null (too long) or no changes → plain text.
       // Clicking a change puts the original words back; Copy and the action button
       // use the text with only the accepted changes.
-      const ops = tone === 'grammar' && typeof SR_wordDiff === 'function' ? SR_wordDiff(originalText, rewrittenText) : null;
+      const ops = tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
+        ? SR_wordDiffForDisplay(originalText, rewrittenText, tone) : null;
       const hasDiff = !!(ops && SR_diffCount(ops));
       const rejected = new Set();
       let plain = false;
@@ -492,13 +493,15 @@
     // done. opts.undo: a function that undoes the replace (Ctrl/Cmd+Z fails in some rich
     // editors); truthy return → "Undone". opts.apply: { label, run } for a result that
     // wasn't inserted (the user moved to another box); truthy run() → "Applied."
-    // A Proofread with nothing changed gets no Review or Undo. opts.mastered: [word]
+    // A Proofread with nothing changed gets no Review or Undo; one that only fixed
+    // spacing keeps Undo (Review would mark nothing). opts.mastered: [word]
     // that this Proofread made mastered, shown as one extra line.
     showSuccess(message, { review, undo, apply, mastered } = {}) {
       this.busy = false;
-      const unchanged = !!(review && review.tone === 'grammar' && typeof SR_wordDiff === 'function'
-        && SR_diffCount(SR_wordDiff(review.original, review.rewritten)) === 0);
-      if (unchanged) { review = null; undo = null; }
+      const unmarked = !!(review && review.tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
+        && SR_diffCount(SR_wordDiffForDisplay(review.original, review.rewritten, 'grammar')) === 0);
+      if (unmarked && review.original === review.rewritten) undo = null;
+      if (unmarked) review = null;
       const t = this.renderToast('success', `
         <div class="sr-success-content">
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
@@ -565,7 +568,7 @@
       this.hideLoadingToast();
       if (!this.modal) this.createModal();
 
-      const ops = typeof SR_wordDiff === 'function' ? SR_wordDiff(original, rewritten) : null;
+      const ops = typeof SR_wordDiffForDisplay === 'function' ? SR_wordDiffForDisplay(original, rewritten, 'grammar') : null;
       const groups = ops ? SR_diffGroups(ops) : [];
       let html = '', spots = 0;
       for (let k = 0; k < (ops || []).length; k++) {

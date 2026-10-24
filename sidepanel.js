@@ -1087,7 +1087,8 @@ async function copyTurn(turn, btn) {
 // === Thread rendering ===
 // Proofread results show what changed (Copy still copies the plain text).
 function turnBodyHtml(turn) {
-  const ops = (turn.mode === 'grammar' && typeof SR_wordDiff === 'function') ? SR_wordDiff(turn.inputText, turn.outputText) : null;
+  const ops = (turn.mode === 'grammar' && typeof SR_wordDiffForDisplay === 'function')
+    ? SR_wordDiffForDisplay(turn.inputText, turn.outputText, turn.mode) : null;
   if (!ops || SR_diffCount(ops) === 0) return escapeHtml(turn.outputText);
   return ops.map((op) => op.type === 'ins' ? `<ins class="diff-ins">${escapeHtml(op.text)}</ins>`
     : op.type === 'del' ? `<del class="diff-del">${escapeHtml(op.text)}</del>`

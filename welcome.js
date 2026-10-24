@@ -103,7 +103,7 @@ async function setUpOnDevice(e) {
 
 // === Step 3: a real first proofread, with the changes marked ===
 function renderDiff(before, after) {
-  const ops = typeof SR_wordDiff === 'function' ? SR_wordDiff(before, after) : null;
+  const ops = typeof SR_wordDiffForDisplay === 'function' ? SR_wordDiffForDisplay(before, after, 'grammar') : null;
   if (!ops) return escapeHtml(after);
   return ops.map((op) => {
     if (op.type === 'ins') return `<ins class="diff-ins">${escapeHtml(op.text)}</ins>`;
@@ -123,9 +123,9 @@ async function tryProofread() {
     $('tryStatus').textContent = (response && response.message) || 'Something went wrong. Try again.';
     return;
   }
-  const fixes = (typeof SR_wordDiff === 'function' && typeof SR_diffCount === 'function')
-    ? SR_diffCount(SR_wordDiff(text, response.text) || []) : null;
-  $('tryStatus').textContent = fixes == null ? 'Done.' : fixes === 0 ? 'No changes needed.' : `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.`;
+  const fixes = (typeof SR_wordDiffForDisplay === 'function' && typeof SR_diffCount === 'function')
+    ? SR_diffCount(SR_wordDiffForDisplay(text, response.text, 'grammar') || []) : null;
+  $('tryStatus').textContent = fixes == null ? 'Done.' : fixes === 0 ? (response.text === text ? 'No changes needed.' : 'Fixed the spacing.') : `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.`;
   $('tryResult').innerHTML = renderDiff(text, response.text);
   $('tryResult').classList.remove('hidden');
   markDone('stepTry', true);
