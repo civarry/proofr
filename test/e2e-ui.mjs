@@ -156,9 +156,9 @@ await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
 await panel.evaluate(() => chrome.storage.sync.set({ srCloudService: 'custom', srCloudCustomBaseURL: 'http://localhost:8766/v1' }));
 await panel.reload(); await sleep(1000);
 await panel.bringToFront();
-await focusSel(panel, '#apiKeyInput');
+await focusSel(panel, '#customKeyInput');
 await panel.keyboard.type('test-key-123456');
-await clk(panel, '#btnSaveKey'); await sleep(1500);
+await clk(panel, '#btnSaveCustom'); await sleep(1500);
 const stored = await panel.evaluate(() => chrome.storage.local.get(['srCloudKey_custom']));
 check('first-run Save stores the pasted key (local)', stored.srCloudKey_custom === 'test-key-123456', JSON.stringify(stored));
 const synced = await panel.evaluate(() => chrome.storage.sync.get(['srCloudKey_custom']));
@@ -395,57 +395,99 @@ check('picking on-device switches back', back.e === 'device' && /On-device/.test
 await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
 
 // 6e'. A second custom endpoint, added from Settings, sits beside the first
-// (the old single slot made you remove one to add another). Each keeps its own
-// URL and key; both are in the pill menu; Remove takes only the one shown.
+// (the old single slot made you remove one to add another). Its name, URL and
+// key are one form with one Save, checked against the server; nothing is
+// stored before Save. Provider and model picks still save at once.
 {
+  const sync = () => panel.evaluate(async () => { const s = await chrome.storage.sync.get(null), l = await chrome.storage.local.get(null);
+    return { list: s.srCustomEndpoints, legacy: s.srCloudCustomBaseURL, active: s.srCloudService, keys: Object.fromEntries(Object.entries(l).filter(([k]) => k.startsWith('srCloudKey_custom'))) }; });
+  const form = () => panel.evaluate(() => {
+    const vis = (id) => { const n = document.getElementById(id); return !!n && n.offsetParent !== null; };
+    return { label: document.getElementById('cloudServiceBtnLabel').textContent, save: vis('btnSaveCustom'), saveOff: document.getElementById('btnSaveCustom').disabled,
+      cancel: vis('btnCancelCustom'), remove: vis('btnRemoveCustom'), confirm: vis('customConfirm'), model: vis('cloudModelInput'), presetKey: vis('apiKeyInput'),
+      hint: document.getElementById('customHint').textContent, active: document.activeElement.id };
+  });
   await panel.evaluate(() => chrome.storage.sync.set({ srCloudService: 'custom' }));
   await clk(panel, '#btnSettings'); await sleep(500);
+  const clean = await form();
+  check('a saved endpoint: Save off, no Cancel, Remove shown, the preset key row hidden', clean.save && clean.saveOff && !clean.cancel && clean.remove && !clean.presetKey && clean.model, JSON.stringify(clean));
+
   await clk(panel, '#cloudServiceBtn'); await sleep(200);
   const items = await panel.evaluate(() => [...document.querySelectorAll('#cloudServiceMenu .cloud-select-item')].map((i) => i.querySelector('span').textContent));
   check('provider menu: the existing endpoint, then Add', items.includes('localhost:8766') && items.at(-1) === 'Add custom endpoint…', items.join(' | '));
+  const before = await sync();
   await clk(panel, '#cloudServiceMenu [data-value="add-custom"]'); await sleep(600);
-  const fresh = await panel.evaluate(() => ({ active: document.activeElement.id, url: document.getElementById('customBaseURLInput').value, row: !document.getElementById('customBaseURLRow').classList.contains('hidden') }));
-  check('Add opens an empty endpoint with the name field focused', fresh.active === 'customNameInput' && fresh.url === '' && fresh.row, JSON.stringify(fresh));
+  const draft = await form();
+  check('Add opens an empty draft: name focused, Cancel, no Remove, no model yet', draft.active === 'customNameInput' && draft.label === 'New custom endpoint' && draft.cancel && !draft.remove && !draft.model && draft.saveOff, JSON.stringify(draft));
+  check('Add stores nothing and keeps the active provider', JSON.stringify(await sync()) === JSON.stringify(before));
+
+  // Cancel a draft: back to the endpoint you had, nothing stored.
+  await panel.keyboard.type('Throwaway');
+  await clk(panel, '#btnCancelCustom'); await sleep(500);
+  check('Cancel on a draft goes back and stores nothing', (await form()).label === 'localhost:8766' && JSON.stringify(await sync()) === JSON.stringify(before));
+
+  // Add for real.
+  await clk(panel, '#cloudServiceBtn'); await sleep(200);
+  await clk(panel, '#cloudServiceMenu [data-value="add-custom"]'); await sleep(600);
   await panel.keyboard.type('Second server');
-  await focusSel(panel, '#customBaseURLInput');
-  await panel.keyboard.type('http://127.0.0.1:8766/v1');
-  await focusSel(panel, '#apiKeyInput'); await sleep(500);
-  await panel.keyboard.type('second-key-123456');
-  await clk(panel, '#btnSaveKey'); await sleep(1500);
-  const st = await panel.evaluate(async () => {
-    const s = await chrome.storage.sync.get(null), l = await chrome.storage.local.get(null);
-    return { list: s.srCustomEndpoints, legacy: s.srCloudCustomBaseURL, active: s.srCloudService, keys: Object.keys(l).filter((k) => k.startsWith('srCloudKey_custom')).map((k) => [k, l[k]]), label: document.getElementById('cloudServiceBtnLabel').textContent };
-  });
+  await focusSel(panel, '#customBaseURLInput'); await panel.keyboard.type('http://127.0.0.1:8766/v1');
+  await focusSel(panel, '#customKeyInput'); await panel.keyboard.type('second-key-123456');
+  check('typing turns Save on', !(await form()).saveOff);
+  await clk(panel, '#btnSaveCustom'); await sleep(1500);
+  const st = await sync();
   const second = (st.list || []).find((c) => c.id !== 'custom');
-  check('both endpoints saved, the first unchanged', st.list?.length === 2 && st.list[0].id === 'custom' && st.list[0].baseURL === 'http://localhost:8766/v1'
+  check('Save stores both endpoints, the first unchanged', st.list?.length === 2 && st.list[0].id === 'custom' && st.list[0].baseURL === 'http://localhost:8766/v1'
     && second && second.name === 'Second server' && second.baseURL === 'http://127.0.0.1:8766/v1' && st.active === second.id && st.legacy === undefined, JSON.stringify(st));
-  check('each endpoint keeps its own key', st.keys.length === 2 && st.keys.some(([k, v]) => k === 'srCloudKey_custom' && v === 'test-key-123456') && st.keys.some(([k, v]) => k === `srCloudKey_${second.id}` && v === 'second-key-123456'), JSON.stringify(st.keys));
-  check('the picker shows the new name', st.label === 'Second server', st.label);
+  check('each endpoint keeps its own key', st.keys.srCloudKey_custom === 'test-key-123456' && second && st.keys[`srCloudKey_${second.id}`] === 'second-key-123456', JSON.stringify(st.keys));
+  const savedForm = await form();
+  check('after Save: says so, picker shows the name, Save off, models shown', /Saved and connected/.test(savedForm.hint) && savedForm.label === 'Second server' && savedForm.saveOff && !savedForm.cancel && savedForm.model, JSON.stringify(savedForm));
+
+  // A bad URL is refused before any request.
+  await focusSel(panel, '#customBaseURLInput');
+  await panel.evaluate(() => { const i = document.getElementById('customBaseURLInput'); i.select(); });
+  await panel.keyboard.type('localhost:9');
+  await clk(panel, '#btnSaveCustom'); await sleep(300);
+  check('a URL without http(s) is refused, nothing saved', /doesn't look right/.test((await form()).hint) && (await sync()).list.find((c) => c.id === second.id).baseURL === 'http://127.0.0.1:8766/v1');
+  // An unreachable server is refused too.
+  await panel.evaluate(() => { const i = document.getElementById('customBaseURLInput'); i.select(); });
+  await panel.keyboard.type('http://127.0.0.1:9/v1');
+  await clk(panel, '#btnSaveCustom'); await sleep(2500);
+  check('an unreachable server is refused, nothing saved', /Couldn't reach 127\.0\.0\.1:9.*Nothing was saved/.test((await form()).hint) && (await sync()).list.find((c) => c.id === second.id).baseURL === 'http://127.0.0.1:8766/v1', (await form()).hint);
+  await clk(panel, '#btnCancelCustom'); await sleep(300);
+  check('Cancel puts the saved URL back', await panel.evaluate(() => document.getElementById('customBaseURLInput').value) === 'http://127.0.0.1:8766/v1');
+
+  // A rename waits for Save (no auto-save), and needs no server check.
+  await focusSel(panel, '#customNameInput');
+  await panel.evaluate(() => document.getElementById('customNameInput').select());
+  await panel.keyboard.type('Lab');
+  await sleep(700);
+  check('typing a new name saves nothing until Save', (await sync()).list.find((c) => c.id === second.id).name === 'Second server');
+  await panel.keyboard.press('Enter'); await sleep(500);
+  check('Enter saves the rename', (await sync()).list.find((c) => c.id === second.id).name === 'Lab' && (await form()).label === 'Lab');
 
   await clk(panel, '#btnSettingsBack'); await sleep(300);
   await panel.evaluate(() => document.getElementById('providerPill').click()); await sleep(600);
   const pm = await panel.evaluate(() => [...document.querySelectorAll('#engineMenu .engine-item b')].map((b) => b.textContent));
-  check('pill menu lists both endpoints', pm.includes('localhost:8766') && pm.includes('Second server'), pm.join(' | '));
+  check('pill menu lists both endpoints', pm.includes('localhost:8766') && pm.includes('Lab'), pm.join(' | '));
   await panel.evaluate(() => document.querySelector('#engineMenu [data-choice="cloud:custom"]').click()); await sleep(600);
   check('switching to the first endpoint', /localhost:8766/.test(await panel.evaluate(() => document.getElementById('providerPillText').textContent)));
 
-  // Remove the second one from its own settings.
+  // Remove asks once; Keep backs out.
   await panel.evaluate((id) => chrome.storage.sync.set({ srCloudService: id }), second.id);
   await clk(panel, '#btnSettings'); await sleep(500);
-  await clk(panel, '#btnRemoveCustom'); await sleep(800);
+  await clk(panel, '#btnRemoveCustom'); await sleep(300);
+  const ask = await form();
+  check('Remove asks first, naming the endpoint', ask.confirm && !ask.save && /Remove Lab\? Its key is deleted/.test(await panel.evaluate(() => document.getElementById('customConfirmText').textContent)) && ask.active === 'btnRemoveKeep', JSON.stringify(ask));
+  await clk(panel, '#btnRemoveKeep'); await sleep(300);
+  check('Keep backs out, nothing removed', !(await form()).confirm && (await sync()).list.length === 2);
+  await clk(panel, '#btnRemoveCustom'); await sleep(300);
+  await clk(panel, '#btnRemoveConfirm'); await sleep(800);
   const gone = await panel.evaluate(async (id) => {
     const s = await chrome.storage.sync.get(null), l = await chrome.storage.local.get(null);
     return { list: s.srCustomEndpoints, active: s.srCloudService, key: l[`srCloudKey_${id}`], model: s[`srCloudModel_${id}`], firstKey: l.srCloudKey_custom };
   }, second.id);
   check('Remove drops that endpoint, its key and model, and keeps the other', gone.list.length === 1 && gone.list[0].id === 'custom' && !gone.key && !gone.model && gone.firstKey === 'test-key-123456', JSON.stringify(gone));
   check('after Remove, the remaining ready endpoint is active', gone.active === 'custom', gone.active);
-  // Naming saves while typing: no blur, the way a panel gets closed mid-edit.
-  await focusSel(panel, '#customNameInput');
-  await panel.keyboard.type('Home');
-  await sleep(700);
-  const named = await panel.evaluate(async () => ({ list: (await chrome.storage.sync.get('srCustomEndpoints')).srCustomEndpoints, label: document.getElementById('cloudServiceBtnLabel').textContent, focus: document.activeElement.id }));
-  check('a name saves as it is typed, without leaving the field', named.list[0].name === 'Home' && named.label === 'Home' && named.focus === 'customNameInput', JSON.stringify(named));
-  await panel.evaluate(async () => { const s = await chrome.storage.sync.get('srCustomEndpoints'); s.srCustomEndpoints[0].name = ''; await chrome.storage.sync.set(s); });
   await clk(panel, '#btnSettingsBack'); await sleep(300);
   await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
 }

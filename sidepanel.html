@@ -928,6 +928,22 @@
       font-size: 13px; font-weight: 600; white-space: nowrap;
     }
     .btn-outline:hover { background: var(--line-soft); }
+    .btn-outline:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-danger { color: var(--error); border-color: var(--error-border); }
+    .btn-danger:hover { background: var(--error-bg); }
+    .btn-solid.btn-danger-solid { background: var(--error); color: var(--card); }
+    .btn-solid.btn-danger-solid:hover:not(:disabled) { background: var(--error); filter: brightness(.92); }
+
+    /* Custom endpoint: Remove on the left, Cancel + Save on the right. */
+    .custom-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+    .custom-actions #btnRemoveCustom { margin-right: auto; }
+    .custom-actions.hidden, .custom-actions .hidden { display: none; }
+    .custom-confirm { padding: 10px; border: 1px solid var(--error-border); border-radius: 8px; background: var(--error-bg); }
+    .custom-confirm p { flex: 1; margin: 0; font-size: 12px; color: var(--ink); }
+    #customHint { margin-top: 8px; }
+    #customHint.ok { color: var(--live-ink); }
+    #customHint.bad { color: var(--error); }
+    #cloudSection.custom #keySection, #cloudSection.drafting #modelSection { display: none; }
 
     .settings-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
     .saved-line { transition: opacity .15s ease; }
@@ -1201,14 +1217,28 @@
           </div>
           <p class="settings-hint" id="providerNote"></p>
 
+          <!-- A custom endpoint is one form with one Save: name, URL and key are
+               checked against the server together. Nothing here saves by itself. -->
           <div id="customBaseURLRow" class="hidden" style="margin-top:10px;">
             <label for="customNameInput">Name</label>
             <input type="text" id="customNameInput" class="cloud-field" placeholder="Shown in menus, e.g. Work server" autocomplete="off" spellcheck="false" maxlength="40">
             <label for="customBaseURLInput" style="margin-top:12px;">Base URL</label>
             <input type="text" id="customBaseURLInput" class="cloud-field" placeholder="https://your-endpoint.example.com/v1" autocomplete="off" spellcheck="false">
-            <div class="settings-actions">
-              <span></span>
-              <button id="btnRemoveCustom" class="link-danger" type="button">Remove endpoint</button>
+            <label for="customKeyInput" style="margin-top:12px;">API key</label>
+            <div class="key-input-wrap">
+              <input type="password" id="customKeyInput" autocomplete="off" spellcheck="false">
+              <button type="button" class="eye-btn" id="btnCustomKeyEye" aria-label="Show key"></button>
+            </div>
+            <p class="settings-hint saved-line" id="customHint" role="status"></p>
+            <div class="custom-actions" id="customActions">
+              <button id="btnRemoveCustom" class="btn-outline btn-danger" type="button">Remove</button>
+              <button id="btnCancelCustom" class="btn-outline" type="button">Cancel</button>
+              <button id="btnSaveCustom" class="btn-solid" type="button">Save</button>
+            </div>
+            <div class="custom-actions custom-confirm hidden" id="customConfirm" role="alertdialog" aria-labelledby="customConfirmText">
+              <p id="customConfirmText"></p>
+              <button id="btnRemoveKeep" class="btn-outline" type="button">Keep</button>
+              <button id="btnRemoveConfirm" class="btn-solid btn-danger-solid" type="button">Remove</button>
             </div>
           </div>
 
@@ -1227,6 +1257,7 @@
             </div>
           </div>
 
+          <div id="modelSection">
           <label for="cloudModelInput" style="margin-top:12px;">Model</label>
           <div class="model-field-wrap">
             <input type="text" id="cloudModelInput" class="cloud-field" placeholder="model name" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="modelMenuList" aria-expanded="false">
@@ -1238,6 +1269,7 @@
             <div class="model-menu-list" id="modelMenuList" role="listbox"></div>
           </div>
           <p class="settings-hint" id="modelHint" role="status"></p>
+          </div>
 
         </div>
 
