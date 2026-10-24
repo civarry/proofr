@@ -262,6 +262,7 @@ const ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="tru
 const ICON_REDO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
 const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 const ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M6.06 6.06A18.45 18.45 0 0 0 1 12s4 8 11 8a10.9 10.9 0 0 0 5.94-1.94M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
 
@@ -1242,9 +1243,39 @@ async function runTurn(turn, opts = {}) {
     delete turn.onDevice;
   }
   turn.justFinished = true; // the card gets its one short reveal
-  turns = await TurnLog.save(turns);
+  await saveTurns();
   renderThread();
   delete turn.justFinished;
+}
+
+// Caps `turns` before the await, so a delete or Undo made while a save is in
+// flight is never overwritten by the copy that save started with.
+function saveTurns() {
+  turns = turns.slice(-MAX_TURNS);
+  return TurnLog.save(turns);
+}
+
+// Deletes one entry: your text and its result together, since the result's
+// marks only mean something next to the original. Undo puts it back in place.
+async function deleteTurn(turn) {
+  const i = turns.indexOf(turn);
+  if (i < 0 || turn.status === 'pending') return;
+  turns.splice(i, 1);
+  await saveTurns();
+  renderThread();
+  offerUndo('Entry deleted.', () => { turns.splice(Math.min(i, turns.length), 0, turn); });
+}
+
+// One Undo at a time, for Clear history and for deleting an entry. A new
+// offer replaces the old one, which makes that earlier removal final.
+let undoRestore = null;
+let undoTimer = null;
+function offerUndo(message, restore) {
+  undoRestore = restore;
+  refs.panelNotice.innerHTML = `${escapeHtml(message)} <button type="button" class="notice-undo" id="btnUndo">Undo</button>`;
+  refs.panelNotice.classList.remove('hidden');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { undoRestore = null; refs.panelNotice.classList.add('hidden'); }, 8000);
 }
 
 async function regenerateTurn(turn) {
@@ -1300,6 +1331,8 @@ function hiddenRemovedLabel(turn) {
   return n > 0 ? ` · ${n} hidden character${n === 1 ? '' : 's'} removed` : '';
 }
 
+const DELETE_BTN = `<button class="icon-btn turn-delete" data-action="delete" type="button" title="Delete this entry" aria-label="Delete this entry">${ICON_TRASH}</button>`;
+
 function renderAssistantCard(turn) {
   const modeName = escapeHtml(SR_getToneName(turn.mode));
 
@@ -1317,7 +1350,7 @@ function renderAssistantCard(turn) {
     return `<div class="assistant-card error">
       <div class="assistant-head"><span><span class="tag">${modeName}</span></span><span></span></div>
       <div class="assistant-body error-text">${escapeHtml(turn.errorMessage || 'Something went wrong.')}</div>
-      <div class="assistant-actions"><button class="chip-btn" data-action="retry">${ICON_REDO}Try again</button></div>
+      <div class="assistant-actions"><button class="chip-btn" data-action="retry">${ICON_REDO}Try again</button>${DELETE_BTN}</div>
     </div>`;
   }
 
@@ -1332,6 +1365,7 @@ function renderAssistantCard(turn) {
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
       <div class="retone"><span class="retone-label">Try as</span>${SR_MENU_TOP.filter((m) => m !== turn.mode && m !== 'translate').slice(0, 3)
         .map((m) => `<button class="chip-btn" data-action="retone" data-mode="${m}">${CHIP_LABELS[m] || SR_getToneName(m)}</button>`).join('')}</div>
+      ${DELETE_BTN}
     </div>
   </div>`;
 }
@@ -2132,6 +2166,7 @@ function bindThreadDelegation() {
     if (btn.dataset.action === 'copy') await copyTurn(turn, btn);
     else if (btn.dataset.action === 'redo' || btn.dataset.action === 'retry') await regenerateTurn(turn);
     else if (btn.dataset.action === 'retone') await startTurn(turn.inputText, btn.dataset.mode, turn.targetLang);
+    else if (btn.dataset.action === 'delete') await deleteTurn(turn);
   });
 }
 
@@ -2217,25 +2252,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   refs.btnSettingsBack.addEventListener('click', () => toggleSettingsPanel(false));
   // Clear at once and offer Undo for a few seconds, instead of an "Are you
   // sure?" dialog people learn to click through (SATISFACTION.md E2).
-  let clearedTurns = null;
-  let clearTimer = null;
   refs.btnClearHistory.addEventListener('click', async () => {
     if (turns.length === 0 || activeRun) return;
-    clearedTurns = turns;
+    const cleared = turns;
     turns = [];
     await TurnLog.clear();
     renderThread();
-    refs.panelNotice.innerHTML = 'History cleared. <button type="button" class="notice-undo" id="btnUndoClear">Undo</button>';
-    refs.panelNotice.classList.remove('hidden');
-    clearTimeout(clearTimer);
-    clearTimer = setTimeout(() => { clearedTurns = null; refs.panelNotice.classList.add('hidden'); }, 8000);
+    offerUndo('History cleared.', () => { turns = cleared.concat(turns); });
   });
   refs.panelNotice.addEventListener('click', async (e) => {
-    if (!e.target.closest('#btnUndoClear') || !clearedTurns) return;
-    turns = await TurnLog.save(clearedTurns.concat(turns));
-    clearedTurns = null;
-    clearTimeout(clearTimer);
+    if (!e.target.closest('#btnUndo') || !undoRestore) return;
+    undoRestore();
+    undoRestore = null;
+    clearTimeout(undoTimer);
     refs.panelNotice.classList.add('hidden');
+    await saveTurns();
     renderThread();
   });
 

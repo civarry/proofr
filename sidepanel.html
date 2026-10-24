@@ -263,6 +263,12 @@
     }
     .chip-btn:hover { background: var(--line-soft); color: var(--ink); }
     .chip-btn svg { width: 11px; height: 11px; display: block; }
+    /* Delete sits at the far end and shows on hover or keyboard focus, so a
+       thread of entries isn't a column of trash cans. */
+    .turn-delete { margin-left: auto; width: 24px; height: 24px; }
+    .turn-delete svg { width: 13px; height: 13px; }
+    .turn-delete:hover { color: var(--error); }
+    .turn:not(:hover):not(:focus-within) .turn-delete { opacity: 0; }
     .chip-btn.copied { color: var(--live-ink); border-color: var(--live-border); background: var(--live-bg); }
 
     /* Skeleton shown while a turn is pending */
