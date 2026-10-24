@@ -25,7 +25,7 @@ The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-d
 - **On-device speed:** Proofr follows Google's guidance for the Prompt API: each mode's rules and examples go into one base session, and every request runs on a clone of it, so Gemini Nano doesn't re-read them each time. After an on-device proofread the background stays warm for 5 minutes. Translation uses Chrome's Translator (39 languages on-device, versus 5 for Gemini Nano) when its language pack is there; the side panel can download a pack on your click. The same text, mode and model twice answers at once, on-device or cloud (Try again always asks again). Every call into Chrome's AI has a time limit, so a stalled call falls back instead of hanging. Measured with real Gemini Nano in Chrome 155 (`test/nano-bench.html`): each proofread after the first is 45% faster (807 → 447 ms median) with the first words on screen 64% sooner (570 → 208 ms); the first one in a session is 22% slower, because it builds the base. The Summarizer API is not used: it dropped numbers from summaries in testing.
 - **Cost on your key:** instructions are about 240 tokens per request, and the answer budget fits the text, so a short fix can't run away and a long one isn't cut off.
 - **Prompt-injection defenses:** the text you select is sent inside a tag with a random id that page text can't close, with a rule before and after it saying it is data, not instructions. Cloud calls send the rules as a separate system message. A reply that repeats Proofr's instructions is refused and never pasted.
-- **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate. There is also an "Ask about this…" box for a freeform instruction, whenever an AI is set up: on-device first on Auto, like the other actions, else your provider. Results open in a dialog; the page text is never changed.
+- **Hover actions (off by default):** turn on "Hover actions" in Settings → On web pages. Chrome asks once for permission to read pages, since hover needs to run on every site. Hover any paragraph for Summarize, Plain English, and Translate: the icon shows about 70ms after the pointer reaches it, even while it keeps moving, and finding the paragraph takes under 4ms on heavy pages (each element's answer is kept until the page changes). There is also an "Ask about this…" box for a freeform instruction, whenever an AI is set up: on-device first on Auto, like the other actions, else your provider. Results open in a dialog; the page text is never changed.
 
 ## Privacy
 
@@ -111,6 +111,8 @@ PUPPETEER=/path/to/puppeteer.js node test/e2e-warm.mjs
 PUPPETEER=/path/to/puppeteer.js node test/e2e-upgrade.mjs
 # After Proofr is reloaded or updated, an open tab's old copy says to reload the page instead of throwing
 PUPPETEER=/path/to/puppeteer.js node test/e2e-orphan.mjs
+# Hover detection speed on heavy pages (Gmail-like, Reddit-like, worst case), old code against new, same block picked for every target
+PUPPETEER=/path/to/puppeteer.js node test/hover-speed.mjs
 ```
 
 Each script exits non-zero if any check fails. On macOS, Chrome stops painting while the display sleeps or the screen is locked, and the browser tests time out. Run `caffeinate -u -t 600 &` first for a sleeping display; a locked screen has to be unlocked.

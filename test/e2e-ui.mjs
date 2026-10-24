@@ -742,6 +742,21 @@ if (icon) {
   await demo.keyboard.press('Escape'); await sleep(200);
   await demo.evaluate(() => document.body.click());
 }
+// Speed: the icon shows soon after entering a paragraph, even while the
+// pointer keeps moving over it (each move used to restart a 220ms wait).
+{
+  await demo.bringToFront();
+  await demo.evaluate(() => document.querySelectorAll('.sr-hover-icon').forEach((n) => n.remove()));
+  const para = await (await demo.$$('.prose.selectme'))[1].boundingBox();
+  let seen = null;
+  const t0 = Date.now();
+  for (let i = 0; i < 12 && seen === null; i++) {
+    await demo.mouse.move(para.x + 20 + i * 9, para.y + 10 + (i % 2) * 4);
+    if (await demo.$('.sr-hover-icon')) seen = Date.now() - t0;
+    await sleep(30);
+  }
+  check('the hover icon shows while the pointer is still moving over a paragraph', seen !== null && seen < 350, `${seen}ms`);
+}
 await panel.bringToFront(); await clk(panel, '#hoverToggle'); await sleep(1200);
 const regs2 = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
 check('hover off unregisters page scripts', !regs2.some(r => r.id === 'proofr-hover'));
