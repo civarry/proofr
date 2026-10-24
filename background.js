@@ -162,14 +162,14 @@ function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup 
   return null;
 }
 
-// Where the text went, in plain words, for result labels. A server on the
-// user's own machine or network isn't "sent" anywhere they'd worry about.
 // Where the text went, and which model answered: "Sent to Groq · gpt-oss-120b".
+// A server on the user's own machine or network isn't "sent" anywhere they'd
+// worry about: "Local · <model>".
 function whereLabel(providerId, cfg, engine) {
   if (providerId === 'device') return `On this computer · ${engine || 'Gemini Nano'}`;
   // "openai/gpt-oss-120b" → "gpt-oss-120b": the vendor is already in the provider name.
   const model = cfg && cfg.model ? ` · ${String(cfg.model).split('/').pop()}` : '';
-  if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return `On your computer or network${model}`;
+  if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return `Local${model}`;
   return `Sent to ${SR_providerDisplayLabel(providerId, cfg && cfg.displayName)}${model}`;
 }
 
@@ -742,7 +742,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   // "Replace anyway" after a guard trip: same target, same safety re-check.
   // The dialog hands back the accepted text (changes clicked off are put
   // back), so that's what goes in, not the full suggestion.
-  const replaceAnyway = target ? { label: 'Replace anyway', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
+  const replaceAnyway = target ? { label: 'Replace anyway', otherLabel: 'Replace selection', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
   const guardNotice = guardFailed ? `Check this before using it: ${guard.reasons.join(', ')}.` : null;
 
   // The user moved on to another field while this was running: never pull

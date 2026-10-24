@@ -6,6 +6,14 @@
   // Settings → Appearance for the dialog and notes (theme.js, injected first).
   if (typeof SR_watchTheme === 'function') SR_watchTheme(document.documentElement, 'data-sr-theme', false);
 
+  const IS_MAC = /mac|iphone|ipad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');
+  const MOD = IS_MAC ? '⌘' : 'Ctrl ';
+  const SVG = (d, w = 14) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const ICON_CHECK = SVG('<path d="M20 6 9 17l-5-5"/>');
+  const ICON_COPY = SVG('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
+  const ICON_X = SVG('<path d="M18 6 6 18M6 6l12 12"/>', 16);
+  const kbd = (k) => `<kbd class="sr-kbd">${k}</kbd>`;
+
   class SmartRewriteModal {
     constructor() {
       this.modal = null;
@@ -24,9 +32,12 @@
             <div class="sr-modal-header">
               <div class="sr-modal-title">
                 <div class="sr-logo">${(typeof SR_LOGO_SVG !== 'undefined') ? SR_LOGO_SVG : 'SR'}</div>
-                <h3 id="sr-modal-heading">Proofr</h3>
+                <div class="sr-title-text">
+                  <h3 id="sr-modal-heading">Proofr</h3>
+                  <span class="sr-where" id="sr-where"></span>
+                </div>
               </div>
-              <button class="sr-close-btn" id="sr-close-btn" aria-label="Close">✕</button>
+              <button class="sr-close-btn" id="sr-close-btn" type="button" aria-label="Close">${ICON_X}</button>
             </div>
             
             <div class="sr-modal-content" id="sr-modal-content">
@@ -55,34 +66,95 @@
           } else if (e.key === 'Tab') {
             this.trapTab(e);
           } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
-            // Only when nothing is selected, so copying from "Show original" still works.
+            // Only when nothing is selected, so copying a selection inside the dialog still works.
             if (this.currentRewrite && !String(window.getSelection() || '')) {
               this.copyToClipboard(this.currentRewrite);
               e.preventDefault();
             }
+          } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            const btn = this.modal.querySelector('#sr-action-btn:not([disabled])');
+            if (btn) { e.preventDefault(); btn.click(); }
           }
         }
       });
     }
 
-    toneChipsHtml(activeTone) {
+    // All tones stay in view: rewriting is the main job here. The active one
+    // is marked (and pressed); while it runs, its icon is a spinner. One tab
+    // stop for the grid, arrow keys move between tiles.
+    toneChipsHtml(activeTone, busy = false) {
       const tones = (typeof SR_TONES !== 'undefined') ? SR_TONES : [];
       const icon = (id) => (typeof SR_iconFor === 'function') ? SR_iconFor(id) : '';
-      return `<div class="sr-chips">${tones.map(t => `
-        <button class="sr-chip ${t.id === activeTone ? 'sr-chip-active' : ''}" data-tone="${t.id}" title="${t.desc}">
-          <span class="sr-chip-ic">${icon(t.id)}</span><span class="sr-chip-label">${t.name}</span>
-        </button>`).join('')}</div>`;
+      return `<div class="sr-chips" role="group" aria-label="Rewrite as">${tones.map((t) => {
+        const on = t.id === activeTone;
+        return `<button type="button" class="sr-chip${on ? ' sr-chip-active' : ''}" data-tone="${t.id}" title="${this.escapeHtml(t.desc)}" aria-pressed="${on}" tabindex="${on ? 0 : -1}">
+          <span class="sr-chip-ic">${on && busy ? '<span class="sr-chip-spin" aria-hidden="true"></span>' : icon(t.id)}</span><span class="sr-chip-label">${t.name}</span>${on && !busy ? `<span class="sr-chip-check">${ICON_CHECK}</span>` : ''}
+        </button>`;
+      }).join('')}</div>`;
     }
 
     bindChips() {
-      this.modal.querySelectorAll('.sr-chip').forEach(chip => {
-        chip.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (this.busy) return;
-          const selected = e.currentTarget.dataset.tone;
-          if (selected !== this.currentTone) this.rewriteWithTone(selected);
-        });
+      const grid = this.modal.querySelector('.sr-chips');
+      if (!grid) return;
+      if (!grid.querySelector('[tabindex="0"]') && grid.firstElementChild) grid.firstElementChild.tabIndex = 0;
+      grid.addEventListener('click', (e) => {
+        const chip = e.target.closest('.sr-chip');
+        if (!chip) return;
+        e.stopPropagation();
+        if (this.busy) return;
+        if (chip.dataset.tone !== this.currentTone) this.rewriteWithTone(chip.dataset.tone);
       });
+      grid.addEventListener('keydown', (e) => {
+        const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 'row', ArrowUp: '-row', Home: 'first', End: 'last' }[e.key];
+        if (step === undefined) return;
+        const chips = [...grid.querySelectorAll('.sr-chip')];
+        const i = chips.indexOf(document.activeElement);
+        if (i < 0) return;
+        e.preventDefault();
+        const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').length || 4;
+        const n = chips.length;
+        const j = step === 'first' ? 0 : step === 'last' ? n - 1
+          : step === 'row' ? (i + cols < n ? i + cols : i) : step === '-row' ? (i - cols >= 0 ? i - cols : i)
+          : (i + step + n) % n;
+        chips.forEach((c, k) => { c.tabIndex = k === j ? 0 : -1; });
+        chips[j].focus();
+      });
+    }
+
+    // "On your computer or network" is long for a header line.
+    setWhere(where) {
+      const el = this.modal && this.modal.querySelector('#sr-where');
+      if (!el) return;
+      const text = String(where || '').replace(/^On your computer or network/, 'Local');
+      el.textContent = text;
+      el.title = text;
+    }
+
+    // The label row above the result: the tone, and a view switch.
+    resultHeadHtml(label, views, view) {
+      const names = { result: 'Result', changes: 'Changes', original: 'Original' };
+      return `<div class="sr-result-head">
+        <span class="sr-result-label" id="sr-result-label">${this.escapeHtml(label)}</span>
+        ${views.length ? `<div class="sr-seg" role="group" aria-label="View">${views.map((v) => `<button type="button" class="sr-seg-btn" data-view="${v}" aria-pressed="${v === view}">${names[v]}</button>`).join('')}</div>` : ''}
+      </div>`;
+    }
+
+    footerHtml({ copyEnabled, action, actionLabel, hint }) {
+      const primaryCopy = !action;
+      return `
+        <span class="sr-hint" id="sr-hint">${hint}</span>
+        <button type="button" class="sr-btn ${primaryCopy ? 'sr-btn-primary' : 'sr-btn-secondary'}" id="sr-copy-btn"${copyEnabled ? '' : ' disabled'}>${ICON_COPY}<span>Copy</span></button>
+        ${action ? `<button type="button" class="sr-btn sr-btn-primary" id="sr-action-btn"${copyEnabled ? '' : ' disabled'}><span>${this.escapeHtml(actionLabel)}</span>${kbd(`${MOD}↵`)}</button>` : ''}`;
+    }
+
+    toneHint() { return `Click a tone to rewrite · ${kbd(`${MOD}C`)} copy · ${kbd('Esc')} close`; }
+
+    // The write-back for this dialog (Replace anyway, Apply to text box) stays
+    // when another tone is picked here, so its result can go in too.
+    writeBackFor(tone) {
+      const w = this.writeBack;
+      if (!w) return null;
+      return { run: w.run, label: tone === w.tone ? w.label : (w.otherLabel || w.label) };
     }
 
     // Shown only for the Translate tone: pick the target language.
@@ -125,7 +197,7 @@
     // Keeps Tab inside the dialog (it's appended at the end of body).
     trapTab(e) {
       const box = this.modal.querySelector('.sr-modal-container');
-      const items = [...box.querySelectorAll('button:not([disabled]), select, summary, a[href], [tabindex="0"]')]
+      const items = [...box.querySelectorAll('button:not([disabled]):not([tabindex="-1"]), select, a[href], [tabindex="0"]')]
         .filter((el) => el.offsetParent !== null);
       if (!items.length) return;
       const first = items[0], last = items[items.length - 1];
@@ -289,24 +361,21 @@
 
       if (!this.modal) this.createModal();
 
-      const toneName = this.getToneName(tone);
-      const working = tone === 'translate' ? 'Translating' : `Rewriting to ${toneName}`;
+      const working = tone === 'translate' ? (typeof SR_fullLangName === 'function' ? `Translating to ${SR_fullLangName(this.currentLang || 'en')}…` : 'Translating…') : `Rewriting as ${this.getToneName(tone)}…`;
+      // The box keeps its height while the next result is written.
+      const prev = document.getElementById('sr-rewritten-text');
+      const keep = prev && this.isVisible ? Math.round(prev.getBoundingClientRect().height) : 0;
+      if (!this.switching) this.setWhere('');
 
       document.getElementById('sr-modal-content').innerHTML = `
-        ${this.toneChipsHtml(tone)}
+        ${this.toneChipsHtml(tone, true)}
         ${this.langRowHtml(tone, this.currentLang)}
-        <div class="sr-skeleton" role="status" aria-label="${working}">
-          <div class="sr-skeleton-line"></div>
-          <div class="sr-skeleton-line"></div>
-          <div class="sr-skeleton-line"></div>
-          <div class="sr-skeleton-line"></div>
-        </div>
+        ${this.resultHeadHtml('Rewriting…', [], null)}
+        <div class="sr-result-box sr-scrollable" id="sr-rewritten-text" role="status" aria-busy="true"${keep ? ` style="min-height:${keep}px"` : ''}><span class="sr-working">${this.escapeHtml(working)}</span></div>
       `;
 
-      document.getElementById('sr-modal-footer').innerHTML = `
-        <button class="sr-btn sr-btn-primary" disabled>Copy</button>
-        <span class="sr-hint">${working}…</span>
-      `;
+      const action = this.switching ? this.writeBackFor(tone) : null;
+      document.getElementById('sr-modal-footer').innerHTML = this.footerHtml({ copyEnabled: false, action, actionLabel: action && action.label, hint: this.toneHint() });
 
       this.bindChips();
       this.bindLangRow();
@@ -330,16 +399,9 @@
         return;
       }
       if (!this.modal) return;
-      let box = document.getElementById('sr-rewritten-text');
-      if (!box) {
-        const skeleton = document.querySelector('#sr-modal-content .sr-skeleton');
-        if (!skeleton) return;
-        box = document.createElement('div');
-        box.className = 'sr-result-box sr-scrollable sr-streaming';
-        box.id = 'sr-rewritten-text';
-        box.setAttribute('aria-busy', 'true');
-        skeleton.replaceWith(box);
-      }
+      const box = document.getElementById('sr-rewritten-text');
+      if (!box || box.getAttribute('aria-busy') !== 'true') return;
+      box.classList.add('sr-streaming');
       box.textContent = text;
     }
 
@@ -353,65 +415,83 @@
 
       if (!this.modal) this.createModal();
 
-      // Proofread shows what changed; null (too long) or no changes → plain text.
-      // Clicking a change puts the original words back; Copy and the action button
-      // use the text with only the accepted changes.
+      // A dialog's write-back (from the page) is kept for tones picked here.
+      if (action) this.writeBack = { ...action, tone };
+      else if (!this.switching) this.writeBack = null;
+      const writeBack = this.writeBackFor(tone);
+      this.switching = false;
+
+      // Proofread shows what changed; null (too long) or no changes → no
+      // Changes view. Clicking a change puts the original words back; Copy
+      // and the write-back use the text with only the accepted changes.
       const ops = tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
         ? SR_wordDiffForDisplay(originalText, rewrittenText, tone) : null;
       const hasDiff = !!(ops && SR_diffCount(ops));
       const rejected = new Set();
-      let plain = false;
       const accepted = () => (hasDiff ? SR_applyDiff(ops, rejected) : rewrittenText);
-      const boxHtml = () => (hasDiff && !plain ? this.diffHtml(ops, rejected) : this.escapeHtml(accepted()));
+      // A word diff only helps a Proofread; a full rewrite would be all red and green.
+      const views = hasDiff ? ['result', 'changes', 'original'] : ['result', 'original'];
+      let view = hasDiff ? 'changes' : 'result';
 
+      // All views sit in one grid cell, so the box is as tall as the tallest
+      // and switching never moves the footer.
+      const viewsHtml = () => `
+        <div class="sr-view${view === 'result' ? ' sr-view-on' : ''}" data-v="result">${this.escapeHtml(accepted())}</div>
+        ${hasDiff ? `<div class="sr-view${view === 'changes' ? ' sr-view-on' : ''}${this.diffAnim ? ' sr-diff-anim' : ''}" data-v="changes">${this.diffHtml(ops, rejected)}</div>` : ''}
+        <div class="sr-view sr-view-original${view === 'original' ? ' sr-view-on' : ''}" data-v="original">${this.escapeHtml(originalText)}</div>`;
+      this.diffAnim = true;
+
+      const label = tone === 'translate' && this.currentLang && typeof SR_fullLangName === 'function'
+        ? `Translate → ${SR_fullLangName(this.currentLang)}` : this.getToneName(tone);
       document.getElementById('sr-modal-content').innerHTML = `
         ${notice ? `<p class="sr-notice" role="alert">${this.escapeHtml(notice)}</p>` : ''}
         ${this.toneChipsHtml(tone)}
         ${this.langRowHtml(tone, targetLang)}
-        <div class="sr-result-box sr-scrollable${hasDiff ? ' sr-diff-anim' : ''}" id="sr-rewritten-text">${boxHtml()}</div>
-        ${hasDiff ? '<div class="sr-diff-bar"><button type="button" class="sr-diff-toggle" id="sr-diff-toggle" aria-pressed="false">Show plain text</button><span class="sr-diff-tip">Click a change to undo just that one.</span></div>' : ''}
-        <details class="sr-original">
-          <summary>Show original</summary>
-          <div class="sr-original-text">${this.escapeHtml(originalText)}</div>
-        </details>
+        ${this.resultHeadHtml(label, views, view)}
+        <div class="sr-result-box sr-scrollable" id="sr-rewritten-text">${viewsHtml()}</div>
       `;
+      this.diffAnim = false;
 
       // Say where the text went, in plain words.
       const engineName = this.providerLabel(provider);
-      where = where || (provider === 'device' ? 'On this computer' : engineName ? `Sent to ${engineName}` : '');
-      const engineTag = where ? `<span class="sr-engine" title="${this.escapeHtml(where)}">${this.escapeHtml(where)}</span>` : '';
-      document.getElementById('sr-modal-footer').innerHTML = `
-        ${action ? `<button class="sr-btn sr-btn-primary" id="sr-action-btn">${this.escapeHtml(action.label)}</button>` : ''}
-        <button class="sr-btn ${action ? 'sr-btn-secondary' : 'sr-btn-primary'}" id="sr-copy-btn">Copy</button>
-        <span class="sr-hint">Click a tone to rewrite again · Esc to close</span>
-        ${engineTag}
-      `;
+      this.setWhere(where || (provider === 'device' ? 'On this computer' : engineName ? `Sent to ${engineName}` : ''));
+      const hintFor = () => (view === 'changes' ? `Click a change to undo it · ${kbd(`${MOD}C`)} copy · ${kbd('Esc')} close` : this.toneHint());
+      document.getElementById('sr-modal-footer').innerHTML = this.footerHtml({ copyEnabled: true, action: writeBack, actionLabel: writeBack && writeBack.label, hint: hintFor() });
 
       document.getElementById('sr-copy-btn').addEventListener('click', () => {
         this.copyToClipboard(accepted());
       });
-      if (action) {
-        document.getElementById('sr-action-btn').addEventListener('click', async () => {
-          if (await action.run(accepted())) this.hide();
+      if (writeBack) {
+        const btn = document.getElementById('sr-action-btn');
+        btn.addEventListener('click', async () => {
+          if (btn.disabled) return;
+          let ok = false;
+          try { ok = await writeBack.run(accepted()); } catch (_) { ok = false; }
+          if (ok) {
+            btn.disabled = true;
+            btn.classList.add('sr-btn-done');
+            btn.innerHTML = `${ICON_CHECK}<span>${/^apply/i.test(writeBack.label) ? 'Applied' : 'Replaced'}</span>`;
+            setTimeout(() => this.hide(), 700);
+          } else {
+            btn.querySelector('span').textContent = 'Text changed: use Copy';
+          }
         });
       }
 
       const box = document.getElementById('sr-rewritten-text');
-      const toggle = document.getElementById('sr-diff-toggle');
-      if (toggle) {
-        toggle.addEventListener('click', () => {
-          plain = !plain;
-          box.classList.remove('sr-diff-anim'); // the reveal runs once per result
-          box.innerHTML = boxHtml();
-          toggle.setAttribute('aria-pressed', String(plain));
-          toggle.textContent = plain ? 'Show changes' : 'Show plain text';
-        });
+      const showView = (v) => {
+        view = v;
+        box.querySelectorAll('.sr-view').forEach((el) => el.classList.toggle('sr-view-on', el.dataset.v === v));
+        this.modal.querySelectorAll('.sr-seg-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
+        document.getElementById('sr-hint').innerHTML = hintFor();
+      };
+      this.modal.querySelectorAll('.sr-seg-btn').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
+      if (hasDiff) {
         const flip = (el) => {
           const g = Number(el.dataset.g);
           if (rejected.has(g)) rejected.delete(g); else rejected.add(g);
           this.currentRewrite = accepted();
-          box.classList.remove('sr-diff-anim');
-          box.innerHTML = boxHtml();
+          box.innerHTML = viewsHtml();
           const again = box.querySelector(`.sr-change[data-g="${g}"]`);
           if (again) again.focus();
         };
@@ -465,6 +545,7 @@
       }
       this.removeToast();
       if (!this.modal) this.createModal();
+      this.setWhere('');
 
       document.getElementById('sr-modal-content').innerHTML = `
         <div class="sr-error-content">
@@ -592,14 +673,15 @@
 
       document.getElementById('sr-modal-content').innerHTML = `
         ${this.toneChipsHtml('grammar')}
+        ${this.resultHeadHtml('Spots to check', [], null)}
         <div class="sr-result-box sr-scrollable" id="sr-coach-text">${html}</div>
         <p class="sr-coach-count" id="sr-coach-count">${count}</p>
       `;
-      const engineTag = where ? `<span class="sr-engine" title="${this.escapeHtml(where)}">${this.escapeHtml(where)}</span>` : '';
+      this.setWhere(where);
       document.getElementById('sr-modal-footer').innerHTML = spots || !ops
-        ? `<button class="sr-btn sr-btn-primary" id="sr-coach-self">I'll fix them</button>
-           <button class="sr-btn sr-btn-secondary" id="sr-coach-reveal">Show fixes</button>${engineTag}`
-        : `<button class="sr-btn sr-btn-primary" id="sr-coach-self">Close</button>${engineTag}`;
+        ? `<span class="sr-hint">${kbd('Esc')} close</span><button type="button" class="sr-btn sr-btn-secondary" id="sr-coach-reveal">Show fixes</button>
+           <button type="button" class="sr-btn sr-btn-primary" id="sr-coach-self">I'll fix them</button>`
+        : `<span class="sr-hint">${kbd('Esc')} close</span><button type="button" class="sr-btn sr-btn-primary" id="sr-coach-self">Close</button>`;
       document.getElementById('sr-coach-self').addEventListener('click', () => this.hide());
       const reveal = document.getElementById('sr-coach-reveal');
       if (reveal) reveal.addEventListener('click', () => { if (onReveal) onReveal(); });
@@ -629,6 +711,7 @@
     }
 
     hide() {
+      this.switching = false;
       if (this.modal) {
         this.modal.classList.remove('sr-visible');
         this.isVisible = false;
@@ -672,14 +755,14 @@
     showCopySuccess() {
       const copyBtn = document.getElementById('sr-copy-btn');
       if (copyBtn) {
-        const originalText = copyBtn.textContent;
-        copyBtn.textContent = 'Copied';
-        copyBtn.classList.add('sr-success');
-        
-        setTimeout(() => {
-          copyBtn.textContent = originalText;
-          copyBtn.classList.remove('sr-success');
-        }, 2000);
+        clearTimeout(this.copyTimer);
+        copyBtn.classList.add('sr-btn-done');
+        copyBtn.innerHTML = `${ICON_CHECK}<span>Copied</span>`;
+        this.copyTimer = setTimeout(() => {
+          if (!copyBtn.isConnected) return;
+          copyBtn.classList.remove('sr-btn-done');
+          copyBtn.innerHTML = `${ICON_COPY}<span>Copy</span>`;
+        }, 1400);
       }
     }
 
@@ -727,6 +810,7 @@
         this.showError('Proofr was updated or reloaded. Reload this page to use it here.', { title: 'Reload this page' });
         return;
       }
+      this.switching = true;
       this.showLoading(this.currentText, tone, lang);
 
       try {
