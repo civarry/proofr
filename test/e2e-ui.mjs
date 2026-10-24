@@ -757,6 +757,64 @@ if (icon) {
   }
   check('the hover icon shows while the pointer is still moving over a paragraph', seen !== null && seen < 350, `${seen}ms`);
 }
+// A post split one paragraph per nested div (Facebook's shape): the menu
+// offers the whole post, which stops before the avatar, Follow and the
+// Like/Comment bar, and keeps emoji images and "See more" inside.
+{
+  await demo.bringToFront();
+  await demo.evaluate(() => {
+    const emoji = '<img alt="🙂" width="16" height="16" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E">';
+    const para = (t) => `<div dir="auto"><div><span>${t}</span></div></div>`;
+    const post = document.createElement('div');
+    post.id = 'fbpost';
+    post.style.cssText = 'width:620px;margin:40px 0;font:15px/1.4 sans-serif';
+    post.innerHTML = `<div class="hdr"><img width="40" height="40" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"><b>Page Author Name</b> <div role="button">Follow</div></div>
+      <div class="msg">${para('A headline for this post, long enough to count')}${para('October 24, 2026')}
+        ${para(`First body paragraph of the post, with a little emoji ${emoji} in it.`)}${para('Second body paragraph, saying something else entirely.')}
+        ${para('Third body paragraph, about the evidence and the numbers.')}${para('Last body paragraph of the post.')}<div role="button">See more</div></div>
+      <div class="bar"><div role="button"><svg width="18" height="18"></svg>Like</div><div role="button">Comment</div></div>`;
+    document.querySelector('.wrap').appendChild(post);
+    post.scrollIntoView({ block: 'center' });
+  });
+  await sleep(300);
+  const head = await (await demo.$('#fbpost .msg span')).boundingBox();
+  await demo.mouse.move(head.x + 30, head.y + 6); await sleep(200);
+  await demo.mouse.move(head.x + 60, head.y + 8); await sleep(400);
+  const icon3 = await demo.$('.sr-hover-icon');
+  check('hovering a post headline shows the icon', !!icon3);
+  if (icon3) {
+    await icon3.evaluate((el) => el.click()); await sleep(700);
+    const scope = await demo.evaluate(() => ({
+      btns: [...document.querySelectorAll('.sr-hover-scope-btn')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')),
+      outlined: document.querySelector('.sr-hover-target')?.tagName,
+    }));
+    check('the menu offers this paragraph or the whole post', scope.btns.join('|') === 'This paragraph*|All 6 paragraphs' && scope.outlined === 'SPAN', JSON.stringify(scope));
+    await demo.evaluate(() => document.querySelector('.sr-hover-scope-btn[data-scope="region"]').click()); await sleep(150);
+    await shot(demo, '3c-hover-scope.png');
+    const outline = await demo.evaluate(() => [...document.querySelectorAll('.sr-hover-target')].map((n) => n.className));
+    check('choosing the whole post moves the outline to the post text', outline.join() === 'msg sr-hover-target', JSON.stringify(outline));
+    const before = mockRequests.length;
+    await demo.evaluate(() => document.querySelector('.sr-hover-action[data-tone="tldr"]').click());
+    for (let i = 0; i < 30 && mockRequests.length === before; i++) await sleep(100);
+    await sleep(500);
+    const sent = (mockRequests.at(-1)?.messages || []).map((m) => m.content).join('\n');
+    check('Summarize gets the whole post: headline to last paragraph, emoji, no author, Follow, See more or Like bar',
+      /A headline for this post/.test(sent) && /Last body paragraph of the post\./.test(sent) && /emoji/.test(sent) && !/Page Author Name|Follow|Comment|See more/.test(sent),
+      sent.slice(-400));
+    await demo.keyboard.press('Escape'); await sleep(200);
+    // The choice is remembered for the next post.
+    await demo.mouse.move(5, 5); await sleep(300);
+    const p2 = await (await demo.$$('#fbpost .msg span'))[3].boundingBox();
+    await demo.mouse.move(p2.x + 30, p2.y + 6); await sleep(200);
+    await demo.mouse.move(p2.x + 60, p2.y + 8); await sleep(400);
+    const icon4 = await demo.$('.sr-hover-icon');
+    if (icon4) { await icon4.evaluate((el) => el.click()); await sleep(700); }
+    const again = await demo.evaluate(() => document.querySelector('.sr-hover-scope-btn[aria-pressed="true"]')?.dataset.scope);
+    check('the last scope picked is used again', again === 'region', String(again));
+    await demo.evaluate(() => document.querySelector('.sr-hover-scope-btn[data-scope="block"]')?.click());
+    await demo.evaluate(() => { document.body.click(); document.getElementById('fbpost').remove(); window.scrollTo(0, 0); });
+  }
+}
 await panel.bringToFront(); await clk(panel, '#hoverToggle'); await sleep(1200);
 const regs2 = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
 check('hover off unregisters page scripts', !regs2.some(r => r.id === 'proofr-hover'));

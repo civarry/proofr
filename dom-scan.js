@@ -206,6 +206,59 @@
     return null;
   }
 
+  // The larger run of text a paragraph belongs to: a post's whole message, a
+  // comment, an article body. Sites split these into one element per
+  // paragraph (Facebook nests each in its own <div>), so a hovered paragraph
+  // is often a title or one line of a longer piece. Climbs from the block
+  // and keeps the highest ancestor that is still only text: it stops before
+  // anything that isn't (a photo or avatar, a field, a real button, an
+  // embed), at an article/main boundary, or past MAX_REGION_CHARS. Inline
+  // links, emoji images and a short "See more" are text-sized and allowed.
+  // Runs on a click, not on hover, so reading layout here is fine.
+  const MAX_REGION_CHARS = 12000;
+  const MAX_REGION_DEPTH = 12;
+  // Returns true when el holds something that isn't text. Collects the text
+  // of allowed controls ("See more") into `skip`, so it isn't sent or counted.
+  function blocksText(el, skip) {
+    for (const node of el.querySelectorAll('img, video, canvas, svg, iframe, embed, object, input, textarea, select, button, [role="button"], [role="img"], [contenteditable="true"], [contenteditable=""]')) {
+      if (isOwnUI(node)) continue;
+      const tag = node.tagName;
+      if (tag === 'IMG' || tag === 'SVG' || node.getAttribute('role') === 'img') {
+        const r = node.getBoundingClientRect();
+        if (r.width <= 32 && r.height <= 32) continue; // an emoji or an inline icon
+        return true;
+      }
+      if (tag === 'BUTTON' || node.getAttribute('role') === 'button') {
+        // "See more" inside a post's text; a real control has more to it.
+        if ((node.innerText || '').trim().length <= 20 && !node.querySelector('img, svg, video')) {
+          const label = (node.innerText || '').trim();
+          if (!label || /^(see|show|read) (more|less)|^…|^\.\.\./i.test(label)) { if (label) skip.add(label); continue; }
+        }
+        return true;
+      }
+      return true;
+    }
+    return false;
+  }
+  const paragraphsIn = (text) => text.split(/\n+/).filter((l) => l.trim().length > 0).length;
+  function regionFor(block) {
+    if (!block || !block.el) return null;
+    let best = null;
+    let el = block.el.parentElement;
+    for (let depth = 0; el && depth < MAX_REGION_DEPTH; depth++, el = el.parentElement) {
+      if (el === document.body || el === document.documentElement) break;
+      if (isOwnUI(el) || isEditableContext(el) || SKIP_TAGS.has(el.tagName)) break;
+      const skip = new Set();
+      if (blocksText(el, skip)) break;
+      const text = (el.innerText || '').split('\n').filter((line) => !skip.has(line.trim())).join('\n').trim();
+      if (text.length > MAX_REGION_CHARS) break;
+      const paragraphs = paragraphsIn(text);
+      if (paragraphs >= 2 && text.length > block.text.length * 1.2) best = { el, text, paragraphs, simple: false };
+      if (el.matches('article, [role="article"], main, [role="main"]')) break;
+    }
+    return best;
+  }
+
   // invalidate(): forget everything, as after a page change (for tests).
-  self.SR_DOM = { resolveBlock, isSimpleBlock, isVisible, textToFragment, invalidate: () => { gen++; } };
+  self.SR_DOM = { resolveBlock, regionFor, isSimpleBlock, isVisible, textToFragment, invalidate: () => { gen++; } };
 })();
