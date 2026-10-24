@@ -213,6 +213,11 @@ const again = await panel.evaluate(() => document.querySelector('.rate-line [dat
 check('rating line: asked once more at 40, with "No thanks"', again === 'No thanks', String(again));
 await clk(panel, '.rate-line [data-rate="later"]'); await sleep(300);
 check('No thanks: never asked again', (await panel.evaluate(() => chrome.storage.local.get(['srRateAsked']))).srRateAsked === true);
+// Hidden characters in pasted AI text: gone from the result, and counted.
+await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 'we\u200b was\u00a0ready\u2060 today'; t.dispatchEvent(new Event('input')); });
+await clk(panel, '#sendBtn'); await sleep(2500);
+const hid = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1); return { out: turns.at(-1).outputText, line: c.querySelector('.result-count')?.textContent }; });
+check('Proofread takes hidden characters out of pasted text and says how many', !/[\u200b\u00a0\u2060]/.test(hid.out) && / · 3 hidden characters removed$/.test(hid.line || ''), JSON.stringify(hid));
 
 // 4b. Welcome try-it with a provider connected: real proofread, changes marked.
 {

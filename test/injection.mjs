@@ -84,7 +84,18 @@ for (const tone of ['grammar', 'professional', 'tldr', 'translate']) {
   assert.equal(proof('Thanks a lot :) see you'), 'Thanks a lot :) see you', 'emoticons keep their space');
   assert.equal(proof('Wait , what ?! Really ...'), 'Wait, what?! Really...', 'spaces before ending marks go');
   assert.equal(proof('Bonjour ! Ça va ?', 'Bonjour ! Ca va ?'), 'Bonjour ! Ça va ?', 'French spacing kept when the user writes it');
-  assert.equal(proof('Prix : 10 €'), 'Prix : 10 €', 'no-break spaces untouched');
+  assert.equal(proof('Prix\u00a0: 10\u00a0€', 'Prix\u00a0: 10\u00a0€'), 'Prix : 10 €', 'no-break spaces become plain, French spacing kept');
+  // Hidden characters from text copied out of chat apps and web pages go.
+  assert.equal(proof('Hel\u200blo\u2060 wor\u00adld\ufeff, see\u202fyou at 10\u00a0AM.\u200e'), 'Hello world, see you at 10 AM.', 'hidden characters removed');
+  assert.equal(SR_countHidden('Hel\u200blo\u2060 wor\u00adld\ufeff 10\u00a0AM'), 5);
+  assert.equal(SR_countHidden('plain text'), 0);
+  assert.equal(proof('Family 👨\u200d👩\u200d👧 and हिन्\u200dदी'), 'Family 👨\u200d👩\u200d👧 and हिन्\u200dदी', 'joiners inside emoji and scripts stay');
+  assert.equal(proof('a\u200d b \u200cc'), 'a b c', 'stray joiners next to plain letters go');
+  // A sentence split by blank lines is joined again; real paragraphs stay.
+  assert.equal(proof('enough time to check\n\n\n\nthe numbers.'), 'enough time to check the numbers.', 'broken sentence joined');
+  assert.equal(proof('First part.\n\nnext one starts lower.'), 'First part.\n\nnext one starts lower.', 'a finished sentence keeps its paragraph');
+  assert.equal(proof('Hi John,\n\nthanks for this.'), 'Hi John,\n\nthanks for this.', 'a greeting keeps its blank line');
+  assert.equal(proof('Shopping\n\nApples'), 'Shopping\n\nApples', 'a capitalized next line is a new paragraph');
   assert.equal(proof('- item\n  - nested\n\tcode()'), '- item\n  - nested\n\tcode()', 'indentation and tabs kept');
   assert.equal(proof('Line one  \nLine two'), 'Line one  \nLine two', 'Markdown hard break kept');
   assert.equal(proof('A.\n  \n\n \nB.'), 'A.\n\nB.', 'blank lines with stray spaces collapse');
@@ -117,6 +128,18 @@ for (const tone of ['grammar', 'professional', 'tldr', 'translate']) {
   await assert.rejects(SR_askCloud(provider, 'hello', 'Summarize'), (e) => e.name === 'SuspectOutput', 'ask refuses a leaked prompt');
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'The  report is ready .' }, finish_reason: 'stop' }] }) });
   assert.equal(await SR_rewrite(provider, 'teh report are ready', 'grammar', 'en'), 'The report is ready.', 'cloud Proofread normalizes spacing');
+  {
+    // The screenshot: a sentence broken by blank lines, spaces before marks.
+    const input = "I  have  been  working  on  the  project  for  several  weeks ,  but  the  final  report  still  isn't  ready .\n\n\n\n\nThe  team  was  suppose  to  review  it  yesterday ,  however  nobody  had  enough  time  to  check\n\n\n\nthe  numbers .";
+    const reply = "I have been working on the project for several weeks, but the final report still isn't ready.\n\nThe team was supposed to review it yesterday; however, nobody had enough time to check\n\nthe numbers.";
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: reply }, finish_reason: 'stop' }] }) });
+    const out = await SR_rewrite(provider, input, 'grammar', 'en');
+    assert.ok(out.endsWith('enough time to check the numbers.'), `broken sentence joined in a real reply: ${JSON.stringify(out.slice(-40))}`);
+    const ops = SR_wordDiffForDisplay(input, out, 'grammar');
+    const changes = ops.filter((o) => o.type !== 'same');
+    assert.ok(changes.every((o) => /\S/.test(o.text)), `no whitespace-only marks: ${JSON.stringify(changes)}`);
+    assert.deepEqual(changes.map((o) => o.text.trim()), ['suppose', 'supposed', ',', ';', ','], 'only the real fixes are marked');
+  }
   globalThis.LanguageModel = {
     availability: async () => 'available',
     create: async () => ({ prompt: async (p) => p, destroy() {} }),

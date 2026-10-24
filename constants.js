@@ -227,16 +227,37 @@ const SR_PROMPT_MARKERS = [
   'internally review for clarity',
 ];
 
-// Proofread treats repeated spaces between words, a space before punctuation and
-// extra blank lines as mistakes. It leaves what carries meaning: indentation,
-// tabs, no-break spaces, trailing spaces (a Markdown line break), ".NET" and
-// ":)" (the mark must end the word), and French spacing before ; : ! ? when
-// `source` (the user's text) already spaces them that way.
+// Hidden characters that ride along in text copied from chat apps and web
+// pages: zero-width spaces, word joiners, byte-order marks, soft hyphens and
+// direction marks (removed), and no-break or thin spaces (made plain). A
+// zero-width joiner or non-joiner stays between two non-ASCII characters,
+// where emoji (👨‍👩‍👧) and scripts such as Hindi and Persian need it.
+const SR_HIDDEN_GONE = /[\u200B\u2060\uFEFF\u00AD\u180E\u200E\u200F\u202A-\u202E\u2066-\u2069]|[\u200C\u200D](?=[\x00-\x7F]|$)|(?<=[\x00-\x7F]|^)[\u200C\u200D]/g;
+const SR_HIDDEN_SPACE = /[\u00A0\u2000-\u200A\u202F\u205F]/g;
+
+function SR_stripHidden(text) {
+  return String(text ?? '').replace(SR_HIDDEN_GONE, '').replace(SR_HIDDEN_SPACE, ' ');
+}
+
+// How many hidden characters SR_stripHidden takes out or makes plain.
+function SR_countHidden(text) {
+  const s = String(text ?? '');
+  return (s.match(SR_HIDDEN_GONE) || []).length + (s.match(SR_HIDDEN_SPACE) || []).length;
+}
+
+// Proofread treats repeated spaces between words, a space before punctuation,
+// extra blank lines and hidden characters as mistakes, and joins a sentence
+// that blank lines split ("to check⏎⏎the numbers": a word, then a lowercase
+// line). It leaves what carries meaning: indentation, tabs, trailing spaces (a
+// Markdown line break), ".NET" and ":)" (the mark must end the word), a
+// paragraph after a finished sentence, a comma or a capital, and French
+// spacing before ; : ! ? when `source` (the user's text) already spaces them.
 function SR_normalizeProofreadSpacing(text, source = '') {
   const end = `(?=[\\s"'”’»,.;:!?…]|$)`;
   const marks = /[^\S\r\n][;:!?](?=\s|$)/.test(String(source || '')) ? ',.…' : ',.;:!?…';
-  return String(text ?? '')
+  return SR_stripHidden(text)
     .replace(/\r\n?/g, '\n')
+    .replace(/(?<=[\p{L}\p{N}])[ \t]*\n(?:[ \t]*\n)+[ \t]*(?=\p{Ll})/gu, ' ')
     .replace(/(?<=\S) {2,}(?=\S)/g, ' ')
     .replace(new RegExp(`(?<=\\S) +([${marks}])${end}`, 'g'), '$1')
     .replace(/([([{]) +(?=\S)/g, '$1')
@@ -1157,9 +1178,31 @@ function SR_wordDiff(before, after) {
 // The Proofread diff people see and count: spacing cleanup is applied without
 // asking, so it isn't marked as a change (a struck-through space is invisible)
 // or counted as a fix. Undo, not a rejected mark, brings the old spacing back.
+// A change that is only whitespace on both sides (a line break the model
+// moved, a space it dropped) is shown as unchanged text too.
 function SR_wordDiffForDisplay(before, after, tone) {
-  const source = tone === 'grammar' ? SR_normalizeProofreadSpacing(before, before) : before;
-  return SR_wordDiff(source, after);
+  if (tone !== 'grammar') return SR_wordDiff(before, after);
+  const ops = SR_wordDiff(SR_normalizeProofreadSpacing(before, before), after);
+  if (!ops) return ops;
+  const out = [];
+  const same = (text) => {
+    if (!text) return;
+    const last = out[out.length - 1];
+    if (last && last.type === 'same') last.text += text; else out.push({ type: 'same', text });
+  };
+  for (let k = 0; k < ops.length; k++) {
+    if (ops[k].type === 'same') { same(ops[k].text); continue; }
+    let del = '', ins = '';
+    const group = [];
+    for (; k < ops.length && ops[k].type !== 'same'; k++) {
+      group.push(ops[k]);
+      if (ops[k].type === 'del') del += ops[k].text; else ins += ops[k].text;
+    }
+    k--;
+    if (!/\S/.test(del) && !/\S/.test(ins)) same(ins);
+    else out.push(...group);
+  }
+  return out;
 }
 
 // Change-group id per op (-1 for unchanged text): each run of del/ins between
@@ -2534,6 +2577,8 @@ if (typeof self !== 'undefined') {
   self.SR_rewriteAuto = SR_rewriteAuto;
   self.SR_wordDiff = SR_wordDiff;
   self.SR_wordDiffForDisplay = SR_wordDiffForDisplay;
+  self.SR_stripHidden = SR_stripHidden;
+  self.SR_countHidden = SR_countHidden;
   self.SR_diffTokens = SR_diffTokens;
   self.SR_diffCount = SR_diffCount;
   self.SR_diffGroups = SR_diffGroups;
