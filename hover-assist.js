@@ -22,6 +22,20 @@
 
   const REMOVE_GRACE_MS = 400;
 
+  // After Proofr is reloaded or updated, a tab that was already open keeps
+  // this old copy, which can no longer reach the extension (Chrome throws
+  // "Extension context invalidated"). It then stops offering the icon and,
+  // if clicked, says to reload the page, where the new copy runs.
+  const STALE_MESSAGE = 'Proofr was updated or reloaded. Reload this page to use it here.';
+  function contextAlive() {
+    try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; }
+  }
+  function syncGet(keys) {
+    return new Promise((resolve) => {
+      try { chrome.storage.sync.get(keys, (r) => resolve((!chrome.runtime.lastError && r) || {})); } catch (_) { resolve({}); }
+    });
+  }
+
   let dwellTimer = null;
   let removeTimer = null;
   let icon = null;
@@ -75,6 +89,9 @@
     if (popover) { popover.remove(); popover = null; }
   }
 
+  function standDown() { enabled = false; clearDwell(); removePopover(); removeIcon(); }
+  function staleClick() { standDown(); showFeedback('error', STALE_MESSAGE, { title: 'Reload this page' }); }
+
   function positionNear(node, rect, opts) {
     opts = opts || {};
     const top = opts.below ? rect.bottom + 6 : rect.top - 6;
@@ -108,12 +125,13 @@
   async function togglePopover() {
     if (popover) { removePopover(); return; }
     if (!activeBlock || !icon) return;
+    if (!contextAlive()) { staleClick(); return; }
 
     // Capture now, before building/opening the popover — a real selection
     // made before clicking the icon is the strongest signal of intent.
     capturedSelection = captureSelection();
 
-    const { srTargetLang } = await new Promise((resolve) => chrome.storage.sync.get(['srTargetLang'], resolve));
+    const { srTargetLang } = await syncGet(['srTargetLang']);
     const targetLang = srTargetLang || 'en';
     const targetLangName = (typeof SR_fullLangName === 'function') ? SR_fullLangName(targetLang) : targetLang;
     // "Translate → English" on a page that's already English is a no-op.
@@ -220,6 +238,7 @@
 
   async function runHoverAsk(instruction) {
     if (busy || !activeBlock) return;
+    if (!contextAlive()) { staleClick(); return; }
     const block = activeBlock;
     const selection = capturedSelection;
     const sourceText = selection ? selection.text : block.text;
@@ -245,6 +264,7 @@
 
   async function runHoverAction(tone) {
     if (busy || !activeBlock) return;
+    if (!contextAlive()) { staleClick(); return; }
     const block = activeBlock;
     const selection = capturedSelection;
     const sourceText = selection ? selection.text : block.text;
@@ -252,7 +272,7 @@
     removePopover();
     if (icon) icon.classList.add('sr-hover-busy');
 
-    const { srTargetLang } = await new Promise((resolve) => chrome.storage.sync.get(['srTargetLang'], resolve));
+    const { srTargetLang } = await syncGet(['srTargetLang']);
     const targetLang = srTargetLang || 'en';
     const response = await sendMessageWithTimeout({ action: 'hoverRewrite', text: sourceText, tone, targetLang });
 
@@ -284,6 +304,7 @@
     if (target.closest && target.closest('.sr-hover-icon')) { clearDwell(); return; }
     clearDwell();
     dwellTimer = setTimeout(() => {
+      if (!contextAlive()) { standDown(); return; }
       if (typeof SR_DOM === 'undefined') return;
       const block = SR_DOM.resolveBlock(target);
       if (block) { cancelScheduledRemove(); showIcon(block); }
@@ -302,7 +323,7 @@
 
   // Off by default. Watched live so toggling it in the side panel applies to
   // already-open tabs without a reload.
-  chrome.storage.sync.get(['srHoverAssist'], (r) => { enabled = !!r.srHoverAssist; });
+  syncGet(['srHoverAssist']).then((r) => { enabled = !!r.srHoverAssist; });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'sync' || !changes.srHoverAssist) return;
     enabled = !!changes.srHoverAssist.newValue;

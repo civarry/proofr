@@ -109,6 +109,8 @@ PUPPETEER=/path/to/puppeteer.js node test/e2e-warm.mjs
 
 # Update from the published 1.2.4 to the packaged zip (run store/package.sh first)
 PUPPETEER=/path/to/puppeteer.js node test/e2e-upgrade.mjs
+# After Proofr is reloaded or updated, an open tab's old copy says to reload the page instead of throwing
+PUPPETEER=/path/to/puppeteer.js node test/e2e-orphan.mjs
 ```
 
 Each script exits non-zero if any check fails. On macOS, Chrome stops painting while the display sleeps or the screen is locked, and the browser tests time out. Run `caffeinate -u -t 600 &` first for a sleeping display; a locked screen has to be unlocked.

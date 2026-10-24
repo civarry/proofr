@@ -224,7 +224,15 @@ const HOVER_SCRIPT = {
   runAt: 'document_end',
 };
 
-async function syncHoverScripts() {
+// One at a time: turning hover on fires both permissions.onAdded and the
+// storage change, and two overlapping runs both see "not registered" and
+// both register ("Duplicate script ID"). Each run waits for the last.
+let hoverSync = Promise.resolve();
+function syncHoverScripts() {
+  hoverSync = hoverSync.catch(() => {}).then(syncHoverScriptsNow);
+  return hoverSync;
+}
+async function syncHoverScriptsNow() {
   const [{ srHoverAssist }, granted, registered] = await Promise.all([
     chrome.storage.sync.get(['srHoverAssist']),
     chrome.permissions.contains({ origins: ['<all_urls>'] }),

@@ -440,7 +440,7 @@
         line.className = 'sr-rate';
         line.innerHTML = `Finding Proofr useful? A rating helps other people find it. <a href="${SR_REVIEWS_URL}" target="_blank" rel="noopener" id="sr-rate-link">Rate it</a> <button type="button" class="sr-rate-dismiss" id="sr-rate-dismiss">${SR_rateDecline(srRateAsked)}</button>`;
         footer.appendChild(line);
-        const done = (choice) => { chrome.storage.local.set({ srRateAsked: SR_rateAfter(choice, rewriteStats, srRateAsked) }); line.remove(); };
+        const done = (choice) => { try { chrome.storage.local.set({ srRateAsked: SR_rateAfter(choice, rewriteStats, srRateAsked) }); } catch (_) { /* Proofr was reloaded */ } line.remove(); };
         line.querySelector('#sr-rate-link').addEventListener('click', () => done('rate'));
         line.querySelector('#sr-rate-dismiss').addEventListener('click', () => done('later'));
       } catch (_) {
@@ -719,14 +719,26 @@
 
     rewriteWithTone(tone, targetLang) {
       const lang = targetLang || this.currentLang;
+      // A dialog left open from before Proofr was reloaded or updated can no
+      // longer reach it (Chrome throws "Extension context invalidated").
+      let alive = false;
+      try { alive = !!chrome.runtime.id; } catch (_) { /* gone */ }
+      if (!alive) {
+        this.showError('Proofr was updated or reloaded. Reload this page to use it here.', { title: 'Reload this page' });
+        return;
+      }
       this.showLoading(this.currentText, tone, lang);
 
-      chrome.runtime.sendMessage({
-        action: 'rewriteWithTone',
-        text: this.currentText,
-        tone: tone,
-        targetLang: lang
-      });
+      try {
+        chrome.runtime.sendMessage({
+          action: 'rewriteWithTone',
+          text: this.currentText,
+          tone: tone,
+          targetLang: lang
+        });
+      } catch (_) {
+        this.showError('Proofr was updated or reloaded. Reload this page to use it here.', { title: 'Reload this page' });
+      }
     }
   }
 
