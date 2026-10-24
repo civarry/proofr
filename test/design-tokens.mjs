@@ -33,15 +33,23 @@ for (const [file, css] of Object.entries(surfaces)) {
 }
 
 // Light and dark palettes are read separately: the dark set lives in the
-// file's prefers-color-scheme: dark block.
+// file's :root[data-theme="dark"] block (data-sr-theme on web pages), which
+// theme.js turns on from Settings → Appearance. A prefers-color-scheme rule
+// would ignore that setting, so none may remain.
 const tokensIn = (css) => Object.fromEntries([...css.matchAll(/(--[\w-]+):\s*(#[0-9a-fA-F]{3,8})/g)].map((m) => [m[1], m[2].toLowerCase()]));
+for (const [file, css] of Object.entries(surfaces)) {
+  if (/prefers-color-scheme/.test(css)) fail(`${file}: a prefers-color-scheme rule ignores Settings → Appearance; use the data-theme block`);
+}
 const split = (css) => {
-  const i = css.indexOf('@media (prefers-color-scheme: dark)');
+  const m = css.match(/:root\[data-(?:sr-)?theme="dark"\]\s*\{/);
+  const i = m ? m.index : -1;
   if (i < 0) return { light: tokensIn(css), dark: null };
   // the dark block: from its opening brace to the matching close
   let depth = 0, j = css.indexOf('{', i), start = j;
   for (; j < css.length; j++) { if (css[j] === '{') depth++; else if (css[j] === '}' && --depth === 0) break; }
-  return { light: tokensIn(css.slice(0, i) + css.slice(j + 1)), dark: tokensIn(css.slice(start, j)) };
+  const rest = css.slice(0, i) + css.slice(j + 1);
+  // Other dark-only rules (a selector under the dark root) aren't light tokens.
+  return { light: tokensIn(rest.replace(/:root\[data-(?:sr-)?theme="dark"\][^{]*\{[^}]*\}/g, '')), dark: tokensIn(css.slice(start, j)) };
 };
 const lum = (hex) => {
   let h = hex.replace('#', '');

@@ -216,6 +216,13 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
 // in the side panel requests host access (a user gesture there); this keeps
 // the registered scripts in step with that setting and that permission.
 const HOVER_SCRIPT_ID = 'proofr-hover';
+const HOVER_SCRIPT = {
+  id: HOVER_SCRIPT_ID,
+  matches: ['<all_urls>'],
+  js: ['constants.js', 'theme.js', 'dom-scan.js', 'hover-assist.js', 'content.js'],
+  css: ['modal.css'],
+  runAt: 'document_end',
+};
 
 async function syncHoverScripts() {
   const [{ srHoverAssist }, granted, registered] = await Promise.all([
@@ -225,13 +232,10 @@ async function syncHoverScripts() {
   ]);
   const want = !!srHoverAssist && granted;
   if (want && registered.length === 0) {
-    await chrome.scripting.registerContentScripts([{
-      id: HOVER_SCRIPT_ID,
-      matches: ['<all_urls>'],
-      js: ['constants.js', 'dom-scan.js', 'hover-assist.js', 'content.js'],
-      css: ['modal.css'],
-      runAt: 'document_end',
-    }]);
+    await chrome.scripting.registerContentScripts([HOVER_SCRIPT]);
+  } else if (want && (registered[0].js || []).join() !== HOVER_SCRIPT.js.join()) {
+    // Registrations outlive updates; one from an older version gets this version's files.
+    await chrome.scripting.updateContentScripts([HOVER_SCRIPT]);
   } else if (!want && registered.length > 0) {
     await chrome.scripting.unregisterContentScripts({ ids: [HOVER_SCRIPT_ID] });
   }
@@ -605,7 +609,7 @@ async function ensureContentAssets(tabId) {
     if (alreadyLoaded) return;
 
     await chrome.scripting.insertCSS({ target: { tabId }, files: ['modal.css'] });
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['constants.js', 'content.js'] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['constants.js', 'theme.js', 'content.js'] });
   } catch (error) {
     console.warn('Could not inject Proofr into this page:', error?.message || error);
   }

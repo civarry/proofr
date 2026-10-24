@@ -385,8 +385,19 @@ function updateEngineHint(engine) {
   refs.engineHint.textContent = ENGINE_CAPTIONS[engine] || '';
 }
 
+async function refreshThemeSeg() {
+  let theme = 'auto';
+  try { theme = (await chrome.storage.sync.get(['srTheme'])).srTheme || 'auto'; } catch { /* Auto */ }
+  refs.themeSeg.querySelectorAll('.seg-btn').forEach((btn) => {
+    const on = btn.dataset.value === theme;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
 async function refreshSettingsPanel() {
   const { engine } = await Settings.get();
+  await refreshThemeSeg();
 
   refs.engineSeg.querySelectorAll('.seg-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.value === engine);
@@ -2154,7 +2165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'tabBar', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
-    'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint',
+    'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint', 'themeSeg',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
     'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progStart', 'progStartFill', 'progStartText', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
@@ -2218,6 +2229,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearTimeout(clearTimer);
     refs.panelNotice.classList.add('hidden');
     renderThread();
+  });
+
+  // Settings panel: appearance (instant-apply; theme.js repaints every open
+  // Proofr page and web page from the storage change)
+  refs.themeSeg.querySelectorAll('.seg-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try { await chrome.storage.sync.set({ srTheme: btn.dataset.value }); } catch { /* ignore */ }
+      await refreshThemeSeg();
+      showSavedToast();
+    });
   });
 
   // Settings panel: engine (instant-apply segmented control)
