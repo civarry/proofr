@@ -274,9 +274,33 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   const n = await panel.evaluate(() => document.querySelectorAll('.turn').length);
   await panel.evaluate(() => document.getElementById('btnClearHistory').click()); await sleep(400);
   const cleared = await panel.evaluate(() => document.querySelectorAll('.turn').length);
-  await panel.evaluate(() => document.getElementById('btnUndoClear')?.click()); await sleep(400);
+  await panel.evaluate(() => document.getElementById('btnUndo')?.click()); await sleep(400);
   const back = await panel.evaluate(() => document.querySelectorAll('.turn').length);
   check('clear history is immediate with Undo (no confirm dialog)', n > 0 && cleared === 0 && back === n, `${n} -> ${cleared} -> ${back}`);
+}
+
+// 4g'. Deleting one entry removes your text and its result together, from the
+// screen and from storage; Undo puts it back in the same place.
+{
+  await panel.bringToFront();
+  const ids = () => panel.evaluate(() => [...document.querySelectorAll('.turn')].map((t) => t.dataset.id));
+  const stored = () => panel.evaluate(async () => ((await chrome.storage.local.get('turnLog')).turnLog || []).map((t) => t.id));
+  const before = await ids();
+  const target = before[0]; // the first, so Undo must put it back on top, not at the end
+  const hiddenIdle = await panel.evaluate(() => getComputedStyle(document.querySelectorAll('.turn')[0].querySelector('.turn-delete')).opacity);
+  await panel.evaluate((id) => document.querySelector(`.turn[data-id="${id}"]`).scrollIntoView({ block: 'center' }), target);
+  await panel.hover(`.turn[data-id="${target}"] .assistant-body`); await sleep(200);
+  const shownHover = await panel.evaluate((id) => getComputedStyle(document.querySelector(`.turn[data-id="${id}"] .turn-delete`)).opacity, target);
+  check('an entry\'s delete button shows only on hover', hiddenIdle === '0' && shownHover === '1', `${hiddenIdle} / ${shownHover}`);
+  await clk(panel, `.turn[data-id="${target}"] .turn-delete`); await sleep(400);
+  const afterDom = await ids(); const afterStore = await stored();
+  check('delete removes that one entry (text and result) from the thread and storage',
+    before.length >= 2 && afterDom.length === before.length - 1 && !afterDom.includes(target) && !afterStore.includes(target) && afterStore.length === afterDom.length,
+    `${before.length} -> ${afterDom.length}, stored ${afterStore.length}`);
+  const notice = await panel.evaluate(() => document.getElementById('panelNotice').textContent);
+  await panel.evaluate(() => document.getElementById('btnUndo')?.click()); await sleep(400);
+  const undone = await ids(); const undoneStore = await stored();
+  check('Undo puts the deleted entry back in the same place', /Entry deleted/.test(notice) && JSON.stringify(undone) === JSON.stringify(before) && JSON.stringify(undoneStore) === JSON.stringify(before), notice);
 }
 
 // 4h. The mode list stays one line per mode, even in a narrow panel.
