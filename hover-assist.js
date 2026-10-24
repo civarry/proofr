@@ -47,6 +47,9 @@
   let popover = null;
   let activeBlock = null; // { el, text, simple }
   let capturedSelection = null; // { text } — a manual selection made before clicking the icon
+  let region = null; // the larger text the hovered paragraph belongs to (SR_DOM.regionFor), when there is one
+  let useRegion = false; // the menu's scope: this paragraph, or all of the region
+  let preferRegion = false; // the last scope picked, used again next time
   let busy = false;
   let enabled = false;
 
@@ -82,9 +85,22 @@
     if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
   }
 
+  // The outline marks exactly the text an action will use.
+  function markScope() {
+    document.querySelectorAll('.sr-hover-target').forEach((n) => n.classList.remove('sr-hover-target'));
+    const el = useRegion && region ? region.el : activeBlock && activeBlock.el;
+    if (el) el.classList.add('sr-hover-target');
+  }
+  function scopeText(block) {
+    if (capturedSelection) return capturedSelection.text;
+    return useRegion && region ? region.text : block.text;
+  }
+
   function removeIcon() {
     cancelScheduledRemove();
-    if (activeBlock && activeBlock.el) activeBlock.el.classList.remove('sr-hover-target');
+    document.querySelectorAll('.sr-hover-target').forEach((n) => n.classList.remove('sr-hover-target'));
+    region = null;
+    useRegion = false;
     if (icon) { icon.remove(); icon = null; }
     activeBlock = null;
     capturedSelection = null;
@@ -92,6 +108,8 @@
 
   function removePopover() {
     if (popover) { popover.remove(); popover = null; }
+    // Closing the menu without acting puts the outline back on the paragraph.
+    if (!busy && useRegion) { useRegion = false; markScope(); }
   }
 
   function standDown() { enabled = false; clearDwell(); removePopover(); removeIcon(); }
@@ -144,10 +162,20 @@
     const tones = READING_TONES.filter((id) => !(id === 'translate' && pageLang && pageLang === targetLang.split('-')[0]));
     // The Ask box appears whenever some AI can answer: on-device or a provider.
     const { ready: canAsk } = await sendMessageWithTimeout({ action: 'askReady' }, 3000);
+    if (!activeBlock || !icon) return;
+
+    // A selection is exact; otherwise offer the whole post or article too.
+    region = !capturedSelection && typeof SR_DOM !== 'undefined' && SR_DOM.regionFor ? SR_DOM.regionFor(activeBlock) : null;
+    useRegion = !!region && preferRegion;
+    markScope();
 
     popover = document.createElement('div');
     popover.className = 'sr-hover-popover';
-    popover.innerHTML = tones.map((id) => {
+    const scopeRow = region ? `<div class="sr-hover-scope" role="group" aria-label="Use">
+        <button type="button" class="sr-hover-scope-btn" data-scope="block" aria-pressed="${!useRegion}">This paragraph</button>
+        <button type="button" class="sr-hover-scope-btn" data-scope="region" aria-pressed="${useRegion}">All ${region.paragraphs} paragraphs</button>
+      </div>` : '';
+    popover.innerHTML = scopeRow + tones.map((id) => {
       const tone = (typeof SR_getTone === 'function') ? SR_getTone(id) : { name: id };
       const label = id === 'translate' ? `Translate → ${targetLangName}` : tone.name;
       return `<button type="button" class="sr-hover-action" data-tone="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
@@ -158,6 +186,17 @@
           <button type="submit" class="sr-hover-ask-send" aria-label="Ask" title="Ask">${ICON_SEND}</button>
         </form>` : '');
     positionNear(popover, icon.getBoundingClientRect(), { below: true });
+
+    popover.querySelectorAll('.sr-hover-scope-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        useRegion = btn.dataset.scope === 'region';
+        preferRegion = useRegion;
+        try { chrome.storage.local.set({ srHoverScope: useRegion ? 'region' : 'block' }); } catch (_) { /* Proofr was reloaded */ }
+        popover.querySelectorAll('.sr-hover-scope-btn').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+        markScope();
+      });
+    });
 
     popover.querySelectorAll('.sr-hover-action').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -245,8 +284,7 @@
     if (busy || !activeBlock) return;
     if (!contextAlive()) { staleClick(); return; }
     const block = activeBlock;
-    const selection = capturedSelection;
-    const sourceText = selection ? selection.text : block.text;
+    const sourceText = scopeText(block);
     busy = true;
     removePopover();
     if (icon) icon.classList.add('sr-hover-busy');
@@ -271,8 +309,7 @@
     if (busy || !activeBlock) return;
     if (!contextAlive()) { staleClick(); return; }
     const block = activeBlock;
-    const selection = capturedSelection;
-    const sourceText = selection ? selection.text : block.text;
+    const sourceText = scopeText(block);
     busy = true;
     removePopover();
     if (icon) icon.classList.add('sr-hover-busy');
@@ -336,6 +373,7 @@
   // Off by default. Watched live so toggling it in the side panel applies to
   // already-open tabs without a reload.
   syncGet(['srHoverAssist']).then((r) => { enabled = !!r.srHoverAssist; });
+  try { chrome.storage.local.get(['srHoverScope'], (r) => { preferRegion = !!(r && r.srHoverScope === 'region'); }); } catch (_) { /* Proofr was reloaded */ }
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'sync' || !changes.srHoverAssist) return;
     enabled = !!changes.srHoverAssist.newValue;
