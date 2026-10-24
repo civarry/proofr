@@ -121,6 +121,17 @@ Each script exits non-zero if any check fails. On macOS, Chrome stops painting w
 
 `test/run_injection.mjs` is a live prompt-injection check against Groq and needs a real key: `GROQ_API_KEY=... node test/run_injection.mjs`.
 
+## What's new in 1.4.0
+
+- Proofread fixes extra spaces, rejoins sentences split by blank lines, and removes hidden characters from copied AI text (zero-width spaces and the like), saying how many it took out.
+- Removed words are red and struck through, everywhere a Proofread shows its changes.
+- Add as many custom OpenAI-compatible endpoints as you need, each with its own name, URL, key, and model, saved with one Save button.
+- Settings → Appearance: Auto, Light, or Dark, for the side panel, the welcome tab, and Proofr on web pages.
+- Side panel: compact result cards with a character count, a Try as menu of six tones, and a trash button per result with Undo. Enter adds a new line; Cmd/Ctrl+Enter sends, as the Send button shows.
+- The dialog on web pages keeps all 12 tones in view and shows the result, the changes, or your original in one box, without changing size. Replace stays available when you pick another tone there.
+- Hover actions: the icon shows in about 70ms, even while the pointer moves; a long post (Facebook and similar) can be used whole with "All N paragraphs"; "Ask about this…" works with on-device AI; Alt+Shift+H pauses and resumes them on every page.
+- After Proofr updates, an open tab says to reload the page instead of failing silently.
+
 ## What's new in 1.3.1
 
 - Practice is a short game: pick the fix, tap the mistake, or type the word, with each word's level rising as you get it right. Three modes: Quick (10 questions), Keep going (with a checkpoint every 10), and Mix-ups (classic confusions like its/it's).
