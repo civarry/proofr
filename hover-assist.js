@@ -8,7 +8,11 @@
   if (window.__srHoverAssistLoaded) return;
   window.__srHoverAssistLoaded = true;
 
-  const DWELL_MS = 220;
+  // How long the pointer stays on an element before its icon shows. Counted
+  // from entering the element, not from the last mouse move, so the icon
+  // appears while the pointer is still moving; long enough that a fast sweep
+  // across a page doesn't flash an icon on every line it crosses.
+  const DWELL_MS = 70;
   // Built for text that isn't yours (someone else's comment, an article
   // paragraph). Writing tones live in the right-click menu and side panel.
   // Quotes too, so a label can never close an attribute.
@@ -37,6 +41,7 @@
   }
 
   let dwellTimer = null;
+  let dwellTarget = null; // the element the running timer is for
   let removeTimer = null;
   let icon = null;
   let popover = null;
@@ -302,8 +307,15 @@
     // the click to fall through to the page underneath (which is what was
     // actually clearing the selection). Leave the current icon alone here.
     if (target.closest && target.closest('.sr-hover-icon')) { clearDwell(); return; }
+    // Still inside the block that has the icon: nothing to work out.
+    if (icon && activeBlock && activeBlock.el.contains(target)) { clearDwell(); cancelScheduledRemove(); return; }
+    // Still settling on the same element: keep its timer running.
+    if (dwellTimer && target === dwellTarget) return;
     clearDwell();
+    dwellTarget = target;
     dwellTimer = setTimeout(() => {
+      dwellTimer = null;
+      dwellTarget = null;
       if (!contextAlive()) { standDown(); return; }
       if (typeof SR_DOM === 'undefined') return;
       const block = SR_DOM.resolveBlock(target);
