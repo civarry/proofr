@@ -412,7 +412,35 @@ async function explainBlockedPage(tabId, gestureStillValid) {
   chrome.action.setTitle({ tabId, title: 'Proofr can’t work on this page. Click to paste the text in the panel.' });
 }
 
+// Hover actions on and off from the keyboard, so the icon never gets in the
+// way. A pause, not the Settings switch: switching off gives up page access,
+// and only a click in the side panel can ask for it back. Paused, the page
+// scripts stay but show nothing, on every tab at once (srHoverPaused).
+async function toggleHoverPause(tab) {
+  const { srHoverAssist, srHoverPaused } = await chrome.storage.sync.get(['srHoverAssist', 'srHoverPaused']);
+  const cmd = (await chrome.commands.getAll().catch(() => [])).find((c) => c.name === 'toggle-hover');
+  const keys = cmd && cmd.shortcut ? cmd.shortcut : 'The shortcut';
+  let message;
+  if (!srHoverAssist) {
+    message = 'Hover actions are off. Turn them on in Proofr’s settings, under On web pages.';
+  } else {
+    const paused = !srHoverPaused;
+    await chrome.storage.sync.set({ srHoverPaused: paused });
+    message = paused ? `Hover actions paused. ${keys} turns them back on.` : `Hover actions on. ${keys} pauses them.`;
+  }
+  if (tab && tab.id != null && !isBlockedPage(tab.url)) {
+    await ensureContentAssets(tab.id);
+    inject(tab.id, showHoverNote, [message]);
+  }
+  return message;
+}
+
+function showHoverNote(message) {
+  if (window.SmartRewriteModal) window.SmartRewriteModal.showSuccess(message);
+}
+
 chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (command === 'toggle-hover') { await toggleHoverPause(tab); return; }
   if (!tab || tab.id == null) return;
   if (command === 'review-last') {
     if (isBlockedPage(tab.url)) return;

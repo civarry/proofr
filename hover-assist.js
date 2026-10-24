@@ -52,6 +52,7 @@
   let preferRegion = false; // the last scope picked, used again next time
   let busy = false;
   let enabled = false;
+  let paused = false; // the pause shortcut (srHoverPaused), on every tab at once
 
   // A brief grace period before actually tearing the icon down when the
   // mouse briefly crosses a gap (margin/padding with no text under it) on
@@ -334,7 +335,7 @@
   }
 
   document.addEventListener('mousemove', (e) => {
-    if (!enabled || popover || busy) return; // don't fight an open popover or an in-flight action
+    if (!enabled || paused || popover || busy) return; // don't fight an open popover or an in-flight action
     const target = e.target;
     if (!target || target === document.body || target === document.documentElement) return;
     // Settling onto the icon itself (the natural pause right before clicking
@@ -372,11 +373,12 @@
 
   // Off by default. Watched live so toggling it in the side panel applies to
   // already-open tabs without a reload.
-  syncGet(['srHoverAssist']).then((r) => { enabled = !!r.srHoverAssist; });
+  syncGet(['srHoverAssist', 'srHoverPaused']).then((r) => { enabled = !!r.srHoverAssist; paused = !!r.srHoverPaused; });
   try { chrome.storage.local.get(['srHoverScope'], (r) => { preferRegion = !!(r && r.srHoverScope === 'region'); }); } catch (_) { /* Proofr was reloaded */ }
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'sync' || !changes.srHoverAssist) return;
-    enabled = !!changes.srHoverAssist.newValue;
-    if (!enabled) { clearDwell(); removePopover(); removeIcon(); }
+    if (area !== 'sync' || !(changes.srHoverAssist || changes.srHoverPaused)) return;
+    if (changes.srHoverAssist) enabled = !!changes.srHoverAssist.newValue;
+    if (changes.srHoverPaused) paused = !!changes.srHoverPaused.newValue;
+    if (!enabled || paused) { clearDwell(); removePopover(); removeIcon(); }
   });
 })();

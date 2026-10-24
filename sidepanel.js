@@ -413,6 +413,7 @@ async function refreshSettingsPanel() {
 
   const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
   refs.hoverToggle.checked = !!srHoverAssist;
+  await refreshHoverKeyHint();
   const { srInsightsOn, srCoach, srPracticeSound } = await chrome.storage.sync.get(['srInsightsOn', 'srCoach', 'srPracticeSound']);
   refs.soundToggle.checked = srPracticeSound === true;
   refs.insightsToggle.checked = srInsightsOn !== false;
@@ -1548,6 +1549,18 @@ const SUPPORT_URL = '';
 // chrome://extensions/shortcuts. Read the real one so every mention matches,
 // in the platform's own notation (Chrome returns ⌥⇧P on a Mac).
 let shortcutText = '';
+// Under the Hover actions switch, while it's on: the pause shortcut, and
+// whether it's paused right now.
+async function refreshHoverKeyHint() {
+  const { srHoverAssist, srHoverPaused } = await chrome.storage.sync.get(['srHoverAssist', 'srHoverPaused']);
+  const cmd = (await chrome.commands.getAll().catch(() => [])).find((c) => c.name === 'toggle-hover');
+  const keys = cmd && cmd.shortcut;
+  refs.hoverKeyHint.hidden = !srHoverAssist;
+  refs.hoverKeyHint.textContent = !keys ? 'Set a shortcut to pause it on chrome://extensions/shortcuts.'
+    : srHoverPaused ? `Paused on every page. Press ${keys} on any page to turn it back on.`
+    : `Press ${keys} on any page to pause it, and again to turn it back on.`;
+}
+
 async function loadShortcut() {
   const commands = await chrome.commands.getAll().catch(() => []);
   const cmd = commands.find((c) => c.name === 'proofread-selection');
@@ -2353,7 +2366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'tabBar', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
-    'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint', 'themeSeg',
+    'hoverToggle', 'hoverHint', 'hoverKeyHint', 'engineSeg', 'engineHint', 'themeSeg',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'undoToast', 'undoToastText', 'btnUndo', 'sendTip', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
     'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progStart', 'progStartFill', 'progStartText', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
@@ -2446,12 +2459,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (refs.hoverToggle.checked) {
       chrome.permissions.request({ origins: ['<all_urls>'] }).then(async (granted) => {
         refs.hoverToggle.checked = granted;
-        await Settings.set({ srHoverAssist: granted });
+        await Settings.set({ srHoverAssist: granted, srHoverPaused: false });
+        await refreshHoverKeyHint();
         refs.hoverHint.textContent = granted ? '' : 'Hover actions stay off: Chrome needs your permission to show the icon on pages.';
         if (granted) showSavedToast();
       }, () => { refs.hoverToggle.checked = false; });
     } else {
       Settings.set({ srHoverAssist: false }).then(async () => {
+        await refreshHoverKeyHint();
         await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
         refs.hoverHint.textContent = '';
         // A provider outside the CORS-verified presets may have been relying on that broad access.
@@ -2671,6 +2686,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await consumePanelHandoff();
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && (changes.srPanelPrefill?.newValue || changes.srPanelNotice?.newValue)) consumePanelHandoff();
+    // The pause shortcut was pressed on a page while Settings is open.
+    if (area === 'sync' && changes.srHoverPaused) refreshHoverKeyHint();
   });
   chrome.action.setBadgeText({ text: '' }).catch(() => {});
 

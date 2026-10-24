@@ -253,6 +253,12 @@ try {
       M.showResult('teh report are ready, and the long original sentence goes on for a while here.', 'The report is ready, and the long original sentence goes on for a while here.', 'grammar', 'custom', null, { action: { label: 'Replace anyway', otherLabel: 'Replace selection', run: (t) => { window.__replaced = t; return true; } } });
       const proof = { views: views(), group: document.querySelector('.sr-seg').getAttribute('role'), pressed: [...document.querySelectorAll('.sr-chip[aria-pressed="true"]')].map((c) => c.dataset.tone), check: !!document.querySelector('.sr-chip-active .sr-chip-check'), label: document.getElementById('sr-result-label').textContent };
       const heights = [h()];
+      // A long original and a short result: the Result view scrolls only over its own text.
+      M.showResult('teh report. ' + 'Words of the original, kept as written here. '.repeat(40), 'The report.', 'professional', 'custom');
+      const fit = (() => { const box = document.getElementById('sr-rewritten-text'); const v = box.querySelector('.sr-view-on'); const pad = parseFloat(getComputedStyle(box).paddingTop) + parseFloat(getComputedStyle(box).paddingBottom); return { scroll: box.scrollHeight, client: box.clientHeight, content: Math.round(v.offsetHeight + pad) }; })();
+      document.querySelector('[data-view="original"]').click();
+      const fitOrig = (() => { const box = document.getElementById('sr-rewritten-text'); return { scroll: box.scrollHeight, client: box.clientHeight }; })();
+      M.showResult('teh report are ready, and the long original sentence goes on for a while here.', 'The report is ready, and the long original sentence goes on for a while here.', 'grammar', 'custom', null, { action: { label: 'Replace anyway', otherLabel: 'Replace selection', run: (t) => { window.__replaced = t; return true; } } });
       for (const v of ['result', 'original', 'changes']) { document.querySelector(`[data-view="${v}"]`).click(); heights.push(h()); }
       // Copy and the write-back always take the result, whatever view is showing.
       document.querySelector('[data-view="original"]').click();
@@ -288,11 +294,12 @@ try {
       const order = [...document.querySelectorAll('.sr-chip')].map((c) => c.dataset.tone);
       const wantDown = order[2 + cols];
       M.hide();
-      return { proof, heights, copied, replaced, closed, busy, asked, pro, start: start.dataset.tone, right, down, stops, wantDown, cols };
+      return { proof, heights, copied, replaced, closed, busy, asked, pro, start: start.dataset.tone, right, down, stops, wantDown, cols, fit, fitOrig };
     });
     check(r.proof.views.join() === 'result,changes*,original' && r.proof.group === 'group', `Proofread: Result | Changes | Original, Changes first (got ${JSON.stringify(r.proof)})`);
     check(r.proof.pressed.join() === 'grammar' && r.proof.check && r.proof.label === 'Proofread', `the active tone is pressed and checked, and named above the box (got ${JSON.stringify(r.proof)})`);
     check(new Set(r.heights).size === 1, `switching views never changes the dialog's height (got ${r.heights})`);
+    check(r.fit.scroll <= r.fit.content + 1 && r.fitOrig.scroll > r.fitOrig.client && r.fit.client === r.fitOrig.client, `a short result next to a long original: no empty space to scroll into, same box height, the original scrolls (got ${JSON.stringify({ fit: r.fit, fitOrig: r.fitOrig })})`);
     check(r.copied.text === 'The report is ready, and the long original sentence goes on for a while here.' && r.copied.label === 'Copied', `Copy takes the result even on the Original view, then says Copied (got ${JSON.stringify(r.copied)})`);
     check(r.replaced.text === r.copied.text && r.replaced.label === 'Replaced' && r.closed, `Cmd/Ctrl+Enter replaces with the result, says Replaced, then closes (got ${JSON.stringify(r.replaced)}, closed ${r.closed})`);
     check(r.busy.label === 'Rewriting…' && r.busy.spin && r.busy.pressed === 'true', `while rewriting: the tile spins and is pressed, the label says Rewriting… (got ${JSON.stringify(r.busy)})`);
