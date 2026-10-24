@@ -32,12 +32,14 @@ class CloudProvider {
     const keyField = `srCloudKey_${id}`;
     const modelField = `srCloudModel_${id}`;
     const [r, keys] = await Promise.all([
-      chrome.storage.sync.get([modelField, 'srCloudCustomBaseURL']),
+      chrome.storage.sync.get([modelField, 'srCustomEndpoints', 'srCloudCustomBaseURL']),
       chrome.storage.local.get([keyField, 'groqAPIKey']),
     ]);
     // Legacy single-key storage (pre-multi-provider) — carries an already-saved Groq key forward.
     const apiKey = keys[keyField] || (id === 'groq' ? (keys.groqAPIKey || '') : '');
-    const baseURL = id === 'custom' ? (r.srCloudCustomBaseURL || '') : meta.baseURL;
+    const custom = SR_isCustomId(id) ? (SR_customEndpoints(r).find((c) => c.id === id) || { baseURL: '' }) : null;
+    const baseURL = custom ? custom.baseURL : meta.baseURL;
+    const displayName = custom ? SR_customDisplayName(custom) : meta.name;
     const model = r[modelField] || meta.defaultModel || '';
     // Local servers (Ollama, LM Studio, a custom localhost URL) take no key.
     // Presets for local servers (Ollama, LM Studio) take no key at all. A custom
@@ -45,7 +47,7 @@ class CloudProvider {
     // there the key is optional rather than hidden, as in lasso's form.
     const keyless = !!meta.keyless;
     const keyOptional = keyless || (typeof SR_isLocalURL === 'function' && SR_isLocalURL(baseURL));
-    return { id, displayName: meta.name, baseURL, model, apiKey, keyless, keyOptional };
+    return { id, displayName, baseURL, model, apiKey, keyless, keyOptional };
   }
 
   // Ready to send a request: a key, or a provider that doesn't need one.
@@ -168,7 +170,7 @@ function whereLabel(providerId, cfg, engine) {
   // "openai/gpt-oss-120b" → "gpt-oss-120b": the vendor is already in the provider name.
   const model = cfg && cfg.model ? ` · ${String(cfg.model).split('/').pop()}` : '';
   if (cfg && typeof SR_isLocalURL === 'function' && SR_isLocalURL(cfg.baseURL)) return `On your computer or network${model}`;
-  return `Sent to ${SR_providerDisplayLabel(providerId)}${model}`;
+  return `Sent to ${SR_providerDisplayLabel(providerId, cfg && cfg.displayName)}${model}`;
 }
 
 // Rewrite with whatever is ready: on-device only when already downloaded,

@@ -34,12 +34,14 @@ class CloudProvider {
       const modelField = `${SR_CLOUD_MODEL_PREFIX}${id}`;
       // Keys are device-only (storage.local); background.js migrates any older synced key.
       const [r, keys] = await Promise.all([
-        chrome.storage.sync.get([modelField, 'srCloudCustomBaseURL']),
+        chrome.storage.sync.get([modelField, 'srCustomEndpoints', 'srCloudCustomBaseURL']),
         chrome.storage.local.get([keyField, 'groqAPIKey']),
       ]);
       // Legacy single-key storage (pre-multi-provider) — carries an already-saved Groq key forward.
       const apiKey = keys[keyField] || (id === 'groq' ? (keys.groqAPIKey || '') : '');
-      const baseURL = id === 'custom' ? (r.srCloudCustomBaseURL || '') : meta.baseURL;
+      const custom = SR_isCustomId(id) ? (SR_customEndpoints(r).find((c) => c.id === id) || { baseURL: '' }) : null;
+      const baseURL = custom ? custom.baseURL : meta.baseURL;
+      const displayName = custom ? SR_customDisplayName(custom) : meta.name;
       const model = r[modelField] || meta.defaultModel || '';
       // Local servers (Ollama, LM Studio, a custom localhost URL) take no key.
       // Presets for local servers (Ollama, LM Studio) take no key at all. A custom
@@ -47,7 +49,7 @@ class CloudProvider {
       // there the key is optional rather than hidden, as in lasso's form.
       const keyless = !!meta.keyless;
       const keyOptional = keyless || (typeof SR_isLocalURL === 'function' && SR_isLocalURL(baseURL));
-      return { id, displayName: meta.name, baseURL, model, apiKey, keyless, keyOptional };
+      return { id, displayName, name: custom ? (custom.name || '') : '', baseURL, model, apiKey, keyless, keyOptional };
     } catch {
       const meta = SR_cloudServiceMeta('groq');
       return { id: 'groq', displayName: meta.name, baseURL: meta.baseURL, model: meta.defaultModel, apiKey: '' };
@@ -80,8 +82,47 @@ class CloudProvider {
     try { await chrome.storage.sync.set({ [`${SR_CLOUD_MODEL_PREFIX}${serviceId}`]: model }); } catch { /* ignore */ }
   }
 
-  static async setCustomBaseURL(url) {
-    try { await chrome.storage.sync.set({ srCloudCustomBaseURL: url }); } catch { /* ignore */ }
+  static async getCustomEndpoints() {
+    try { return SR_customEndpoints(await chrome.storage.sync.get(['srCustomEndpoints', 'srCloudCustomBaseURL'])); } catch { return []; }
+  }
+
+  // Writing the list retires the legacy single-URL key (its entry is in the list now).
+  static async setCustomEndpoints(list) {
+    try {
+      await chrome.storage.sync.set({ srCustomEndpoints: list });
+      await chrome.storage.sync.remove(['srCloudCustomBaseURL']);
+    } catch { /* ignore */ }
+  }
+
+  static async updateCustom(id, fields) {
+    const list = await this.getCustomEndpoints();
+    const i = list.findIndex((c) => c.id === id);
+    if (i < 0) list.push({ id, name: '', baseURL: '', ...fields }); else list[i] = { ...list[i], ...fields };
+    await this.setCustomEndpoints(list);
+  }
+
+  // A new, empty endpoint to fill in. An unfinished one (no URL yet) is reused,
+  // so pressing Add twice doesn't leave blanks behind.
+  static async addCustom() {
+    const list = await this.getCustomEndpoints();
+    const blank = list.find((c) => !c.baseURL);
+    if (blank) return blank.id;
+    const id = `custom-${Date.now().toString(36)}`;
+    await this.setCustomEndpoints([...list, { id, name: '', baseURL: '' }]);
+    return id;
+  }
+
+  static async removeCustom(id) {
+    const list = await this.getCustomEndpoints();
+    await this.setCustomEndpoints(list.filter((c) => c.id !== id));
+    await this.clearKey(id);
+    try { await chrome.storage.sync.remove([`${SR_CLOUD_MODEL_PREFIX}${id}`]); } catch { /* ignore */ }
+  }
+
+  // Every provider the user can pick: the presets, then each custom endpoint.
+  static async serviceIds() {
+    const customs = await this.getCustomEndpoints();
+    return [...SR_CLOUD_SERVICES.filter((s) => s.id !== 'custom').map((s) => s.id), ...customs.map((c) => c.id)];
   }
 }
 
@@ -283,8 +324,8 @@ async function engineChoices() {
     choices.push({ id: 'device', title: 'On this computer', sub: deviceNeedsSetup ? 'Chrome\'s AI, needs a one-time setup' : 'Chrome\'s built-in AI, private', current: engine === 'device' });
   }
   const ready = [];
-  for (const svc of SR_CLOUD_SERVICES) {
-    const cfg = await CloudProvider.getConfig(svc.id);
+  for (const id of await CloudProvider.serviceIds()) {
+    const cfg = await CloudProvider.getConfig(id);
     if (providerReady(cfg)) ready.push(cfg);
   }
   for (const cfg of ready) {
@@ -388,19 +429,25 @@ function openCloudMenu() {
 async function refreshCloudSection() {
   const serviceId = await CloudProvider.getActiveService();
   const meta = SR_cloudServiceMeta(serviceId);
+  const isCustom = SR_isCustomId(serviceId);
   activeServiceId = serviceId;
-  refs.cloudServiceBtnLabel.textContent = meta.name;
-  renderProviderMenu(serviceId);
-  refs.customBaseURLRow.classList.toggle('hidden', serviceId !== 'custom');
+  const cfg = await CloudProvider.getConfig(serviceId);
+  refs.cloudServiceBtnLabel.textContent = cfg.displayName;
+  await renderProviderMenu(serviceId);
+  refs.customBaseURLRow.classList.toggle('hidden', !isCustom);
   refs.providerNote.textContent = meta.note || '';
 
-  const cfg = await CloudProvider.getConfig(serviceId);
   refs.cloudModelInput.value = cfg.model;
   refs.cloudModelInput.dataset.saved = cfg.model;
   refs.cloudModelInput.placeholder = meta.defaultModel || 'Connect first, then pick a model';
   loadModelList(serviceId);
-  if (serviceId === 'custom') refs.customBaseURLInput.value = cfg.baseURL;
-  refs.apiKeyLabel.textContent = `${meta.name} API key`;
+  // Saving one field redraws the form; never overwrite the field being typed in.
+  const fill = (input, value) => { if (document.activeElement !== input) input.value = value; };
+  if (isCustom) {
+    fill(refs.customBaseURLInput, cfg.baseURL);
+    fill(refs.customNameInput, cfg.name || '');
+  }
+  refs.apiKeyLabel.textContent = isCustom ? 'API key' : `${meta.name} API key`;
   refs.keySection.classList.toggle('keyless', cfg.keyless);
 
   await renderKeyField(serviceId);
@@ -408,13 +455,18 @@ async function refreshCloudSection() {
 }
 
 // Presets come from SR_CLOUD_SERVICES (constants.js), so a provider added
-// there shows up here without touching this file.
+// there shows up here without touching this file. Custom endpoints follow,
+// each by its own name, then a row to add another.
 let activeServiceId = 'groq';
-function renderProviderMenu(currentId) {
-  refs.cloudServiceMenu.innerHTML = SR_CLOUD_SERVICES.map((svc) => `
-    <div class="cloud-select-item ${svc.id === currentId ? 'current' : ''}" data-value="${escapeHtml(svc.id)}" role="option" aria-selected="${svc.id === currentId}">
-      <span>${escapeHtml(svc.name)}</span>${svc.keyless ? '<span class="cloud-select-tag">no key</span>' : ''}
-    </div>`).join('');
+async function renderProviderMenu(currentId) {
+  const item = (id, name, tag) => `
+    <div class="cloud-select-item ${id === currentId ? 'current' : ''}" data-value="${escapeHtml(id)}" role="option" aria-selected="${id === currentId}">
+      <span>${escapeHtml(name)}</span>${tag ? `<span class="cloud-select-tag">${tag}</span>` : ''}
+    </div>`;
+  const presets = SR_CLOUD_SERVICES.filter((svc) => svc.id !== 'custom').map((svc) => item(svc.id, svc.name, svc.keyless ? 'no key' : ''));
+  const customs = (await CloudProvider.getCustomEndpoints()).map((c) => item(c.id, SR_customDisplayName(c)));
+  refs.cloudServiceMenu.innerHTML = presets.join('') + '<div class="cloud-select-sep" role="separator"></div>' + customs.join('')
+    + '<div class="cloud-select-item add" data-value="add-custom" role="option" aria-selected="false"><span>Add custom endpoint…</span></div>';
 }
 
 // Only Groq, OpenAI, and OpenRouter were verified to send CORS headers for
@@ -550,10 +602,10 @@ async function renderKeyField(serviceId) {
     refs.btnClearKey.classList.remove('hidden');
   } else {
     // No key yet: start directly in an editable, empty state so first-time
-    // setup doesn't need an extra "Change" click first.
+    // setup doesn't need an extra "Change" click first. A key being typed stays.
     input.readOnly = false;
     input.type = 'text';
-    input.value = '';
+    if (document.activeElement !== input) input.value = '';
     input.placeholder = cfg.keyOptional ? 'API key (optional for a server on this computer)' : `${cfg.displayName} API key…`;
     input.classList.remove('editing');
     refs.btnSaveKey.textContent = 'Save';
@@ -577,7 +629,7 @@ function onSaveClick() {
     // their origin. Requested here, synchronously inside the click, while it
     // still counts as a user gesture.
     if (needsHostAccess(activeServiceId)) {
-      const baseURL = activeServiceId === 'custom'
+      const baseURL = SR_isCustomId(activeServiceId)
         ? refs.customBaseURLInput.value.trim()
         : SR_cloudServiceMeta(activeServiceId).baseURL;
       requestEndpointAccess(baseURL).finally(saveKey);
@@ -656,7 +708,7 @@ async function saveKey() {
   }
 
   const cfg = await CloudProvider.getConfig(serviceId);
-  if (serviceId === 'custom' && !cfg.baseURL) {
+  if (SR_isCustomId(serviceId) && !cfg.baseURL) {
     refs.keyHint.classList.remove('ok');
     refs.keyHint.textContent = 'Set a base URL above first.';
     refs.keyHint.classList.remove('hidden-fade');
@@ -1027,7 +1079,7 @@ async function runTurn(turn, opts = {}) {
     const model = provider && provider.model ? ` · ${String(provider.model).split('/').pop()}` : '';
     turn.where = providerId === 'device' ? `On this computer · ${engineName || 'Gemini Nano'}`
       : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? `On your computer or network${model}`
-      : `Sent to ${SR_providerDisplayLabel(providerId)}${model}`;
+      : `Sent to ${SR_providerDisplayLabel(providerId, provider && provider.displayName)}${model}`;
     turn.latencyMs = Math.round(performance.now() - start);
     turn.status = 'done';
     delete turn.errorMessage;
@@ -1979,7 +2031,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'prSheet', 'prSheetIcon', 'prSheetTitle', 'prSheetText', 'prContinue',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
-    'customBaseURLRow', 'customBaseURLInput', 'cloudModelInput',
+    'customBaseURLRow', 'customBaseURLInput', 'customNameInput', 'btnRemoveCustom', 'cloudModelInput',
     'btnBrowseModels', 'modelMenu', 'modelMenuList', 'modelHint',
     'apiKeyInput', 'btnToggleKeyEye', 'btnSaveKey', 'btnClearKey', 'keyHint',
     'thread', 'palette', 'paletteHintLeft', 'paletteList',
@@ -2096,12 +2148,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!item) return;
     closeCloudMenu();
     const previous = await CloudProvider.getConfig();
-    if (needsHostAccess(previous.id) && item.dataset.value !== previous.id) await releaseEndpointAccess(previous.baseURL);
-    await CloudProvider.setActiveService(item.dataset.value);
+    const adding = item.dataset.value === 'add-custom';
+    const next = adding ? await CloudProvider.addCustom() : item.dataset.value;
+    if (needsHostAccess(previous.id) && next !== previous.id) await releaseEndpointAccess(previous.baseURL);
+    await CloudProvider.setActiveService(next);
     keyEditing = false;
+    cloudChosen = true; // picked a provider: keep its form open even before it has a key
     await refreshCloudSection();
     await refreshProviderPill();
-    showSavedToast();
+    if (adding) refs.customNameInput.focus(); else showSavedToast();
   });
   document.addEventListener('click', (e) => {
     if (!refs.cloudServiceMenu.contains(e.target) && e.target !== refs.cloudServiceBtn && !refs.cloudServiceBtn.contains(e.target)) {
@@ -2121,10 +2176,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (value !== refs.cloudModelInput.dataset.saved) await selectModel(value);
   });
   refs.customBaseURLInput.addEventListener('change', async () => {
-    const previous = (await CloudProvider.getConfig('custom')).baseURL;
-    if (previous && previous !== refs.customBaseURLInput.value.trim()) await releaseEndpointAccess(previous);
-    await CloudProvider.setCustomBaseURL(refs.customBaseURLInput.value.trim());
+    const id = activeServiceId;
+    const url = refs.customBaseURLInput.value.trim();
+    const previous = (await CloudProvider.getConfig(id)).baseURL;
+    if (previous && previous !== url) await releaseEndpointAccess(previous);
+    await CloudProvider.updateCustom(id, { baseURL: url });
+    delete modelLists[id]; // another server lists other models
+    await refreshCloudSection();
+    await refreshProviderPill();
     showSavedToast();
+  });
+  refs.customNameInput.addEventListener('change', async () => {
+    await CloudProvider.updateCustom(activeServiceId, { name: refs.customNameInput.value.trim() });
+    await refreshCloudSection();
+    await refreshProviderPill();
+    showSavedToast();
+  });
+  // Removes the endpoint with its key and model, then falls back to another
+  // provider that's ready (or the first preset).
+  refs.btnRemoveCustom.addEventListener('click', async () => {
+    const id = activeServiceId;
+    const cfg = await CloudProvider.getConfig(id);
+    if (cfg.baseURL) await releaseEndpointAccess(cfg.baseURL);
+    await CloudProvider.removeCustom(id);
+    delete modelLists[id];
+    let next = SR_CLOUD_SERVICES[0].id;
+    for (const other of await CloudProvider.serviceIds()) {
+      if (providerReady(await CloudProvider.getConfig(other))) { next = other; break; }
+    }
+    await CloudProvider.setActiveService(next);
+    keyEditing = false;
+    await refreshCloudSection();
+    await refreshProviderPill();
   });
 
   // Settings panel: model combobox over the provider's own list

@@ -5,7 +5,7 @@ Proofread, rewrite in any tone, and translate text on any web page. Proofr is a 
 ## How it runs
 
 - **On-device (default when available):** Chrome's built-in AI (Gemini Nano). Your text never leaves your computer. This needs desktop Chrome with built-in AI support and enough disk and memory to download the model. Many machines can't run it.
-- **Cloud (bring your own key):** if on-device isn't available, or you pick the Cloud engine, Proofr calls the provider you choose with your own API key: Groq, OpenAI, OpenRouter, Google Gemini, Mistral, DeepSeek, Together AI, or any OpenAI-compatible endpoint. The request goes straight from your browser to that provider.
+- **Cloud (bring your own key):** if on-device isn't available, or you pick the Cloud engine, Proofr calls the provider you choose with your own API key: Groq, OpenAI, OpenRouter, Google Gemini, Mistral, DeepSeek, Together AI, or any OpenAI-compatible endpoint. The request goes straight from your browser to that provider. You can add as many custom endpoints as you need (Settings → AI provider → Add custom endpoint…). Each has its own name, base URL, key, and model, appears by that name in the provider menus, and has its own Remove endpoint link.
 - **Local server (no key):** Ollama, LM Studio, or a custom endpoint on your own computer or network. Proofr asks once for access to that address. A free Groq key takes about a minute to get at [console.groq.com/keys](https://console.groq.com/keys).
 
 The engine setting (Auto, On-device, Cloud) is in the side panel. Auto uses on-device first and falls back to your cloud key.
@@ -82,8 +82,11 @@ node test/escape.mjs
 # On-device work, old code against new: sessions created, characters re-read per request, cache, Translator, stalls (no browser needed)
 node test/device-perf.mjs
 
-# Cloud call handling: cut-off answers, retired models, model picking, keyless local servers (no browser needed)
+# Cloud call handling: cut-off answers, retired models, model picking, keyless local servers, custom endpoints (no browser needed)
 node test/cloud-call.mjs
+
+# Right-click menu: overlapping rebuilds (install + startup) leave one copy of each item (no browser needed)
+node test/context-menu.mjs
 
 # One design system: type scale, corner radii, shared palette, AA text contrast
 node test/design-tokens.mjs
