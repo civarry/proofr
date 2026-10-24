@@ -463,6 +463,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     recordInsights(String(message.before || ''), String(message.after || '')).then((mastered) => sendResponse({ ok: true, mastered }));
     return true; // async sendResponse
   }
+  // The hover menu shows its Ask box whenever some AI can answer.
+  if (message.action === 'askReady') {
+    aiStatus().then((status) => sendResponse({ ready: !setupProblem(status) }), () => sendResponse({ ready: false }));
+    return true; // async sendResponse
+  }
   if (message.action === 'hasCloudKey') {
     CloudProvider.isReady().then((hasKey) => sendResponse({ hasKey }), () => sendResponse({ hasKey: false }));
     return true; // async sendResponse
@@ -487,17 +492,20 @@ async function handleHoverRewrite(message, sendResponse) {
   }
 }
 
-// === Hover Ask: freeform instruction on a hovered block (cloud key) ===
+// === Hover Ask: freeform instruction on a hovered block ===
+// Same engine rules as the other hover actions: on-device AI or a provider.
 async function handleHoverAskAI(message, sendResponse) {
   try {
-    const provider = await CloudProvider.getConfig();
-    if (!providerReady(provider)) {
-      sendResponse({ error: 'setup', title: 'Set up Proofr', message: 'Connect an AI provider in the Proofr side panel to ask about text.' });
+    const status = await aiStatus();
+    const problem = setupProblem(status);
+    if (problem) {
+      sendResponse({ error: 'setup', title: problem.title, message: problem.message });
       return;
     }
-    const text = await SR_askCloud(provider, message.text, message.instruction);
+    const engine = (status.settings.engine === 'auto' && !status.deviceNow) ? 'cloud' : status.settings.engine;
+    const { text, provider: providerId, engine: engineName } = await SR_askAuto(message.text, message.instruction, { provider: status.provider, engine });
     await StatsManager.updateStats('ask');
-    sendResponse({ text, provider: provider.id, where: whereLabel(provider.id, provider) });
+    sendResponse({ text, provider: providerId, where: whereLabel(providerId, status.provider, engineName) });
   } catch (error) {
     sendResponse({ error: 'failed', message: error.message || 'Something went wrong.' });
   }

@@ -730,8 +730,16 @@ check('hover icon appears after enabling + reload', !!icon);
 if (icon) {
   await icon.evaluate((el) => el.click()); await sleep(600);
   const hasAsk = !!(await demo.$('#srHoverAskForm'));
-  check('Ask box shown when a key exists', hasAsk);
-  await demo.keyboard.press('Escape');
+  check('Ask box shown when an AI is set up', hasAsk);
+  const labels = await demo.evaluate(() => ({ send: document.querySelector('.sr-hover-ask-send')?.getAttribute('aria-label'), input: document.getElementById('srHoverAskInput')?.getAttribute('aria-label') }));
+  check('the Ask button is labelled "Ask", the field says what it is for', labels.send === 'Ask' && labels.input === 'Ask about this text', JSON.stringify(labels));
+  // A real Ask through the provider: the answer opens in the dialog.
+  await demo.evaluate(() => { document.getElementById('srHoverAskInput').value = 'What does this mean?'; document.getElementById('srHoverAskForm').requestSubmit(); });
+  let asked = '';
+  for (let i = 0; i < 30 && !asked; i++) { await sleep(200); asked = await demo.evaluate(() => document.querySelector('#smart-rewrite-modal')?.innerText || ''); }
+  const askReq = mockRequests.at(-1)?.messages?.[0]?.content || '';
+  check('Ask sends the instruction and shows the answer', /Apply this instruction to the text: What does this mean\?/.test(askReq) && /R\(/.test(asked), `${askReq.slice(0, 80)} | ${asked.replace(/\s+/g, ' ').slice(-120)}`);
+  await demo.keyboard.press('Escape'); await sleep(200);
   await demo.evaluate(() => document.body.click());
 }
 await panel.bringToFront(); await clk(panel, '#hoverToggle'); await sleep(1200);
@@ -751,7 +759,7 @@ await demo.mouse.move(box.x + 40, box.y + 10); await sleep(800);
 const icon2 = await demo.$('.sr-hover-icon');
 if (icon2) {
   await icon2.evaluate((el) => el.click()); await sleep(600);
-  check('Ask box hidden without a key', !(await demo.$('#srHoverAskForm')));
+  check('Ask box hidden when no AI is set up', !(await demo.$('#srHoverAskForm')));
   await clk(demo, '.sr-hover-action[data-tone="tldr"]'); await sleep(1500);
   const errText = await demo.evaluate(() => document.querySelector('#smart-rewrite-modal')?.innerText || '');
   check('no-AI hover action explains setup', /Set up Proofr/.test(errText) && /connect an AI provider/.test(errText), errText.replace(/\s+/g, ' ').slice(0, 120));

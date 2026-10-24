@@ -1060,6 +1060,39 @@ async function SR_rewriteOnDevice(text, tone, onStatus, targetLang, temperatureB
   }
 }
 
+// Ask on-device: a fresh session per request, since the instruction is
+// different every time and there is no base to clone. Same rules and fence
+// as the cloud Ask, so text on the page is still treated as text.
+async function SR_askOnDevice(text, instruction) {
+  if (!SR_deviceModel()) throw new Error('On-device AI is not available on this device.');
+  if ((text || '').length > SR_DEVICE_MAX_CHARS) {
+    throw new Error(`That text is too long for the on-device model (${text.length.toLocaleString()} characters, limit ${SR_DEVICE_MAX_CHARS.toLocaleString()}). Add a cloud provider key for long text, or select less.`);
+  }
+  const parts = SR_buildAskParts(text, instruction);
+  const session = await SR_createDeviceSession('ask', undefined, 0, null, [{ role: 'system', content: parts.system }]);
+  try {
+    const out = await SR_within(session.prompt(session.srInline ? SR_joinPrompt(parts) : parts.user), SR_DEVICE_TIMEOUT_MS);
+    if (!String(out || '').trim()) throw new Error('The on-device model returned nothing. Try again.');
+    return SR_cleanOutput(out, { fence: parts.fence, input: text });
+  } finally {
+    try { session.destroy && session.destroy(); } catch (_) { /* ignore */ }
+  }
+}
+
+// Ask with the same engine rules as a rewrite: on-device first on Auto, then
+// the provider if one is set up. Returns { text, provider, engine? }.
+async function SR_askAuto(text, instruction, { provider, engine = 'auto' } = {}) {
+  const hasProvider = SR_providerReady(provider);
+  if (engine === 'device' || (engine === 'auto' && await SR_deviceReady())) {
+    try {
+      return { text: await SR_askOnDevice(text, instruction), provider: 'device', engine: 'Gemini Nano' };
+    } catch (err) {
+      if (engine === 'device' || !hasProvider) throw err;
+    }
+  }
+  return { text: await SR_askCloud(provider, text, instruction), provider: provider.id };
+}
+
 // Rewrite via the chosen engine.
 // opts: { provider: {baseURL,apiKey,model,displayName}, engine: 'auto'|'device'|'cloud', targetLang, onStatus, temperatureBoost,
 //         onToken(textSoFar): on-device answers stream (cloud ones arrive whole), signal: AbortSignal to stop }
@@ -2569,6 +2602,8 @@ if (typeof self !== 'undefined') {
   self.SR_buildAskPrompt = SR_buildAskPrompt;
   self.SR_buildAskParts = SR_buildAskParts;
   self.SR_askCloud = SR_askCloud;
+  self.SR_askOnDevice = SR_askOnDevice;
+  self.SR_askAuto = SR_askAuto;
   self.SR_rewrite = SR_rewrite;
   self.SR_callCloud = SR_callCloud;
   self.SR_deviceAvailability = SR_deviceAvailability;

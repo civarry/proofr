@@ -119,8 +119,8 @@
     // "Translate → English" on a page that's already English is a no-op.
     const pageLang = (document.documentElement.lang || '').toLowerCase().split('-')[0];
     const tones = READING_TONES.filter((id) => !(id === 'translate' && pageLang && pageLang === targetLang.split('-')[0]));
-    // The Ask box always goes to the cloud provider, so it only appears once a key exists.
-    const { hasKey } = await sendMessageWithTimeout({ action: 'hasCloudKey' }, 3000);
+    // The Ask box appears whenever some AI can answer: on-device or a provider.
+    const { ready: canAsk } = await sendMessageWithTimeout({ action: 'askReady' }, 3000);
 
     popover = document.createElement('div');
     popover.className = 'sr-hover-popover';
@@ -129,10 +129,10 @@
       const label = id === 'translate' ? `Translate → ${targetLangName}` : tone.name;
       return `<button type="button" class="sr-hover-action" data-tone="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
     }).join('')
-      + (hasKey ? `<div class="sr-hover-divider"></div>
+      + (canAsk ? `<div class="sr-hover-divider"></div>
         <form class="sr-hover-ask" id="srHoverAskForm">
-          <input type="text" class="sr-hover-ask-input" id="srHoverAskInput" placeholder="Ask about this…" />
-          <button type="submit" class="sr-hover-ask-send" aria-label="Run">${ICON_SEND}</button>
+          <input type="text" class="sr-hover-ask-input" id="srHoverAskInput" placeholder="Ask about this…" aria-label="Ask about this text" />
+          <button type="submit" class="sr-hover-ask-send" aria-label="Ask" title="Ask">${ICON_SEND}</button>
         </form>` : '');
     positionNear(popover, icon.getBoundingClientRect(), { below: true });
 
