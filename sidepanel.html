@@ -237,39 +237,65 @@
       white-space: pre-wrap; word-wrap: break-word;
     }
     .msg-assistant { align-self: flex-start; width: 100%; }
-    .assistant-card { background: var(--card); border: 1px solid var(--line); border-radius: 4px 12px 12px 12px; overflow: hidden; }
+    /* A result is three rows: one header line (mode, where it ran, delete),
+       the text, and one action row. No overflow:hidden, so nothing that
+       floats over a card is ever cut off by it. */
+    .assistant-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-lg); }
     .assistant-card.error { border-color: var(--error-border); }
     .assistant-head {
       display: flex; align-items: center; gap: 6px;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--line-soft);
-      font-family: var(--sans); font-size: 12px; color: var(--ink-soft);
+      min-height: 28px; padding: 4px 4px 0 14px;
+      font-family: var(--sans); font-size: 11px; color: var(--ink-faint);
     }
-    .assistant-head .tag { color: var(--accent-ink); font-weight: 600; font-size: 13px; }
+    .assistant-head .head-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .assistant-head .tag { color: var(--accent-ink); font-weight: 600; }
     .assistant-body {
-      padding: 10px 12px;
-      font-size: 13px; line-height: 1.55; color: var(--ink);
+      padding: 0 14px 10px;
+      font-size: 14px; line-height: 1.5; color: var(--ink);
       white-space: pre-wrap; word-wrap: break-word;
     }
+    .assistant-head + .assistant-body { padding-top: 2px; }
     .assistant-body.error-text { color: var(--error); }
-    .assistant-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 12px 12px; }
-    .result-count { padding: 0 12px 8px; text-align: right; font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
-
-    .chip-btn {
-      border: 1px solid var(--line); background: var(--paper); color: var(--ink-soft);
-      font-family: inherit; font-size: 11px; font-weight: 600;
-      padding: 5px 9px; border-radius: 999px;
-      display: flex; align-items: center; gap: 4px;
+    .assistant-actions {
+      display: flex; align-items: center; gap: 6px;
+      min-height: 42px; padding: 6px 8px 6px 14px;
+      border-top: 1px solid var(--line-soft);
     }
-    .chip-btn:hover { background: var(--line-soft); color: var(--ink); }
-    .chip-btn svg { width: 11px; height: 11px; display: block; }
-    /* Delete sits at the far end and shows on hover or keyboard focus, so a
-       thread of entries isn't a column of trash cans. */
-    .turn-delete { margin-left: auto; width: 24px; height: 24px; }
-    .turn-delete svg { width: 13px; height: 13px; }
-    .turn-delete:hover { color: var(--error); }
-    .turn:not(:hover):not(:focus-within) .turn-delete { opacity: 0; }
-    .chip-btn.copied { color: var(--live-ink); border-color: var(--live-border); background: var(--live-bg); }
+    .result-count { flex: 1; min-width: 0; font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Pill buttons in a result's action row. */
+    .pill-btn {
+      flex: none; height: 30px; padding: 0 11px;
+      display: flex; align-items: center; gap: 5px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--ink-soft);
+      font-family: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .pill-btn:hover { background: var(--line-soft); color: var(--ink); }
+    .pill-btn svg { width: 12px; height: 12px; display: block; flex: none; }
+    .pill-btn .chev { width: 10px; height: 10px; }
+    .pill-btn[aria-expanded="true"] { background: var(--accent-tint); border-color: var(--accent-tint-line); color: var(--accent-ink); }
+    /* Copy is the main action on a result; it turns green for a moment once copied. */
+    .pill-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+    .pill-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .pill-btn.primary.copied, .pill-btn.primary.copied:hover { background: var(--live-ink); border-color: var(--live-ink); color: var(--accent-fg); }
+
+    /* "Try as": a floating menu over the thread, styled like the mode picker.
+       Fixed to the viewport, so it never changes a card's height and the
+       thread's scrolling can't clip it. */
+    .menu-pop {
+      position: fixed; z-index: 40;
+      background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+      box-shadow: var(--shadow-lg); padding: 6px;
+    }
+    .menu-pop .palette-item { width: 100%; border: none; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
+    .menu-pop .palette-item .name { font-weight: 600; }
+    .menu-pop .palette-item .desc { font-size: 12px; }
+    .menu-pop .palette-item:focus-visible { outline: none; }
+
+    .turn-delete { width: 28px; height: 28px; color: var(--ink-faint); }
+    .turn-delete svg { width: 14px; height: 14px; }
+    .turn-delete:hover { background: var(--error-bg); color: var(--error); }
+    .turn-delete:focus-visible { outline: 2px solid var(--error); outline-offset: 1px; }
 
     /* Skeleton shown while a turn is pending */
     .sr-skel-line {
@@ -289,17 +315,35 @@
     .composer-wrap { position: relative; flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--line); background: var(--paper); }
 
     .composer {
-      display: flex; flex-direction: column; gap: 2px;
+      display: flex; flex-direction: column; gap: 4px;
       background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-lg);
-      padding: 8px 8px 6px;
+      padding: 8px 8px 8px 10px;
     }
-    .composer:focus-within { border-color: var(--line-focus); }
+    .composer:focus-within { border-color: var(--accent); }
 
-    .composer-toolbar {
-      flex: none;
-      height: 24px;
-      display: flex; align-items: center; justify-content: space-between;
+    /* Mode, length, how Enter behaves, Send: one row under the text. */
+    .composer-bar { flex: none; display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .send-hint { margin-left: auto; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-faint); white-space: nowrap; }
+    .keycap {
+      font-family: inherit; font-size: 11px; line-height: 1.3; color: var(--ink-soft);
+      border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--paper);
     }
+    .send-tip { margin: 6px 4px 0; font-size: 11px; color: var(--ink-faint); }
+    .send-tip[hidden] { display: none; }
+    /* Undo for a delete or a cleared history, just above the composer. */
+    .undo-toast {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin-bottom: 8px; padding: 6px 6px 6px 12px;
+      background: var(--ink); color: var(--paper); border-radius: var(--radius);
+      font-size: 12px;
+    }
+    .undo-toast[hidden] { display: none; }
+    .undo-toast button {
+      height: 28px; padding: 0 10px; border: none; border-radius: 8px;
+      background: color-mix(in srgb, var(--paper) 16%, transparent); color: var(--paper);
+      font-family: inherit; font-size: 12px; font-weight: 600;
+    }
+    .undo-toast button:hover { background: color-mix(in srgb, var(--paper) 26%, transparent); }
 
     .char-count {
       font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--ink-faint);
@@ -307,9 +351,13 @@
       transition: opacity .12s ease;
     }
     .char-count.visible { opacity: 1; }
+    .char-count:not(.visible) { display: none; }
+    .char-count.visible { margin-left: auto; white-space: nowrap; }
+    .char-count.visible ~ .send-hint { display: none; }
+    .char-count.over { color: var(--error); font-weight: 600; }
 
     .mode-tag {
-      flex: none; display: flex; align-items: center; gap: 4px;
+      flex: 0 1 auto; min-width: 0; overflow: hidden; display: flex; align-items: center; gap: 4px;
       height: 24px;
       padding: 0 9px 0 8px;
       border-radius: 999px;
@@ -320,14 +368,7 @@
     }
     .mode-tag:hover { background: var(--line); }
 
-    /* "Try as" on a result: same text, another tone, one tap. */
-    .retone { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-    .retone-label { font-size: 11px; color: var(--ink-faint); }
-    .retone .chip-btn { padding: 4px 8px; }
-    .retone .chip-btn:hover { border-color: var(--accent-tint-line); color: var(--accent-ink); background: var(--accent-tint); }
-    /* Copy is the main action on a result. */
-    .chip-btn[data-action="copy"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-    .chip-btn[data-action="copy"]:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+    #modeTagLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .mode-tag svg { width: 10px; height: 10px; color: var(--accent); }
     .mode-tag .slash { color: var(--accent); }
 
@@ -337,7 +378,7 @@
       border: none; outline: none; resize: none; background: transparent;
       font-family: var(--sans); font-size: 14px; line-height: 1.45; color: var(--ink);
       padding: 4px 2px;
-      min-height: 22px;
+      min-height: 50px;
       max-height: 220px;
       overflow-y: auto;
     }
@@ -347,23 +388,22 @@
     .composer textarea::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 8px; }
     .composer textarea::-webkit-scrollbar-thumb:hover { background: var(--line-focus); }
 
-    .composer-actions {
-      flex: none;
-      display: flex; justify-content: flex-end;
-    }
-
     .send-btn {
-      flex: none; width: 32px; height: 32px; border-radius: 50%; border: none;
+      flex: none; height: 30px; padding: 0 6px 0 11px; border-radius: 999px; border: none;
       background: var(--accent); color: var(--accent-fg);
-      display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: center; gap: 6px;
+      font-family: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
     }
     .send-btn:hover:not(:disabled) { background: var(--accent-hover); }
-    .send-btn:disabled { background: var(--scrollbar); color: var(--ink-faint); cursor: default; }
-    .send-btn svg { width: 14px; height: 14px; display: block; }
+    .send-btn:disabled { background: var(--line-soft); color: var(--ink-faint); cursor: default; }
+    .send-btn svg { width: 12px; height: 12px; display: block; }
+    .send-btn.stop { padding: 0 11px; }
+    .send-keys { font-size: 11px; font-weight: 500; border-radius: 4px; padding: 1px 5px; background: color-mix(in srgb, var(--accent-fg) 20%, transparent); }
+    .send-btn:disabled .send-keys { background: var(--line); }
 
     /* ── Slash-command / language palette ──────── */
     .palette {
-      position: absolute; left: 12px; right: 12px; bottom: 64px;
+      position: absolute; left: 12px; right: 12px; bottom: 56px;
       background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
       box-shadow: var(--shadow-lg);
       max-height: 258px; overflow-y: auto;
@@ -709,7 +749,6 @@
       font-size: 12px; color: var(--ink);
     }
     .panel-notice.hidden { display: none; }
-    .notice-undo { margin-left: 6px; background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink); text-decoration: underline; cursor: pointer; }
     #keySection.keyless .key-row { justify-content: flex-start; }
     .cloud-select-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .cloud-select-tag { font-size: 11px; color: var(--ink-soft); }
@@ -1012,7 +1051,7 @@
       .provider-pill.connected .pulse { animation: none; }
       .sr-skel-line { animation: none; }
       .assistant-card.reveal .assistant-body { animation: none; }
-      .send-btn, .icon-btn, .chip-btn, .saved-toast, .saved-line { transition: none; }
+      .send-btn, .icon-btn, .pill-btn, .saved-toast, .saved-line { transition: none; }
     }
 
     /* Keyboard focus: visible, in the product's ink instead of the browser's blue. */
@@ -1056,21 +1095,21 @@
         <div id="paletteList"></div>
       </div>
 
+      <div class="undo-toast" id="undoToast" role="status" hidden><span id="undoToastText"></span><button type="button" id="btnUndo">Undo</button></div>
       <div class="composer">
-        <div class="composer-toolbar">
+        <label for="ta" class="visually-hidden">Text to rewrite</label>
+        <textarea id="ta" rows="2" placeholder="Paste or type text to rewrite…" aria-describedby="sendHint"></textarea>
+        <div class="composer-bar">
           <button class="mode-tag" id="modeTag" type="button" aria-label="More modes">
             <span class="slash">/</span><span id="modeTagLabel">Proofread</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
           </button>
           <span class="char-count" id="charCount">0 / 4000</span>
-        </div>
-        <textarea id="ta" rows="1" placeholder="Paste text to rewrite…"></textarea>
-        <div class="composer-actions">
-          <button class="send-btn" id="sendBtn" type="button" disabled title="Send (Ctrl/Cmd+Enter)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-7 14-2-5-5-2Z"/></svg>
-          </button>
+          <span class="send-hint" id="sendHint"><kbd class="keycap">↵</kbd> new line</span>
+          <button class="send-btn" id="sendBtn" type="button" disabled></button>
         </div>
       </div>
+      <p class="send-tip" id="sendTip" hidden></p>
     </div>
 
     <!-- Settings: full-panel view, not an accordion. Covers the thread and

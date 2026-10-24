@@ -257,11 +257,11 @@ function formatLatency(ms) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-const ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-7 14-2-5-5-2Z"/></svg>';
 const ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';
 const ICON_REDO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
 const ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const ICON_CHEVRON = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 const ICON_EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M6.06 6.06A18.45 18.45 0 0 0 1 12s4 8 11 8a10.9 10.9 0 0 0 5.94-1.94M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
@@ -990,7 +990,6 @@ function toggleSettingsPanel(forceOpen) {
 // === Mode tag + palette ===
 // One tone order everywhere (right-click menu, screenshots, here): the
 // shared top list, minus the mode just used, gives the "Try as" chips.
-const CHIP_LABELS = { grammar: 'Proofread', professional: 'Professional', friendly: 'Friendly', short: 'Concise', simple: 'Plain English' };
 
 function updateModeTag() {
   const name = SR_getToneName(currentMode);
@@ -1094,8 +1093,11 @@ function autoGrow() {
 function updateCharCount() {
   const len = refs.ta.value.length;
   const max = (typeof SR_DEVICE_MAX_CHARS !== 'undefined') ? SR_DEVICE_MAX_CHARS : 4000;
-  refs.charCount.textContent = `${len} / ${max}`;
-  refs.charCount.classList.toggle('visible', len > 0);
+  // Only near the limit (on-device AI's), where it matters; it then takes
+  // the Enter hint's place in the row.
+  refs.charCount.textContent = `${len.toLocaleString()} / ${max.toLocaleString()}`;
+  refs.charCount.classList.toggle('visible', len >= max * 0.75);
+  refs.charCount.classList.toggle('over', len > max);
 }
 
 function resetComposer() {
@@ -1167,12 +1169,35 @@ function paintPending(turn, elapsedMs) {
   body.innerHTML = turn.streamed ? `<span class="streaming">${escapeHtml(turn.streamed)}</span>` : wait;
 }
 
+// Enter adds a new line; Cmd+Enter (Ctrl+Enter off a Mac) sends. The Send
+// button carries the keys, so nobody has to guess.
+const IS_MAC = /mac|iphone|ipad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');
+const SEND_KEYS = IS_MAC ? '⌘↵' : 'Ctrl ↵';
+
 function setRunning(running) {
   refs.sendBtn.classList.toggle('stop', running);
-  refs.sendBtn.title = running ? 'Stop' : 'Send (Ctrl/Cmd+Enter)';
-  refs.sendBtn.setAttribute('aria-label', running ? 'Stop' : 'Send');
-  refs.sendBtn.innerHTML = running ? ICON_STOP : ICON_SEND;
+  refs.sendBtn.title = running ? 'Stop' : '';
+  refs.sendBtn.setAttribute('aria-label', running ? 'Stop' : `Send, ${IS_MAC ? 'Command' : 'Control'} Enter`);
+  refs.sendBtn.innerHTML = running ? `${ICON_STOP}Stop` : `Send<span class="send-keys" aria-hidden="true">${SEND_KEYS}</span>`;
   refs.sendBtn.disabled = running ? false : refs.ta.value.trim().length === 0;
+}
+
+// Shown once, the first time plain Enter is pressed, and never again after
+// that or after a Cmd/Ctrl+Enter send.
+let sendTipSeen = true;
+let sendTipTimer = null;
+function markSendTipSeen() {
+  if (sendTipSeen) return;
+  sendTipSeen = true;
+  chrome.storage.local.set({ srSendTipSeen: true }).catch(() => {});
+}
+function maybeShowSendTip() {
+  if (sendTipSeen) return;
+  markSendTipSeen();
+  refs.sendTip.innerHTML = `Press <b>${IS_MAC ? '⌘ Enter' : 'Ctrl Enter'}</b> to send. Enter adds a new line.`;
+  refs.sendTip.hidden = false;
+  clearTimeout(sendTipTimer);
+  sendTipTimer = setTimeout(() => { refs.sendTip.hidden = true; }, 3000);
 }
 
 // Every call here is a fresh, single-turn request: SR_rewriteAuto only ever
@@ -1218,7 +1243,7 @@ async function runTurn(turn, opts = {}) {
     // Also which model answered, like the page's result label.
     const model = provider && provider.model ? ` · ${String(provider.model).split('/').pop()}` : '';
     turn.where = providerId === 'device' ? `On this computer · ${engineName || 'Gemini Nano'}`
-      : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? `On your computer or network${model}`
+      : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? `Local${model}`
       : `Sent to ${SR_providerDisplayLabel(providerId, provider && provider.displayName)}${model}`;
     turn.latencyMs = Math.round(performance.now() - start);
     turn.status = 'done';
@@ -1243,6 +1268,7 @@ async function runTurn(turn, opts = {}) {
     delete turn.onDevice;
   }
   turn.justFinished = true; // the card gets its one short reveal
+  retoneFrom = null;
   await saveTurns();
   renderThread();
   delete turn.justFinished;
@@ -1263,19 +1289,26 @@ async function deleteTurn(turn) {
   turns.splice(i, 1);
   await saveTurns();
   renderThread();
-  offerUndo('Entry deleted.', () => { turns.splice(Math.min(i, turns.length), 0, turn); });
+  offerUndo('Result deleted', () => { turns.splice(Math.min(i, turns.length), 0, turn); });
 }
 
-// One Undo at a time, for Clear history and for deleting an entry. A new
-// offer replaces the old one, which makes that earlier removal final.
+// One Undo at a time, for Clear history and for deleting a result, in a
+// toast just above the composer. A new offer replaces the old one, which
+// makes that earlier removal final. The removal is saved at once, so closing
+// the panel inside the 5 seconds never brings a deleted result back.
 let undoRestore = null;
 let undoTimer = null;
 function offerUndo(message, restore) {
   undoRestore = restore;
-  refs.panelNotice.innerHTML = `${escapeHtml(message)} <button type="button" class="notice-undo" id="btnUndo">Undo</button>`;
-  refs.panelNotice.classList.remove('hidden');
+  refs.undoToast.hidden = false;
+  refs.undoToastText.textContent = message;
   clearTimeout(undoTimer);
-  undoTimer = setTimeout(() => { undoRestore = null; refs.panelNotice.classList.add('hidden'); }, 8000);
+  undoTimer = setTimeout(hideUndo, 5000);
+}
+function hideUndo() {
+  undoRestore = null;
+  clearTimeout(undoTimer);
+  refs.undoToast.hidden = true;
 }
 
 async function regenerateTurn(turn) {
@@ -1303,7 +1336,7 @@ async function copyTurn(turn, btn) {
   setTimeout(() => {
     btn.innerHTML = original;
     btn.classList.remove('copied');
-  }, 1600);
+  }, 1400);
 }
 
 // === Thread rendering ===
@@ -1320,7 +1353,7 @@ function turnBodyHtml(turn) {
 // Counted like the composer's "120 / 4000", so the two numbers agree.
 function charCountLabel(text) {
   const n = String(text || '').length;
-  return `${n.toLocaleString()} character${n === 1 ? '' : 's'}`;
+  return `${n.toLocaleString()} char${n === 1 ? '' : 's'}`;
 }
 
 // Proofread takes out hidden characters (zero-width spaces and the like from
@@ -1328,17 +1361,35 @@ function charCountLabel(text) {
 function hiddenRemovedLabel(turn) {
   if (turn.mode !== 'grammar' || typeof SR_countHidden !== 'function') return '';
   const n = SR_countHidden(turn.inputText) - SR_countHidden(turn.outputText);
-  return n > 0 ? ` · ${n} hidden character${n === 1 ? '' : 's'} removed` : '';
+  return n > 0 ? ` · ${n} hidden removed` : '';
 }
 
-const DELETE_BTN = `<button class="icon-btn turn-delete" data-action="delete" type="button" title="Delete this entry" aria-label="Delete this entry">${ICON_TRASH}</button>`;
+// The card a "Try as" rewrite was started from says so until it finishes.
+let retoneFrom = null; // { id, mode }
+
+function resultStatusLine(turn) {
+  if (retoneFrom && retoneFrom.id === turn.id) return `Rewriting as ${SR_getToneName(retoneFrom.mode)}…`;
+  return `${charCountLabel(turn.outputText)}${hiddenRemovedLabel(turn)}`;
+}
+
+// Older entries were saved with the long local label.
+function whereLabelFor(turn) {
+  const where = turn.where || (turn.provider === 'device' ? 'On this computer' : `Sent to ${SR_providerDisplayLabel(turn.provider)}`);
+  return where.replace(/^On your computer or network/, 'Local');
+}
+
+const DELETE_BTN = `<button class="icon-btn turn-delete" data-action="delete" type="button" title="Delete" aria-label="Delete this result">${ICON_TRASH}</button>`;
+
+function cardHead(modeName, rest, { title = '', del = true } = {}) {
+  return `<div class="assistant-head"${title ? ` title="${escapeHtml(title)}"` : ''}><span class="head-text"><span class="tag">${modeName}</span>${rest ? ` · ${escapeHtml(rest)}` : ''}</span>${del ? DELETE_BTN : ''}</div>`;
+}
 
 function renderAssistantCard(turn) {
   const modeName = escapeHtml(SR_getToneName(turn.mode));
 
   if (turn.status === 'pending') {
     return `<div class="assistant-card">
-      <div class="assistant-head"><span><span class="tag">${modeName}</span> · …</span><span></span></div>
+      ${cardHead(modeName, '…', { del: false })}
       <div class="assistant-body">
         ${turn.statusText ? `<div class="status-text">${escapeHtml(turn.statusText)}</div>` : ''}
         <div class="sr-skel-line"></div><div class="sr-skel-line"></div><div class="sr-skel-line short"></div>
@@ -1348,26 +1399,110 @@ function renderAssistantCard(turn) {
 
   if (turn.status === 'error') {
     return `<div class="assistant-card error">
-      <div class="assistant-head"><span><span class="tag">${modeName}</span></span><span></span></div>
+      ${cardHead(modeName, '')}
       <div class="assistant-body error-text">${escapeHtml(turn.errorMessage || 'Something went wrong.')}</div>
-      <div class="assistant-actions"><button class="chip-btn" data-action="retry">${ICON_REDO}Try again</button>${DELETE_BTN}</div>
+      <div class="assistant-actions"><span class="result-count"></span><button class="pill-btn" data-action="retry" type="button">${ICON_REDO}Try again</button></div>
     </div>`;
   }
 
-  // Say where the text went, in plain words.
-  const engineName = escapeHtml(turn.where || (turn.provider === 'device' ? 'On this computer' : `Sent to ${SR_providerDisplayLabel(turn.provider)}`));
+  // Say where the text went, in plain words; the full line is in the tooltip.
+  const where = whereLabelFor(turn);
+  const status = resultStatusLine(turn);
   return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
-    <div class="assistant-head" title="${turn.latencyMs != null ? `Took ${formatLatency(turn.latencyMs)}` : ''}"><span><span class="tag">${modeName}</span> · ${engineName}</span></div>
+    ${cardHead(modeName, where, { title: `${SR_getToneName(turn.mode)} · ${where}${turn.latencyMs != null ? ` · took ${formatLatency(turn.latencyMs)}` : ''}` })}
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
-    <div class="result-count">${charCountLabel(turn.outputText)}${hiddenRemovedLabel(turn)}</div>
     ${turn.mastered ? `<div class="mastered-line"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span>${turn.mastered.map((w) => `<b>${escapeHtml(w)}</b>`).join(' and ')}: ${turn.mastered.length === 1 ? '3 right in a row. Mastered.' : 'mastered.'}</span></div>` : ''}
     <div class="assistant-actions">
-      <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
-      <div class="retone"><span class="retone-label">Try as</span>${SR_MENU_TOP.filter((m) => m !== turn.mode && m !== 'translate').slice(0, 3)
-        .map((m) => `<button class="chip-btn" data-action="retone" data-mode="${m}">${CHIP_LABELS[m] || SR_getToneName(m)}</button>`).join('')}</div>
-      ${DELETE_BTN}
+      <span class="result-count" title="${escapeHtml(status.replace('hidden removed', 'hidden characters removed'))}">${escapeHtml(status)}</span>
+      <button class="pill-btn" data-action="tryas" type="button" aria-haspopup="menu" aria-expanded="false">Try as${ICON_CHEVRON}</button>
+      <button class="pill-btn primary" data-action="copy" type="button">${ICON_COPY}Copy</button>
     </div>
   </div>`;
+}
+
+// === "Try as" menu ===
+// One at a time across all cards. Opens above the button (below when there
+// is no room), right-aligned to the card, over the thread.
+let tryMenu = null; // { el, btn, turn, index, modes }
+
+function tryAsModes(turn) {
+  return SR_TONES.map((t) => t.id).filter((id) => id !== turn.mode && id !== 'translate').slice(0, 6);
+}
+
+function closeTryMenu(returnFocus) {
+  if (!tryMenu) return;
+  const { el, btn } = tryMenu;
+  tryMenu = null;
+  el.remove();
+  btn.setAttribute('aria-expanded', 'false');
+  if (returnFocus && btn.isConnected) btn.focus();
+}
+
+function setTryMenuIndex(i) {
+  if (!tryMenu) return;
+  const items = [...tryMenu.el.querySelectorAll('[role="menuitem"]')];
+  tryMenu.index = (i + items.length) % items.length;
+  items.forEach((item, n) => item.classList.toggle('active', n === tryMenu.index));
+  items[tryMenu.index].focus();
+}
+
+function openTryMenu(btn, turn) {
+  closeTryMenu(false);
+  const modes = tryAsModes(turn);
+  const el = document.createElement('div');
+  el.className = 'menu-pop';
+  el.setAttribute('role', 'menu');
+  el.setAttribute('aria-label', 'Try as');
+  el.innerHTML = `<div class="palette-hint" aria-hidden="true"><span>TRY AS</span><span>↑↓ select · ↵ choose</span></div>`
+    + modes.map((id) => {
+      const tone = SR_getTone(id);
+      return `<button type="button" class="palette-item" role="menuitem" tabindex="-1" data-mode="${id}"><span class="name">${escapeHtml(tone.name)}</span><span class="desc">${escapeHtml(tone.desc || '')}</span></button>`;
+    }).join('');
+  document.body.appendChild(el);
+
+  const card = btn.closest('.assistant-card').getBoundingClientRect();
+  const b = btn.getBoundingClientRect();
+  const width = Math.min(316, window.innerWidth - 16);
+  el.style.width = `${width}px`;
+  el.style.left = `${Math.max(8, Math.min(card.right, window.innerWidth - 8) - width)}px`;
+  const h = el.offsetHeight;
+  el.style.top = `${b.top - 6 - h >= 8 ? b.top - 6 - h : Math.min(b.bottom + 6, window.innerHeight - h - 8)}px`;
+
+  tryMenu = { el, btn, turn, index: 0 };
+  btn.setAttribute('aria-expanded', 'true');
+  setTryMenuIndex(0);
+
+  el.addEventListener('mousemove', (e) => {
+    const item = e.target.closest('[role="menuitem"]');
+    if (!item || !tryMenu) return;
+    const i = [...el.querySelectorAll('[role="menuitem"]')].indexOf(item);
+    if (i !== tryMenu.index) setTryMenuIndex(i);
+  });
+  el.addEventListener('click', (e) => {
+    const item = e.target.closest('[role="menuitem"]');
+    if (item) pickTryAs(item.dataset.mode);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setTryMenuIndex(tryMenu.index + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setTryMenuIndex(tryMenu.index - 1); }
+    else if (e.key === 'Home') { e.preventDefault(); setTryMenuIndex(0); }
+    else if (e.key === 'End') { e.preventDefault(); setTryMenuIndex(-1); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickTryAs(modes[tryMenu.index]); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeTryMenu(true); }
+    else if (e.key === 'Tab') closeTryMenu(false);
+  });
+}
+
+async function pickTryAs(mode) {
+  if (!tryMenu) return;
+  const { turn } = tryMenu;
+  closeTryMenu(false);
+  if (activeRun) return;
+  retoneFrom = { id: turn.id, mode };
+  if (!(await startTurn(turn.inputText, mode, turn.targetLang))) {
+    retoneFrom = null;
+    renderThread();
+  }
 }
 
 function renderTurn(turn) {
@@ -1387,6 +1522,7 @@ function renderTurn(turn) {
 }
 
 function renderThread() {
+  closeTryMenu(false);
   if (turns.length === 0) {
     // One line, not a manual: the fastest way in, with the real shortcut.
     const keys = shortcutText ? `<kbd>${escapeHtml(shortcutText)}</kbd>` : 'the Proofr shortcut';
@@ -2156,6 +2292,12 @@ async function maybeShowRatePrompt() {
 
 // Delegated: one listener handles copy/redo/retry for every turn, present or future.
 function bindThreadDelegation() {
+  // The menu closes on a click anywhere else, and when the thread moves under it.
+  document.addEventListener('pointerdown', (e) => {
+    if (tryMenu && !tryMenu.el.contains(e.target) && !tryMenu.btn.contains(e.target)) closeTryMenu(false);
+  }, true);
+  refs.thread.addEventListener('scroll', () => closeTryMenu(false));
+  window.addEventListener('resize', () => closeTryMenu(false));
   refs.thread.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
@@ -2165,7 +2307,10 @@ function bindThreadDelegation() {
 
     if (btn.dataset.action === 'copy') await copyTurn(turn, btn);
     else if (btn.dataset.action === 'redo' || btn.dataset.action === 'retry') await regenerateTurn(turn);
-    else if (btn.dataset.action === 'retone') await startTurn(turn.inputText, btn.dataset.mode, turn.targetLang);
+    else if (btn.dataset.action === 'tryas') {
+      if (tryMenu && tryMenu.btn === btn) closeTryMenu(false);
+      else openTryMenu(btn, turn);
+    }
     else if (btn.dataset.action === 'delete') await deleteTurn(turn);
   });
 }
@@ -2209,7 +2354,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'tabBar', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
     'hoverToggle', 'hoverHint', 'engineSeg', 'engineHint', 'themeSeg',
-    'cloudOffer', 'btnUseCloud', 'panelNotice', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
+    'cloudOffer', 'btnUseCloud', 'panelNotice', 'undoToast', 'undoToastText', 'btnUndo', 'sendTip', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
     'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progStart', 'progStartFill', 'progStartText', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
     'progHabitsCard', 'progHabitTitle', 'progHabitEg', 'progHabitAlso', 'progWordsCard', 'progTipsState', 'progTipsNote', 'progWords', 'btnAllWords', 'progMasteredLine',
@@ -2243,6 +2388,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (hasKey) checkModelStillListed();
 
   turns = await TurnLog.getAll();
+  try { sendTipSeen = !!(await chrome.storage.local.get('srSendTipSeen')).srSendTipSeen; } catch { /* keep it hidden */ }
+  setRunning(false);
   renderThread();
   bindThreadDelegation();
   updateCharCount();
@@ -2258,14 +2405,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     turns = [];
     await TurnLog.clear();
     renderThread();
-    offerUndo('History cleared.', () => { turns = cleared.concat(turns); });
+    offerUndo('History cleared', () => { turns = cleared.concat(turns); });
   });
-  refs.panelNotice.addEventListener('click', async (e) => {
-    if (!e.target.closest('#btnUndo') || !undoRestore) return;
-    undoRestore();
-    undoRestore = null;
-    clearTimeout(undoTimer);
-    refs.panelNotice.classList.add('hidden');
+  refs.btnUndo.addEventListener('click', async () => {
+    const restore = undoRestore;
+    hideUndo();
+    if (!restore) return;
+    restore();
     await saveTurns();
     renderThread();
   });
@@ -2504,7 +2650,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   refs.ta.addEventListener('keydown', (e) => {
     if (refs.palette.classList.contains('open')) return; // let the palette nav handler own this keystroke
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); sendMessage(); }
+    if (e.key !== 'Enter' || e.isComposing) return;
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); markSendTipSeen(); sendMessage(); }
+    else if (!e.shiftKey && !e.altKey) maybeShowSendTip(); // Enter itself still adds the line
   });
   refs.sendBtn.addEventListener('click', sendMessage);
 

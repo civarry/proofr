@@ -195,7 +195,7 @@ await focusSel(panel, '#ta'); await panel.keyboard.type('we was going to the sto
 await clk(panel, '#sendBtn'); await sleep(2500);
 const card = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '');
 check('side panel rewrite succeeds end-to-end', /^R\(we was going/.test(card), card.slice(0, 80));
-const counted = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1); const t = turns.at(-1); return { label: c.querySelector('.result-count')?.textContent, want: `${t.outputText.length.toLocaleString()} characters` }; });
+const counted = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1); const t = turns.at(-1); return { label: c.querySelector('.result-count')?.textContent, want: `${t.outputText.length.toLocaleString()} chars` }; });
 check('result shows its character count', counted.label && counted.label === counted.want, JSON.stringify(counted));
 check('rating line shown after 10th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
 await shot(panel, '2-panel-result.png');
@@ -216,8 +216,8 @@ check('No thanks: never asked again', (await panel.evaluate(() => chrome.storage
 // Hidden characters in pasted AI text: gone from the result, and counted.
 await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 'we\u200b was\u00a0ready\u2060 today'; t.dispatchEvent(new Event('input')); });
 await clk(panel, '#sendBtn'); await sleep(2500);
-const hid = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1); return { out: turns.at(-1).outputText, line: c.querySelector('.result-count')?.textContent }; });
-check('Proofread takes hidden characters out of pasted text and says how many', !/[\u200b\u00a0\u2060]/.test(hid.out) && / · 3 hidden characters removed$/.test(hid.line || ''), JSON.stringify(hid));
+const hid = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1).querySelector('.result-count'); return { out: turns.at(-1).outputText, line: c?.textContent, title: c?.title }; });
+check('Proofread takes hidden characters out of pasted text and says how many', !/[\u200b\u00a0\u2060]/.test(hid.out) && / · 3 hidden removed$/.test(hid.line || '') && / · 3 hidden characters removed$/.test(hid.title || ''), JSON.stringify(hid));
 
 // 4b. Welcome try-it with a provider connected: real proofread, changes marked.
 {
@@ -260,12 +260,86 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   await panel.evaluate(() => { document.getElementById('ta').value = ''; });
   await focusSel(panel, '#ta'); await panel.keyboard.type('try as source text');
   await clk(panel, '#sendBtn'); await sleep(1500);
-  await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1).querySelector('[data-action="retone"][data-mode="professional"]').click());
+  // All by keyboard: focus Try as, Enter opens the menu, Enter picks the highlighted Professional.
+  await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1).querySelector('[data-action="tryas"]').focus());
+  await panel.keyboard.press('Enter'); await sleep(200);
+  const src = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1).dataset.id);
+  await panel.keyboard.press('Enter');
+  // The card it came from says what is running, until the new result lands.
+  const running = await panel.evaluate(async (id) => {
+    for (let i = 0; i < 100; i++) {
+      const line = document.querySelector(`.turn[data-id="${id}"] .result-count`)?.textContent || '';
+      if (/^Rewriting as /.test(line)) return line;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return null;
+  }, src);
+  check('while a Try as rewrite runs, its source card says "Rewriting as Professional…"', running === 'Rewriting as Professional…', String(running));
   await sleep(1500);
+  const settled = await panel.evaluate((id) => document.querySelector(`.turn[data-id="${id}"] .result-count`)?.textContent, src);
+  check('then it goes back to the character count', /^\d+ chars$/.test(settled || ''), String(settled));
   const last = await panel.evaluate(() => { const t = [...document.querySelectorAll('.turn')].at(-1); return { user: t.querySelector('.msg-user').textContent, meta: t.querySelector('.turn-meta').textContent }; });
   check('Try as reruns the same text in the chosen tone', last.user === 'try as source text' && /Professional/.test(last.meta), JSON.stringify(last));
   const after = await panel.evaluate(() => document.querySelectorAll('.turn').length);
   check('Try as adds a new entry, keeps the original', after === before + 2, `${before} -> ${after}`);
+}
+
+// 4f'. The Try as menu: floats over the thread (no card changes height), one
+// open at a time, arrows move the highlight, Escape and outside clicks close it.
+{
+  await panel.bringToFront();
+  const heights = () => panel.evaluate(() => [...document.querySelectorAll('.assistant-card')].map((c) => c.offsetHeight).join(','));
+  const btns = () => panel.evaluate(() => [...document.querySelectorAll('[data-action="tryas"]')].length);
+  const before = await heights();
+  // A Proofread result's menu: the six other tones. (A Professional one swaps Professional for Proofread.)
+  const others = await panel.evaluate(() => {
+    const pro = [...document.querySelectorAll('.turn')].find((t) => turns.find((x) => x.id === t.dataset.id)?.mode === 'professional');
+    pro.querySelector('[data-action="tryas"]').click();
+    const names = [...document.querySelectorAll('.menu-pop [role="menuitem"] .name')].map((n) => n.textContent);
+    pro.querySelector('[data-action="tryas"]').click();
+    const g = [...document.querySelectorAll('.turn')].filter((t) => turns.find((x) => x.id === t.dataset.id)?.mode === 'grammar').at(-1);
+    g.querySelector('[data-action="tryas"]').id = 'tryGrammar';
+    return names;
+  });
+  check('a Professional result offers Proofread in place of Professional', others[0] === 'Proofread' && !others.includes('Professional'), others.join('|'));
+  await panel.evaluate(() => document.getElementById('tryGrammar').click()); await sleep(200);
+  const open = await panel.evaluate(() => {
+    const m = document.querySelector('.menu-pop'); const b = document.getElementById('tryGrammar');
+    return { menus: document.querySelectorAll('.menu-pop').length, role: m?.getAttribute('role'), items: m ? [...m.querySelectorAll('[role="menuitem"]')].map((i) => i.querySelector('.name').textContent) : [],
+      expanded: b.getAttribute('aria-expanded'), popup: b.getAttribute('aria-haspopup'), focus: document.activeElement?.dataset.mode, active: m?.querySelector('.active')?.dataset.mode };
+  });
+  check('Try as opens a menu of 6 tones, the first highlighted and focused', open.menus === 1 && open.role === 'menu' && open.items.join('|') === 'Professional|Friendly|Concise|Plain English|Summarize|LinkedIn'
+    && open.expanded === 'true' && open.popup === 'menu' && open.focus === 'professional' && open.active === 'professional', JSON.stringify(open));
+  check('opening Try as never changes a card\'s height', (await heights()) === before, `${before} vs ${await heights()}`);
+  await panel.keyboard.press('ArrowDown'); await panel.keyboard.press('ArrowDown');
+  const moved = await panel.evaluate(() => ({ active: document.querySelector('.menu-pop .active')?.dataset.mode, focus: document.activeElement?.dataset.mode }));
+  await panel.keyboard.press('ArrowUp'); await panel.keyboard.press('ArrowUp'); await panel.keyboard.press('ArrowUp');
+  const wrapped = await panel.evaluate(() => document.querySelector('.menu-pop .active')?.dataset.mode);
+  check('arrow keys move the highlight, and wrap', moved.active === 'short' && moved.focus === 'short' && wrapped === 'linkedin', JSON.stringify({ moved, wrapped }));
+  await panel.keyboard.press('Escape'); await sleep(100);
+  const esc = await panel.evaluate(() => ({ menus: document.querySelectorAll('.menu-pop').length, focusTryAs: document.activeElement?.id, expanded: document.getElementById('tryGrammar').getAttribute('aria-expanded') }));
+  check('Escape closes the menu and puts focus back on Try as', esc.menus === 0 && esc.focusTryAs === 'tryGrammar' && esc.expanded === 'false', JSON.stringify(esc));
+  if ((await btns()) >= 2) {
+    await panel.evaluate(() => [...document.querySelectorAll('[data-action="tryas"]')].at(-1).click()); await sleep(100);
+    await panel.evaluate(() => [...document.querySelectorAll('[data-action="tryas"]')].at(-2).click()); await sleep(100);
+    const one = await panel.evaluate(() => ({ menus: document.querySelectorAll('.menu-pop').length, expanded: [...document.querySelectorAll('[data-action="tryas"]')].filter((b) => b.getAttribute('aria-expanded') === 'true').length }));
+    check('only one Try as menu is open at a time', one.menus === 1 && one.expanded === 1, JSON.stringify(one));
+  } else check('only one Try as menu is open at a time', false, 'needs 2 results');
+  await panel.evaluate(() => [...document.querySelectorAll('[data-action="tryas"]')].at(-2).click()); await sleep(100);
+  const toggled = await panel.evaluate(() => document.querySelectorAll('.menu-pop').length);
+  await panel.evaluate(() => [...document.querySelectorAll('[data-action="tryas"]')].at(-1).click()); await sleep(100);
+  await panel.evaluate(() => document.getElementById('thread').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))); await sleep(100);
+  const outside = await panel.evaluate(() => document.querySelectorAll('.menu-pop').length);
+  check('clicking Try as again, or anywhere else, closes the menu', toggled === 0 && outside === 0, JSON.stringify({ toggled, outside }));
+  // Compact: everything around the text (header, padding, action row) is under 95px; it was about 155px.
+  const chrome = await panel.evaluate(() => { const c = [...document.querySelectorAll('.assistant-card:not(.error)')].at(-1); return c.offsetHeight - c.querySelector('.assistant-body').offsetHeight; });
+  check('a result card adds under 95px around its text', chrome > 0 && chrome < 95, `${chrome}px`);
+  // Copy turns into a green "Copied" for a moment, then back.
+  await panel.evaluate(() => [...document.querySelectorAll('[data-action="copy"]')].at(-1).click()); await sleep(200);
+  const copied = await panel.evaluate(() => { const b = [...document.querySelectorAll('[data-action="copy"]')].at(-1); return { cls: b.classList.contains('copied'), text: b.textContent }; });
+  await sleep(1500);
+  const reverted = await panel.evaluate(() => { const b = [...document.querySelectorAll('[data-action="copy"]')].at(-1); return { cls: b.classList.contains('copied'), text: b.textContent }; });
+  check('Copy shows "Copied" for about 1.4s, then reverts', copied.cls && copied.text === 'Copied' && !reverted.cls && reverted.text === 'Copy', JSON.stringify({ copied, reverted }));
 }
 
 // 4g. Clear history: immediate, no native dialog, Undo restores it.
@@ -287,20 +361,52 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   const stored = () => panel.evaluate(async () => ((await chrome.storage.local.get('turnLog')).turnLog || []).map((t) => t.id));
   const before = await ids();
   const target = before[0]; // the first, so Undo must put it back on top, not at the end
-  const hiddenIdle = await panel.evaluate(() => getComputedStyle(document.querySelectorAll('.turn')[0].querySelector('.turn-delete')).opacity);
-  await panel.evaluate((id) => document.querySelector(`.turn[data-id="${id}"]`).scrollIntoView({ block: 'center' }), target);
-  await panel.hover(`.turn[data-id="${target}"] .assistant-body`); await sleep(200);
-  const shownHover = await panel.evaluate((id) => getComputedStyle(document.querySelector(`.turn[data-id="${id}"] .turn-delete`)).opacity, target);
-  check('an entry\'s delete button shows only on hover', hiddenIdle === '0' && shownHover === '1', `${hiddenIdle} / ${shownHover}`);
+  const del = await panel.evaluate((id) => { const b = document.querySelector(`.turn[data-id="${id}"] .assistant-head .turn-delete`); return b && { label: b.getAttribute('aria-label'), opacity: getComputedStyle(b).opacity }; }, target);
+  check('each result has a visible delete button in its header', del && del.label === 'Delete this result' && del.opacity === '1', JSON.stringify(del));
   await clk(panel, `.turn[data-id="${target}"] .turn-delete`); await sleep(400);
   const afterDom = await ids(); const afterStore = await stored();
   check('delete removes that one entry (text and result) from the thread and storage',
     before.length >= 2 && afterDom.length === before.length - 1 && !afterDom.includes(target) && !afterStore.includes(target) && afterStore.length === afterDom.length,
     `${before.length} -> ${afterDom.length}, stored ${afterStore.length}`);
-  const notice = await panel.evaluate(() => document.getElementById('panelNotice').textContent);
+  const toast = await panel.evaluate(() => { const t = document.getElementById('undoToast'); const c = document.querySelector('.composer'); return { shown: !t.hidden, role: t.getAttribute('role'), text: document.getElementById('undoToastText').textContent, above: t.getBoundingClientRect().bottom <= c.getBoundingClientRect().top + 1 }; });
+  check('a delete shows "Result deleted" with Undo, just above the composer', toast.shown && toast.role === 'status' && toast.text === 'Result deleted' && toast.above, JSON.stringify(toast));
   await panel.evaluate(() => document.getElementById('btnUndo')?.click()); await sleep(400);
   const undone = await ids(); const undoneStore = await stored();
-  check('Undo puts the deleted entry back in the same place', /Entry deleted/.test(notice) && JSON.stringify(undone) === JSON.stringify(before) && JSON.stringify(undoneStore) === JSON.stringify(before), notice);
+  check('Undo puts the deleted entry back in the same place', JSON.stringify(undone) === JSON.stringify(before) && JSON.stringify(undoneStore) === JSON.stringify(before), JSON.stringify(undone));
+  await clk(panel, `.turn[data-id="${target}"] .turn-delete`); await sleep(5300);
+  const expired = await panel.evaluate(() => ({ hidden: document.getElementById('undoToast').hidden }));
+  const gone = await stored();
+  check('the toast goes after 5s and the delete stays', expired.hidden && !gone.includes(target), JSON.stringify({ expired, n: gone.length }));
+}
+
+// 4g''. Composer: Enter is a new line and never sends; Cmd/Ctrl+Enter sends.
+// The first plain Enter shows a tip once, ever.
+{
+  await panel.bringToFront();
+  await panel.evaluate(() => chrome.storage.local.remove('srSendTipSeen'));
+  await panel.reload(); await sleep(1200);
+  await panel.evaluate(() => document.getElementById('btnSettingsBack')?.click());
+  const n = () => panel.evaluate(() => document.querySelectorAll('.turn').length);
+  const empty = await panel.evaluate(() => { const b = document.getElementById('sendBtn'); return { disabled: b.disabled, text: b.textContent, label: b.getAttribute('aria-label'), hint: document.getElementById('ta').getAttribute('aria-describedby') }; });
+  check('Send is labelled with its keys and disabled while empty', empty.disabled && /^Send(⌘↵|Ctrl ↵)$/.test(empty.text) && /^Send, (Command|Control) Enter$/.test(empty.label) && empty.hint === 'sendHint', JSON.stringify(empty));
+  const before = await n();
+  await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = ''; t.dispatchEvent(new Event('input')); });
+  await focusSel(panel, '#ta'); await panel.keyboard.type('first line');
+  await panel.keyboard.press('Enter'); await panel.keyboard.type('second line'); await sleep(300);
+  const typed = await panel.evaluate(() => ({ value: document.getElementById('ta').value, tip: !document.getElementById('sendTip').hidden && document.getElementById('sendTip').textContent, enabled: !document.getElementById('sendBtn').disabled }));
+  const seen = (await panel.evaluate(() => chrome.storage.local.get('srSendTipSeen'))).srSendTipSeen;
+  check('Enter adds a new line and does not send', typed.value === 'first line\nsecond line' && (await n()) === before && typed.enabled, JSON.stringify(typed));
+  check('the first plain Enter shows the send tip, and remembers it was seen', /^Press (⌘|Ctrl) Enter to send\. Enter adds a new line\.$/.test(typed.tip || '') && seen === true, JSON.stringify({ tip: typed.tip, seen }));
+  await sleep(3000);
+  await panel.keyboard.press('Enter'); await sleep(200);
+  const again = await panel.evaluate(() => document.getElementById('sendTip').hidden);
+  check('the tip goes after 3s and never shows again', again, String(again));
+  await panel.keyboard.down('Meta'); await panel.keyboard.press('Enter'); await panel.keyboard.up('Meta'); await sleep(2000);
+  const sent = await panel.evaluate(() => ({ user: [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.msg-user')?.textContent, ta: document.getElementById('ta').value }));
+  check('Cmd/Ctrl+Enter sends', (await n()) === before + 1 && sent.user === 'first line\nsecond line' && sent.ta === '', JSON.stringify(sent));
+  const focusBorder = await panel.evaluate(() => { document.getElementById('ta').focus(); const c = getComputedStyle(document.querySelector('.composer')).borderTopColor; const a = getComputedStyle(document.getElementById('sendBtn')).backgroundColor; return { c }; });
+  const accent = await panel.evaluate(() => { const d = document.createElement('div'); d.style.color = 'var(--accent)'; document.body.appendChild(d); const v = getComputedStyle(d).color; d.remove(); return v; });
+  check('the composer border is the accent color while typing', focusBorder.c === accent, JSON.stringify({ ...focusBorder, accent }));
 }
 
 // 4h. The mode list stays one line per mode, even in a narrow panel.
