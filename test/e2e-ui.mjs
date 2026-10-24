@@ -195,6 +195,8 @@ await focusSel(panel, '#ta'); await panel.keyboard.type('we was going to the sto
 await clk(panel, '#sendBtn'); await sleep(2500);
 const card = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '');
 check('side panel rewrite succeeds end-to-end', /^R\(we was going/.test(card), card.slice(0, 80));
+const counted = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1); const t = turns.at(-1); return { label: c.querySelector('.result-count')?.textContent, want: `${t.outputText.length.toLocaleString()} characters` }; });
+check('result shows its character count', counted.label && counted.label === counted.want, JSON.stringify(counted));
 check('rating line shown after 10th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
 await shot(panel, '2-panel-result.png');
 check('rating line: the first decline says "Not now"', await panel.evaluate(() => document.querySelector('.rate-line [data-rate="later"]')?.textContent) === 'Not now');

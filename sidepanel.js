@@ -1275,6 +1275,12 @@ function turnBodyHtml(turn) {
     : escapeHtml(op.text)).join('');
 }
 
+// Counted like the composer's "120 / 4000", so the two numbers agree.
+function charCountLabel(text) {
+  const n = String(text || '').length;
+  return `${n.toLocaleString()} character${n === 1 ? '' : 's'}`;
+}
+
 function renderAssistantCard(turn) {
   const modeName = escapeHtml(SR_getToneName(turn.mode));
 
@@ -1301,6 +1307,7 @@ function renderAssistantCard(turn) {
   return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
     <div class="assistant-head" title="${turn.latencyMs != null ? `Took ${formatLatency(turn.latencyMs)}` : ''}"><span><span class="tag">${modeName}</span> · ${engineName}</span></div>
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
+    <div class="result-count">${charCountLabel(turn.outputText)}</div>
     ${turn.mastered ? `<div class="mastered-line"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span>${turn.mastered.map((w) => `<b>${escapeHtml(w)}</b>`).join(' and ')}: ${turn.mastered.length === 1 ? '3 right in a row. Mastered.' : 'mastered.'}</span></div>` : ''}
     <div class="assistant-actions">
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>
