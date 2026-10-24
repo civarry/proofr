@@ -31,7 +31,7 @@
   --sr-scrim: rgba(38, 37, 31, 0.28);
   --sr-ins-bg: #e3f1e7;
   --sr-ins-fg: #1f5c36;
-  --sr-del-fg: #6b6960;
+  --sr-del-fg: #b4443a; /* removed words: the error red, struck through */
   --sr-notice-bg: #fbf3e4;
   --sr-notice-border: #ecd9b5;
   --sr-notice-fg: #6b4a12;
@@ -73,7 +73,7 @@
     --sr-scrim: rgba(0, 0, 0, 0.5);
     --sr-ins-bg: #1f3326;
     --sr-ins-fg: #8fd3a6;
-    --sr-del-fg: #a8a498;
+    --sr-del-fg: #e58a80;
     --sr-notice-bg: #3a2c18;
     --sr-notice-border: #5a4424;
     --sr-notice-fg: #e8bd7d;
