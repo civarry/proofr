@@ -101,15 +101,9 @@ class CloudProvider {
     await this.setCustomEndpoints(list);
   }
 
-  // A new, empty endpoint to fill in. An unfinished one (no URL yet) is reused,
-  // so pressing Add twice doesn't leave blanks behind.
-  static async addCustom() {
-    const list = await this.getCustomEndpoints();
-    const blank = list.find((c) => !c.baseURL);
-    if (blank) return blank.id;
-    const id = `custom-${Date.now().toString(36)}`;
-    await this.setCustomEndpoints([...list, { id, name: '', baseURL: '' }]);
-    return id;
+  // An id for an endpoint that isn't saved yet (Add custom endpoint…).
+  static newCustomId() {
+    return `custom-${Date.now().toString(36)}`;
   }
 
   static async removeCustom(id) {
@@ -429,29 +423,163 @@ function openCloudMenu() {
 async function refreshCloudSection() {
   const serviceId = await CloudProvider.getActiveService();
   const meta = SR_cloudServiceMeta(serviceId);
-  const isCustom = SR_isCustomId(serviceId);
+  const isCustom = !!customDraft || SR_isCustomId(serviceId);
   activeServiceId = serviceId;
   const cfg = await CloudProvider.getConfig(serviceId);
-  refs.cloudServiceBtnLabel.textContent = cfg.displayName;
-  await renderProviderMenu(serviceId);
+  refs.cloudServiceBtnLabel.textContent = customDraft ? 'New custom endpoint' : cfg.displayName;
+  await renderProviderMenu(customDraft ? customDraft.id : serviceId);
   refs.customBaseURLRow.classList.toggle('hidden', !isCustom);
-  refs.providerNote.textContent = meta.note || '';
+  refs.cloudSection.classList.toggle('custom', isCustom);
+  refs.cloudSection.classList.toggle('drafting', !!customDraft);
+  refs.providerNote.textContent = (isCustom ? SR_cloudServiceMeta('custom') : meta).note || '';
+  if (isCustom) renderCustomForm(customDraft ? { id: customDraft.id, name: '', baseURL: '', apiKey: '', draft: true } : cfg);
 
   refs.cloudModelInput.value = cfg.model;
   refs.cloudModelInput.dataset.saved = cfg.model;
   refs.cloudModelInput.placeholder = meta.defaultModel || 'Connect first, then pick a model';
   loadModelList(serviceId);
-  // Saving one field redraws the form; never overwrite the field being typed in.
-  const fill = (input, value) => { if (document.activeElement !== input) input.value = value; };
-  if (isCustom) {
-    fill(refs.customBaseURLInput, cfg.baseURL);
-    fill(refs.customNameInput, cfg.name || '');
-  }
   refs.apiKeyLabel.textContent = isCustom ? 'API key' : `${meta.name} API key`;
   refs.keySection.classList.toggle('keyless', cfg.keyless);
 
   await renderKeyField(serviceId);
   closeModelMenu();
+}
+
+// === Settings panel: a custom endpoint's form ===
+// Name, base URL and key are one unit with one Save, which checks the server
+// before anything is stored (a rename alone skips the check). Cancel puts the
+// fields back; Remove asks once. Model and provider picks still save at once:
+// a click is the whole choice.
+let customDraft = null;  // { id } while adding one; stored only on Save
+let customSaved = null;  // what's stored for the endpoint in the form
+let customEdits = null;  // { id, name, baseURL, key } typed but not saved
+
+function renderCustomForm(cfg) {
+  customSaved = { id: cfg.id, name: cfg.name || '', baseURL: cfg.baseURL || '', apiKey: cfg.apiKey || '', draft: !!cfg.draft };
+  const edits = customEdits && customEdits.id === cfg.id ? customEdits : null;
+  refs.customNameInput.value = edits ? edits.name : customSaved.name;
+  refs.customBaseURLInput.value = edits ? edits.baseURL : customSaved.baseURL;
+  refs.customKeyInput.value = edits ? edits.key : '';
+  refs.customKeyInput.placeholder = customSaved.apiKey
+    ? `Saved, ends in ${customSaved.apiKey.slice(-4)}. Type to replace it.`
+    : 'Paste the key, if the server needs one';
+  refs.customConfirm.classList.add('hidden');
+  refs.customActions.classList.remove('hidden');
+  updateCustomActions();
+}
+
+function customFields() {
+  return { name: refs.customNameInput.value.trim(), baseURL: refs.customBaseURLInput.value.trim(), key: refs.customKeyInput.value.trim() };
+}
+
+function updateCustomActions() {
+  if (!customSaved) return;
+  const f = customFields();
+  const dirty = customSaved.draft || f.name !== customSaved.name || f.baseURL !== customSaved.baseURL || !!f.key;
+  refs.btnSaveCustom.disabled = !dirty || !f.baseURL;
+  refs.btnCancelCustom.classList.toggle('hidden', !dirty);
+  refs.btnRemoveCustom.classList.toggle('hidden', customSaved.draft);
+}
+
+function setCustomHint(text, kind) {
+  refs.customHint.innerHTML = text;
+  refs.customHint.classList.toggle('ok', kind === 'ok');
+  refs.customHint.classList.toggle('bad', kind === 'bad');
+}
+
+// Synchronous up to the permission request, which must stay inside the click.
+function onSaveCustom() {
+  const f = customFields();
+  let host;
+  try {
+    const u = new URL(f.baseURL);
+    if (!/^https?:$/.test(u.protocol)) throw new Error('scheme');
+    host = u.host;
+  } catch {
+    setCustomHint('That base URL doesn\'t look right. It starts with http:// or https://.', 'bad');
+    return;
+  }
+  const saved = customSaved;
+  // Only the name changed: nothing to check.
+  if (!saved.draft && f.baseURL === saved.baseURL && !f.key) {
+    finishCustomSave(saved.id, f, null, null);
+    return;
+  }
+  requestEndpointAccess(f.baseURL).finally(() => checkCustom(saved, f, host));
+}
+
+async function checkCustom(saved, f, host) {
+  const key = f.key || saved.apiKey;
+  refs.btnSaveCustom.disabled = true;
+  refs.btnSaveCustom.textContent = 'Checking…';
+  setCustomHint(`Checking ${escapeHtml(host)}…`);
+  try {
+    const res = await fetch(SR_modelsURL(f.baseURL), { headers: SR_authHeaders(key) });
+    if (!res.ok) {
+      const why = res.status === 401 || res.status === 403
+        ? (key ? 'The server rejected that key.' : 'This server needs an API key.')
+        : `The server answered with an error (${res.status}).`;
+      setCustomHint(`${why} Nothing was saved.`, 'bad');
+      return;
+    }
+    const listed = await res.json().catch(() => null);
+    const ids = (listed && Array.isArray(listed.data) ? listed.data : []).map((m) => m && m.id).filter(Boolean);
+    await finishCustomSave(saved.id, f, f.key || null, SR_chatModels(ids));
+  } catch {
+    setCustomHint(`Couldn't reach ${escapeHtml(host)}. Check the URL and that the server is running. Nothing was saved.`, 'bad');
+  } finally {
+    refs.btnSaveCustom.textContent = 'Save';
+    updateCustomActions();
+  }
+}
+
+async function finishCustomSave(id, f, newKey, ids) {
+  const before = customSaved;
+  if (!before.draft && before.baseURL && before.baseURL !== f.baseURL) await releaseEndpointAccess(before.baseURL);
+  await CloudProvider.updateCustom(id, { name: f.name, baseURL: f.baseURL });
+  if (newKey) await CloudProvider.setKey(id, newKey);
+  await CloudProvider.setActiveService(id);
+  customDraft = null;
+  customEdits = null;
+  if (ids) {
+    delete modelLists[id];
+    await healModel(id, ids);
+  }
+  await refreshCloudSection();
+  await refreshProviderPill();
+  setCustomHint(`${ICON_CHECK}Saved${ids ? ' and connected' : ''}`, 'ok');
+  if (ids) await loadModelList(id, { ids, open: true });
+}
+
+function onCancelCustom() {
+  customEdits = null;
+  setCustomHint('');
+  if (customDraft) {
+    customDraft = null;
+    refreshCloudSection();
+    return;
+  }
+  renderCustomForm({ ...customSaved, draft: false });
+}
+
+// Removes the endpoint with its key and model, then falls back to another
+// provider that's ready (or the first preset).
+async function removeCustomEndpoint() {
+  const id = customSaved.id;
+  if (customSaved.baseURL) await releaseEndpointAccess(customSaved.baseURL);
+  await CloudProvider.removeCustom(id);
+  delete modelLists[id];
+  customEdits = null;
+  let next = SR_CLOUD_SERVICES[0].id;
+  for (const other of await CloudProvider.serviceIds()) {
+    if (providerReady(await CloudProvider.getConfig(other))) { next = other; break; }
+  }
+  await CloudProvider.setActiveService(next);
+  keyEditing = false;
+  setCustomHint('');
+  await refreshCloudSection();
+  await refreshProviderPill();
+  showSavedToast();
 }
 
 // Presets come from SR_CLOUD_SERVICES (constants.js), so a provider added
@@ -2031,7 +2159,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     'prSheet', 'prSheetIcon', 'prSheetTitle', 'prSheetText', 'prContinue',
     'keySection', 'cloudSection', 'advancedSection', 'providerNote', 'apiKeyLabel',
     'cloudServiceBtn', 'cloudServiceBtnLabel', 'cloudServiceMenu',
-    'customBaseURLRow', 'customBaseURLInput', 'customNameInput', 'btnRemoveCustom', 'cloudModelInput',
+    'customBaseURLRow', 'customBaseURLInput', 'customNameInput', 'customKeyInput', 'btnCustomKeyEye', 'customHint', 'customActions',
+    'btnRemoveCustom', 'btnCancelCustom', 'btnSaveCustom', 'customConfirm', 'customConfirmText', 'btnRemoveKeep', 'btnRemoveConfirm', 'cloudModelInput',
     'btnBrowseModels', 'modelMenu', 'modelMenuList', 'modelHint',
     'apiKeyInput', 'btnToggleKeyEye', 'btnSaveKey', 'btnClearKey', 'keyHint',
     'thread', 'palette', 'paletteHintLeft', 'paletteList',
@@ -2147,16 +2276,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const item = e.target.closest('.cloud-select-item');
     if (!item) return;
     closeCloudMenu();
+    cloudChosen = true; // picked a provider: keep its form open even before it has a key
+    keyEditing = false;
+    customEdits = null;
+    setCustomHint('');
+    // Add opens an empty form; nothing is stored, and the active provider
+    // doesn't change, until its Save.
+    if (item.dataset.value === 'add-custom') {
+      customDraft = { id: CloudProvider.newCustomId() };
+      await refreshCloudSection();
+      await refreshProviderPill();
+      refs.customNameInput.focus();
+      return;
+    }
+    customDraft = null;
     const previous = await CloudProvider.getConfig();
-    const adding = item.dataset.value === 'add-custom';
-    const next = adding ? await CloudProvider.addCustom() : item.dataset.value;
+    const next = item.dataset.value;
     if (needsHostAccess(previous.id) && next !== previous.id) await releaseEndpointAccess(previous.baseURL);
     await CloudProvider.setActiveService(next);
-    keyEditing = false;
-    cloudChosen = true; // picked a provider: keep its form open even before it has a key
     await refreshCloudSection();
     await refreshProviderPill();
-    if (adding) refs.customNameInput.focus(); else showSavedToast();
+    showSavedToast();
   });
   document.addEventListener('click', (e) => {
     if (!refs.cloudServiceMenu.contains(e.target) && e.target !== refs.cloudServiceBtn && !refs.cloudServiceBtn.contains(e.target)) {
@@ -2175,55 +2315,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (value !== refs.cloudModelInput.dataset.saved) await selectModel(value);
   });
-  refs.customBaseURLInput.addEventListener('change', async () => {
-    const id = activeServiceId;
-    const url = refs.customBaseURLInput.value.trim();
-    const previous = (await CloudProvider.getConfig(id)).baseURL;
-    if (previous && previous !== url) await releaseEndpointAccess(previous);
-    await CloudProvider.updateCustom(id, { baseURL: url });
-    delete modelLists[id]; // another server lists other models
-    await refreshCloudSection();
-    await refreshProviderPill();
-    showSavedToast();
+  // Custom endpoint form: typing only marks it changed; Save stores it.
+  for (const input of [refs.customNameInput, refs.customBaseURLInput, refs.customKeyInput]) {
+    input.addEventListener('input', () => {
+      customEdits = { id: customSaved && customSaved.id, ...customFields() };
+      setCustomHint('');
+      updateCustomActions();
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !refs.btnSaveCustom.disabled) { e.preventDefault(); onSaveCustom(); }
+    });
+  }
+  refs.btnSaveCustom.addEventListener('click', onSaveCustom);
+  refs.btnCancelCustom.addEventListener('click', onCancelCustom);
+  refs.btnCustomKeyEye.innerHTML = ICON_EYE;
+  refs.btnCustomKeyEye.addEventListener('click', () => {
+    const show = refs.customKeyInput.type === 'password';
+    refs.customKeyInput.type = show ? 'text' : 'password';
+    refs.btnCustomKeyEye.innerHTML = show ? ICON_EYE_OFF : ICON_EYE;
+    refs.btnCustomKeyEye.setAttribute('aria-label', show ? 'Hide key' : 'Show key');
   });
-  // The name saves as it's typed, so closing the panel mid-word keeps it;
-  // leaving the field confirms with the Saved toast.
-  let nameSave = null;
-  const saveName = async () => {
-    clearTimeout(nameSave);
-    const id = activeServiceId;
-    const name = refs.customNameInput.value.trim();
-    await CloudProvider.updateCustom(id, { name });
-    if (id !== activeServiceId) return;
-    refs.cloudServiceBtnLabel.textContent = SR_customDisplayName({ name, baseURL: refs.customBaseURLInput.value.trim() });
-    await renderProviderMenu(id);
-    await refreshProviderPill();
-  };
-  refs.customNameInput.addEventListener('input', () => {
-    clearTimeout(nameSave);
-    nameSave = setTimeout(saveName, 300);
+  refs.btnRemoveCustom.addEventListener('click', () => {
+    refs.customConfirmText.textContent = `Remove ${SR_customDisplayName(customSaved)}? Its key is deleted from this computer.`;
+    refs.customActions.classList.add('hidden');
+    refs.customConfirm.classList.remove('hidden');
+    refs.btnRemoveKeep.focus();
   });
-  refs.customNameInput.addEventListener('change', async () => {
-    await saveName();
-    showSavedToast();
+  refs.btnRemoveKeep.addEventListener('click', () => {
+    refs.customConfirm.classList.add('hidden');
+    refs.customActions.classList.remove('hidden');
+    refs.btnRemoveCustom.focus();
   });
-  // Removes the endpoint with its key and model, then falls back to another
-  // provider that's ready (or the first preset).
-  refs.btnRemoveCustom.addEventListener('click', async () => {
-    const id = activeServiceId;
-    const cfg = await CloudProvider.getConfig(id);
-    if (cfg.baseURL) await releaseEndpointAccess(cfg.baseURL);
-    await CloudProvider.removeCustom(id);
-    delete modelLists[id];
-    let next = SR_CLOUD_SERVICES[0].id;
-    for (const other of await CloudProvider.serviceIds()) {
-      if (providerReady(await CloudProvider.getConfig(other))) { next = other; break; }
-    }
-    await CloudProvider.setActiveService(next);
-    keyEditing = false;
-    await refreshCloudSection();
-    await refreshProviderPill();
-  });
+  refs.btnRemoveConfirm.addEventListener('click', removeCustomEndpoint);
 
   // Settings panel: model combobox over the provider's own list
   refs.cloudModelInput.addEventListener('focus', () => openModelMenu());
