@@ -3,6 +3,9 @@
 
   if (window.SmartRewriteModal) return;
 
+  // Settings → Appearance for the dialog and notes (theme.js, injected first).
+  if (typeof SR_watchTheme === 'function') SR_watchTheme(document.documentElement, 'data-sr-theme', false);
+
   class SmartRewriteModal {
     constructor() {
       this.modal = null;

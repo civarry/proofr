@@ -494,6 +494,43 @@ await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
   await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
 }
 
+// 6e''. Appearance: Auto / Light / Dark in Settings. Each choice repaints the
+// panel at once, Auto follows the computer, and Proofr on a web page follows
+// the same setting live.
+{
+  const panelTheme = () => panel.evaluate(() => ({ attr: document.documentElement.getAttribute('data-theme'), bg: getComputedStyle(document.body).backgroundColor,
+    on: [...document.querySelectorAll('#themeSeg .seg-btn.active')].map((b) => b.dataset.value).join() }));
+  const pageTheme = () => demo.evaluate(() => ({ attr: document.documentElement.getAttribute('data-sr-theme'), paper: getComputedStyle(document.documentElement).getPropertyValue('--sr-white').trim() }));
+  await panel.bringToFront();
+  await panel.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await demo.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await clk(panel, '#btnSettings'); await sleep(500);
+  const start = await panelTheme();
+  check('Appearance starts on Auto, following a light computer', start.on === 'auto' && start.attr === 'light' && start.bg === 'rgb(250, 249, 247)', JSON.stringify(start));
+  await clk(panel, '#themeSeg [data-value="dark"]'); await sleep(400);
+  const dark = await panelTheme();
+  check('Dark repaints the panel at once', dark.on === 'dark' && dark.attr === 'dark' && dark.bg === 'rgb(27, 26, 23)' && (await panel.evaluate(() => chrome.storage.sync.get('srTheme'))).srTheme === 'dark', JSON.stringify(dark));
+  const pd = await pageTheme();
+  check('Dark reaches Proofr on an open web page', pd.attr === 'dark' && pd.paper === '#1b1a17', JSON.stringify(pd));
+  await clk(panel, '#themeSeg [data-value="auto"]'); await sleep(300);
+  await panel.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]); await sleep(300);
+  check('Auto follows the computer when it changes', (await panelTheme()).attr === 'dark');
+  await clk(panel, '#themeSeg [data-value="light"]'); await sleep(400);
+  const light = await panelTheme();
+  check('Light wins over a dark computer', light.on === 'light' && light.attr === 'light' && light.bg === 'rgb(250, 249, 247)', JSON.stringify(light));
+  await demo.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]); await sleep(300);
+  const pl = await pageTheme();
+  check('Light wins on the web page too', pl.attr === 'light' && pl.paper === '#faf9f7', JSON.stringify(pl));
+  // A reload paints the saved choice (cached), not Auto first.
+  await panel.reload(); await sleep(50);
+  check('a reload keeps the choice from the first paint', await panel.evaluate(() => document.documentElement.getAttribute('data-theme')) === 'light');
+  await sleep(1500);
+  await panel.evaluate(() => chrome.storage.sync.set({ srTheme: 'auto' }));
+  await panel.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await demo.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await sleep(300);
+}
+
 // 6f. A slow result must not pull focus back or type into a box the user
 // left (SATISFACTION.md gap 1): it waits behind "Apply" instead.
 {
@@ -541,6 +578,14 @@ await panel.evaluate(() => document.getElementById('btnSettings').click()); awai
 await clk(panel, '#hoverToggle'); await sleep(1200);
 const regs = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
 check('hover on registers page scripts', regs.some(r => r.id === 'proofr-hover'), JSON.stringify(regs.map(r => r.id)));
+// A registration left by an older version (Chrome keeps them across updates)
+// gets this version's files, or pages would miss theme.js.
+const upgraded = await sw.evaluate(async () => {
+  await chrome.scripting.updateContentScripts([{ id: 'proofr-hover', js: ['constants.js', 'dom-scan.js', 'hover-assist.js', 'content.js'] }]);
+  await syncHoverScripts();
+  return (await chrome.scripting.getRegisteredContentScripts({ ids: ['proofr-hover'] }))[0].js;
+});
+check('an older hover registration is brought up to date', upgraded.includes('theme.js'), JSON.stringify(upgraded));
 await demo.bringToFront(); await demo.reload(); await sleep(900);
 box = await (await demo.$('.wrap p')).boundingBox();
 await demo.mouse.move(box.x + 10, box.y + 30); await sleep(200);

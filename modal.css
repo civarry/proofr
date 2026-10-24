@@ -44,47 +44,46 @@
 }
 
 /* Dark: the same warm paper, at night. Ink fills turn light, so text on them
-   (--sr-on-primary) turns dark. Follows the system setting. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --sr-primary: #edebe5;
-    --sr-primary-dark: #ffffff;
-    --sr-secondary: #edebe5;
-    --sr-white: #1b1a17;
-    --sr-gray-50: #24231f;
-    --sr-gray-100: #2a2925;
-    --sr-gray-200: #34322c;
-    --sr-gray-300: #4a473f;
-    --sr-gray-400: #6b675e;
-    --sr-gray-500: #a8a498;
-    --sr-gray-600: #c2beb3;
-    --sr-gray-700: #d6d3cb;
-    --sr-gray-800: #e5e2db;
-    --sr-gray-900: #edebe5;
-    --sr-success: #edebe5;
-    --sr-error: #e58a80;
-    --sr-card-bg: #1b1a17;
-    --sr-card-border: #34322c;
-    --sr-shadow-lg: 0 12px 24px -8px rgba(0, 0, 0, 0.5);
-    --sr-shadow-xl: 0 18px 44px -14px rgba(0, 0, 0, 0.6);
-    --sr-on-primary: #1b1a17;
-    --sr-on-primary-line: rgba(27, 26, 23, 0.45);
-    --sr-on-primary-hover: rgba(27, 26, 23, 0.1);
-    --sr-scrim: rgba(0, 0, 0, 0.5);
-    --sr-ins-bg: #1f3326;
-    --sr-ins-fg: #8fd3a6;
-    --sr-del-fg: #e58a80;
-    --sr-notice-bg: #3a2c18;
-    --sr-notice-border: #5a4424;
-    --sr-notice-fg: #e8bd7d;
-    --sr-spot-line: #e0a948;
-    --sr-spot-bg: rgba(224, 169, 72, 0.18);
-    --sr-accent: #7ea8f8;
-    --sr-accent-dark: #a9c5fa;
-    --sr-on-accent: #0f1b33;
-  }
-  #smart-rewrite-modal { color-scheme: dark; }
+   (--sr-on-primary) turns dark. content.js sets data-sr-theme on the page's
+   <html> from Settings → Appearance (Auto follows the computer). */
+:root[data-sr-theme="dark"] {
+  --sr-primary: #edebe5;
+  --sr-primary-dark: #ffffff;
+  --sr-secondary: #edebe5;
+  --sr-white: #1b1a17;
+  --sr-gray-50: #24231f;
+  --sr-gray-100: #2a2925;
+  --sr-gray-200: #34322c;
+  --sr-gray-300: #4a473f;
+  --sr-gray-400: #6b675e;
+  --sr-gray-500: #a8a498;
+  --sr-gray-600: #c2beb3;
+  --sr-gray-700: #d6d3cb;
+  --sr-gray-800: #e5e2db;
+  --sr-gray-900: #edebe5;
+  --sr-success: #edebe5;
+  --sr-error: #e58a80;
+  --sr-card-bg: #1b1a17;
+  --sr-card-border: #34322c;
+  --sr-shadow-lg: 0 12px 24px -8px rgba(0, 0, 0, 0.5);
+  --sr-shadow-xl: 0 18px 44px -14px rgba(0, 0, 0, 0.6);
+  --sr-on-primary: #1b1a17;
+  --sr-on-primary-line: rgba(27, 26, 23, 0.45);
+  --sr-on-primary-hover: rgba(27, 26, 23, 0.1);
+  --sr-scrim: rgba(0, 0, 0, 0.5);
+  --sr-ins-bg: #1f3326;
+  --sr-ins-fg: #8fd3a6;
+  --sr-del-fg: #e58a80;
+  --sr-notice-bg: #3a2c18;
+  --sr-notice-border: #5a4424;
+  --sr-notice-fg: #e8bd7d;
+  --sr-spot-line: #e0a948;
+  --sr-spot-bg: rgba(224, 169, 72, 0.18);
+  --sr-accent: #7ea8f8;
+  --sr-accent-dark: #a9c5fa;
+  --sr-on-accent: #0f1b33;
 }
+:root[data-sr-theme="dark"] #smart-rewrite-modal { color-scheme: dark; }
 
 #smart-rewrite-modal {
   display: none;

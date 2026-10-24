@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Proofr</title>
+  <script src="theme.js"></script>
   <style>
     :root {
       --paper:        #FAF9F7;
@@ -43,44 +44,43 @@
       --shimmer:      #F7F6F2;
       --scrim:        rgba(15,15,17,.45);
     }
-    /* Dark: the same warm paper at night; follows the system setting, like
-       Chrome's own side panel frame around it. Ink fills turn light, so text
-       on them (--accent-fg) turns dark. */
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --paper:        #1B1A17;
-        --card:         #24231F;
-        --ink:          #EDEBE5;
-        --ink-soft:     #C2BEB3;
-        --ink-faint:    #A8A498;
-        --line:         #34322C;
-        --line-soft:    #2A2925;
-        --line-focus:   #4A473F;
-        --user-bubble:  #1C2A44;
-        --accent:       #7EA8F8;
-        --accent-hover: #A9C5FA;
-        --accent-fg:    #0F1B33;
-        --accent-tint:  #1C2A44;
-        --accent-tint-line: #2C4170;
-        --accent-ink:   #A9C5FA;
-        --live:         #4CC173;
-        --live-bg:      #1F3326;
-        --live-border:  #2E4A37;
-        --live-ink:     #8FD3A6;
-        --select-bg:    #1C2A44;
-        --dot-fixed:    #E0A84A;
-        --dot-right:    #5CC47E;
-        --warn-bg:      #3A2E18;
-        --warn-ink:     #F0C987;
-        --error:        #E58A80;
-        --error-bg:     #3A2320;
-        --shadow-lg:    0 10px 28px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
-        --scrollbar:    #3A3832;
-        --error-border: #5A3330;
-        --shimmer:      #302E29;
-        --scrim:        rgba(0,0,0,.55);
-        color-scheme: dark;
-      }
+    /* Dark: the same warm paper at night. theme.js sets data-theme from
+       Settings → Appearance (Auto follows the computer, like Chrome's own
+       side panel frame around it). Ink fills turn light, so text on them
+       (--accent-fg) turns dark. */
+    :root[data-theme="dark"] {
+      --paper:        #1B1A17;
+      --card:         #24231F;
+      --ink:          #EDEBE5;
+      --ink-soft:     #C2BEB3;
+      --ink-faint:    #A8A498;
+      --line:         #34322C;
+      --line-soft:    #2A2925;
+      --line-focus:   #4A473F;
+      --user-bubble:  #1C2A44;
+      --accent:       #7EA8F8;
+      --accent-hover: #A9C5FA;
+      --accent-fg:    #0F1B33;
+      --accent-tint:  #1C2A44;
+      --accent-tint-line: #2C4170;
+      --accent-ink:   #A9C5FA;
+      --live:         #4CC173;
+      --live-bg:      #1F3326;
+      --live-border:  #2E4A37;
+      --live-ink:     #8FD3A6;
+      --select-bg:    #1C2A44;
+      --dot-fixed:    #E0A84A;
+      --dot-right:    #5CC47E;
+      --warn-bg:      #3A2E18;
+      --warn-ink:     #F0C987;
+      --error:        #E58A80;
+      --error-bg:     #3A2320;
+      --shadow-lg:    0 10px 28px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+      --scrollbar:    #3A3832;
+      --error-border: #5A3330;
+      --shimmer:      #302E29;
+      --scrim:        rgba(0,0,0,.55);
+      color-scheme: dark;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1313,6 +1313,14 @@
           </span>
           <input type="checkbox" id="soundToggle">
         </label>
+
+        <div class="settings-section-label">Appearance</div>
+        <div class="seg-control" id="themeSeg" role="group" aria-label="Appearance">
+          <button type="button" class="seg-btn" data-value="auto" aria-pressed="false">Auto</button>
+          <button type="button" class="seg-btn" data-value="light" aria-pressed="false">Light</button>
+          <button type="button" class="seg-btn" data-value="dark" aria-pressed="false">Dark</button>
+        </div>
+        <p class="settings-hint" id="themeHint">Auto follows your computer's light or dark setting. Also used for Proofr on web pages.</p>
 
         <details class="advanced" id="advancedSection">
           <summary>Advanced: AI engine</summary>
