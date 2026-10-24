@@ -834,8 +834,13 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
       const ops = (tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function') ? SR_wordDiffForDisplay(originalText, rewrittenText, tone) : null;
       const fixes = ops && typeof SR_diffCount === 'function' ? SR_diffCount(ops) : null;
       const nothing = fixes === 0 && rewrittenText === originalText;
-      const what = nothing ? 'Nothing to fix.' : fixes === 0 ? 'Fixed the spacing.'
-        : fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.';
+      // Hidden characters (zero-width spaces from copied AI text) can't be
+      // marked in the diff, so the note counts them.
+      const hidden = tone === 'grammar' && typeof SR_countHidden === 'function' ? SR_countHidden(originalText) - SR_countHidden(rewrittenText) : 0;
+      const hiddenLine = hidden > 0 ? `Removed ${hidden} hidden character${hidden === 1 ? '' : 's'}.` : '';
+      const what = nothing ? 'Nothing to fix.'
+        : fixes === 0 ? (hiddenLine || 'Fixed the spacing.')
+        : `${fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.'}${hiddenLine ? ` ${hiddenLine}` : ''}`;
       // "Nothing to fix" needs no Review or Undo; otherwise both are buttons
       // (showSuccess drops Review when only spacing changed).
       const review = { original: originalText, rewritten: rewrittenText, tone, provider, where,

@@ -1292,6 +1292,14 @@ function charCountLabel(text) {
   return `${n.toLocaleString()} character${n === 1 ? '' : 's'}`;
 }
 
+// Proofread takes out hidden characters (zero-width spaces and the like from
+// copied AI text); they can't be marked in the diff, so the card says so.
+function hiddenRemovedLabel(turn) {
+  if (turn.mode !== 'grammar' || typeof SR_countHidden !== 'function') return '';
+  const n = SR_countHidden(turn.inputText) - SR_countHidden(turn.outputText);
+  return n > 0 ? ` · ${n} hidden character${n === 1 ? '' : 's'} removed` : '';
+}
+
 function renderAssistantCard(turn) {
   const modeName = escapeHtml(SR_getToneName(turn.mode));
 
@@ -1318,7 +1326,7 @@ function renderAssistantCard(turn) {
   return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
     <div class="assistant-head" title="${turn.latencyMs != null ? `Took ${formatLatency(turn.latencyMs)}` : ''}"><span><span class="tag">${modeName}</span> · ${engineName}</span></div>
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
-    <div class="result-count">${charCountLabel(turn.outputText)}</div>
+    <div class="result-count">${charCountLabel(turn.outputText)}${hiddenRemovedLabel(turn)}</div>
     ${turn.mastered ? `<div class="mastered-line"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span>${turn.mastered.map((w) => `<b>${escapeHtml(w)}</b>`).join(' and ')}: ${turn.mastered.length === 1 ? '3 right in a row. Mastered.' : 'mastered.'}</span></div>` : ''}
     <div class="assistant-actions">
       <button class="chip-btn" data-action="copy">${ICON_COPY}Copy</button>

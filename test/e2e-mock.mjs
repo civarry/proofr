@@ -545,6 +545,19 @@ try {
     check(await page.evaluate(() => document.querySelector('#ta').value) === OUT, 'spacing-only Proofread: field has the cleaned text');
   });
 
+  // 4b''. Hidden characters (zero-width spaces from copied AI text) are taken
+  // out, and the note says how many, since the diff can't show them.
+  await step('hidden characters', async () => {
+    await page.evaluate(() => document.querySelectorAll('.sr-success-notification').forEach((n) => n.remove()));
+    const hidden = 'Proofr\u200b mock\u00a0result\u2060.';
+    await selectField(hidden);
+    await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, hidden);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('.sr-success-notification')), 5000);
+    const text = await page.evaluate(() => document.querySelector('.sr-success-notification .sr-success-text').textContent);
+    check(text === 'Removed 3 hidden characters.', `hidden characters: the note counts them (got ${JSON.stringify(text)})`);
+    check(await page.evaluate(() => document.querySelector('#ta').value) === OUT, 'hidden characters: the field has clean text');
+  });
+
   // 4c. The change guard: a "proofread" that drops "not" must not replace the text.
   await step('change guard', async () => {
     const risky = 'I will not be there on Monday.';
