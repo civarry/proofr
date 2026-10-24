@@ -266,10 +266,21 @@ async function shortcutLabel() {
   return cmd && cmd.shortcut ? cmd.shortcut : '';
 }
 
-async function buildContextMenus() {
+// Builds run one at a time. Install and startup can fire together (an update
+// applied when Chrome starts); overlapping builds would both clear the menu
+// first, then both add every item, and the second set fails as duplicates.
+let menuBuild = Promise.resolve();
+function buildContextMenus() {
+  menuBuild = menuBuild.catch(() => {}).then(buildContextMenusNow);
+  return menuBuild;
+}
+
+async function buildContextMenusNow() {
   const shortcut = await shortcutLabel();
   await chrome.contextMenus.removeAll();
-  const add = (props) => chrome.contextMenus.create(props);
+  const add = (props) => chrome.contextMenus.create(props, () => {
+    if (chrome.runtime.lastError) console.warn('Context menu:', chrome.runtime.lastError.message);
+  });
   const sel = ['selection'];
 
   // One top-level "Proofr" entry for both selections and text boxes. Two
