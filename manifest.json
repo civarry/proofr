@@ -46,6 +46,13 @@
         "mac": "Alt+Shift+R"
       },
       "description": "Review the last Proofr change on this page"
+    },
+    "toggle-hover": {
+      "suggested_key": {
+        "default": "Alt+Shift+H",
+        "mac": "Alt+Shift+H"
+      },
+      "description": "Pause or resume hover actions on every page"
     }
   },
   "icons": {

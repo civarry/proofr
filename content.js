@@ -479,9 +479,19 @@
       }
 
       const box = document.getElementById('sr-rewritten-text');
+      // All views are stacked once to find the tallest; the box keeps that
+      // height (up to its cap), then only the view showing is laid out, so a
+      // short Result never scrolls into the empty space of a long Original.
+      const fitBox = () => {
+        box.classList.remove('sr-views-fit');
+        box.style.height = '';
+        box.style.height = `${Math.round(box.getBoundingClientRect().height)}px`;
+        box.classList.add('sr-views-fit');
+      };
       const showView = (v) => {
         view = v;
         box.querySelectorAll('.sr-view').forEach((el) => el.classList.toggle('sr-view-on', el.dataset.v === v));
+        box.scrollTop = 0;
         this.modal.querySelectorAll('.sr-seg-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
         document.getElementById('sr-hint').innerHTML = hintFor();
       };
@@ -505,6 +515,7 @@
       this.bindChips();
       this.bindLangRow();
       this.show();
+      fitBox();
       this.maybeShowRatePrompt();
     }
 

@@ -29,6 +29,7 @@ const realManifest = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'),
 check('manifest: no static content_scripts', !realManifest.content_scripts);
 check('manifest: no required host_permissions', !realManifest.host_permissions);
 check('manifest: shortcut is a rebindable command', !!realManifest.commands?.['proofread-selection']);
+check('manifest: hover actions pause with Alt+Shift+H', realManifest.commands?.['toggle-hover']?.suggested_key?.default === 'Alt+Shift+H');
 check('no remote font import in modal.css', !/fonts\.googleapis/.test(fs.readFileSync(path.join(src, 'modal.css'), 'utf8')));
 
 // Test copy: identical code, but host access pre-granted so chrome.permissions.request()
@@ -814,6 +815,33 @@ if (icon) {
     await demo.evaluate(() => document.querySelector('.sr-hover-scope-btn[data-scope="block"]')?.click());
     await demo.evaluate(() => { document.body.click(); document.getElementById('fbpost').remove(); window.scrollTo(0, 0); });
   }
+}
+// The pause shortcut: hides the icon on every tab and says so on the page;
+// pressed again, it's back. Settings shows the key and the state.
+{
+  await demo.bringToFront();
+  const demoTab = await sw.evaluate(async () => { const [t] = await chrome.tabs.query({ url: 'http://localhost:8765/*' }); return { id: t.id, url: t.url }; });
+  const hoverIcon = async () => {
+    await demo.mouse.move(5, 5); await sleep(300);
+    await demo.evaluate(() => document.querySelectorAll('.sr-hover-icon').forEach((n) => n.remove()));
+    const b = await (await demo.$$('.prose.selectme'))[0].boundingBox();
+    await demo.mouse.move(b.x + 30, b.y + 8); await sleep(150);
+    await demo.mouse.move(b.x + 60, b.y + 10); await sleep(400);
+    return !!(await demo.$('.sr-hover-icon'));
+  };
+  const said1 = await sw.evaluate((t) => toggleHoverPause(t), demoTab); await sleep(400);
+  const toast1 = await demo.evaluate(() => document.querySelector('.sr-success-notification .sr-success-text')?.textContent || '');
+  const paused1 = (await sw.evaluate(() => chrome.storage.sync.get(['srHoverPaused']))).srHoverPaused;
+  const iconWhilePaused = await hoverIcon();
+  await panel.bringToFront(); await sleep(300);
+  const hint = await panel.evaluate(() => ({ text: document.getElementById('hoverKeyHint').textContent, hidden: document.getElementById('hoverKeyHint').hidden }));
+  await demo.bringToFront();
+  check('the pause shortcut pauses hover actions and says how to resume', paused1 === true && /^Hover actions paused\. .+ turns them back on\.$/.test(toast1) && said1 === toast1, JSON.stringify({ toast1, said1, paused1 }));
+  check('paused: no hover icon', !iconWhilePaused);
+  check('Settings shows the shortcut and that it is paused', !hint.hidden && /^Paused on every page\. Press .+ on any page to turn it back on\.$/.test(hint.text), JSON.stringify(hint));
+  const said2 = await sw.evaluate((t) => toggleHoverPause(t), demoTab); await sleep(400);
+  check('pressed again, hover actions are back', /^Hover actions on\. .+ pauses them\.$/.test(said2) && await hoverIcon(), said2);
+  await demo.mouse.move(5, 5); await sleep(300);
 }
 await panel.bringToFront(); await clk(panel, '#hoverToggle'); await sleep(1200);
 const regs2 = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());

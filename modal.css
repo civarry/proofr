@@ -339,6 +339,7 @@
 .sr-result-box > .sr-view { grid-area: 1 / 1; visibility: hidden; }
 .sr-result-box > .sr-view.sr-view-on { visibility: visible; }
 .sr-result-box:has(> .sr-view) { display: grid; }
+.sr-result-box.sr-views-fit > .sr-view:not(.sr-view-on) { display: none; }
 .sr-view-original { color: var(--sr-gray-500); }
 .sr-working { color: var(--sr-gray-500); }
 
