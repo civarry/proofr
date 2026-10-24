@@ -1467,8 +1467,8 @@ await demo.evaluate(() => {
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
 });
 await sw.evaluate((id) => handleRewrite(id, 'teh article was writen by someone else', 'grammar', { ensure: true }), tabId); await sleep(1500);
-const engineTag = await demo.evaluate(() => { const e = document.querySelector('#smart-rewrite-modal .sr-engine'); return e ? { text: e.textContent, border: getComputedStyle(e).borderTopWidth } : null; });
-check('the result names the provider and the model', /^(Sent to .+|On your computer or network) · other-model$/.test(engineTag?.text || ''), JSON.stringify(engineTag));
+const engineTag = await demo.evaluate(() => { const e = document.querySelector('#smart-rewrite-modal .sr-modal-header #sr-where'); return e ? { text: e.textContent, border: getComputedStyle(e).borderTopWidth } : null; });
+check('the result names the provider and the model, under the title', /^(Sent to .+|Local) · other-model$/.test(engineTag?.text || ''), JSON.stringify(engineTag));
 check('the where-label is plain text, not a pill', engineTag && engineTag.border === '0px', JSON.stringify(engineTag));
 await demo.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
 check('page text someone else wrote is not recorded', JSON.stringify(await insights()) === snapshot);

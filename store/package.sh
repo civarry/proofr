@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-FILES="manifest.json background.js constants.js content.js dom-scan.js hover-assist.js modal.css sidepanel.html sidepanel.js welcome.html welcome.js icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png"
+FILES="manifest.json background.js constants.js content.js dom-scan.js hover-assist.js modal.css theme.js sidepanel.html sidepanel.js welcome.html welcome.js icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png"
 
 for f in $FILES; do
   [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }

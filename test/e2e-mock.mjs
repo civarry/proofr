@@ -191,7 +191,7 @@ try {
     await sw.evaluate((id) => handleRewrite(id, 'Good morning team, the report is ready.', 'translate', { ensure: true, targetLang: 'ko' }), tabId);
     const prompt = requests.slice(before).map((r) => r.messages?.[0]?.content || '').join('\n');
     check(/into Korean\b/.test(prompt), `right-click translate to ko: prompt says Korean (got: ${(prompt.match(/into [A-Za-z ()]+?\./) || ['none'])[0]})`);
-    const modalOk = await waitFor(() => page.evaluate((out) => (document.getElementById('sr-rewritten-text') || {}).textContent === out, OUT), 5000);
+    const modalOk = await waitFor(() => page.evaluate((out) => (document.querySelector('#sr-rewritten-text .sr-view-on') || {}).textContent === out, OUT), 5000);
     check(modalOk, 'right-click on page text: result opens in the modal');
     await page.keyboard.press('Escape');
   });
@@ -203,10 +203,10 @@ try {
     const shown = await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text ins.sr-diff-ins') && !!document.querySelector('#sr-rewritten-text del.sr-diff-del')), 5000);
     check(shown, 'proofread result: changes shown as ins/del');
     const plain = await page.evaluate(() => {
-      document.getElementById('sr-diff-toggle').click();
-      return document.getElementById('sr-rewritten-text').textContent;
+      document.querySelector('#smart-rewrite-modal [data-view="result"]').click();
+      return (document.querySelector('#sr-rewritten-text .sr-view-on') || {}).textContent;
     });
-    check(plain === OUT, `proofread result: "Show plain text" shows exactly the result (got ${JSON.stringify(plain)})`);
+    check(plain === OUT, `proofread result: the Result view shows exactly the result (got ${JSON.stringify(plain)})`);
     await page.keyboard.press('Escape');
   });
 
@@ -218,13 +218,13 @@ try {
   await step('streaming', async () => {
     const shown = await inModal(() => {
       window.SmartRewriteModal.showLoading('Good morning team.', 'professional');
-      const skeleton = !!document.querySelector('#sr-modal-content .sr-skeleton');
+      const working = (document.querySelector('#sr-rewritten-text .sr-working') || {}).textContent;
       window.SmartRewriteModal.streamText('Good mor');
       window.SmartRewriteModal.streamText('Good morning, team');
-      return { skeleton, text: (document.getElementById('sr-rewritten-text') || {}).textContent, gone: !document.querySelector('#sr-modal-content .sr-skeleton') };
+      return { working, text: (document.getElementById('sr-rewritten-text') || {}).textContent, gone: !document.querySelector('#sr-rewritten-text .sr-working') };
     });
-    check(shown.skeleton, 'loading dialog: shows the skeleton');
-    check(shown.gone && shown.text === 'Good morning, team', `streamText: replaces the skeleton with the text so far (got ${JSON.stringify(shown.text)})`);
+    check(shown.working === 'Rewriting as Professional…', `loading dialog: the box says "Rewriting as Professional…" (got ${JSON.stringify(shown.working)})`);
+    check(shown.gone && shown.text === 'Good morning, team', `streamText: replaces it with the text so far (got ${JSON.stringify(shown.text)})`);
     await page.keyboard.press('Escape');
   });
   await step('per-change revert', async () => {
@@ -235,12 +235,71 @@ try {
       const n = box.querySelectorAll('.sr-change').length;
       box.querySelector('.sr-change[data-g="1"]').click();
       const rejected = box.querySelectorAll('.sr-change-rejected').length;
-      document.getElementById('sr-diff-toggle').click();
-      return { n, rejected, plain: box.textContent };
+      document.querySelector('#smart-rewrite-modal [data-view="result"]').click();
+      return { n, rejected, plain: box.querySelector('.sr-view-on').textContent };
     });
     check(r.n === 2, `per-change revert: one toggle per change (got ${r.n})`);
     check(r.rejected === 1 && r.plain === 'The report are ready.', `per-change revert: a clicked change keeps the original words (got ${JSON.stringify(r.plain)})`);
     await page.keyboard.press('Escape');
+  });
+  // The view switch, the tone grid and the keys (the popup redesign).
+  await step('views and tones', async () => {
+    const r = await inModal(async () => {
+      const M = window.SmartRewriteModal;
+      const views = () => [...document.querySelectorAll('#smart-rewrite-modal .sr-seg-btn')].map((b) => b.dataset.view + (b.getAttribute('aria-pressed') === 'true' ? '*' : ''));
+      const h = () => Math.round(document.querySelector('#smart-rewrite-modal .sr-modal-container').getBoundingClientRect().height);
+      const wrote = [];
+      M.copyToClipboard = async (t) => { wrote.push(t); M.showCopySuccess(); };
+      M.showResult('teh report are ready, and the long original sentence goes on for a while here.', 'The report is ready, and the long original sentence goes on for a while here.', 'grammar', 'custom', null, { action: { label: 'Replace anyway', otherLabel: 'Replace selection', run: (t) => { window.__replaced = t; return true; } } });
+      const proof = { views: views(), group: document.querySelector('.sr-seg').getAttribute('role'), pressed: [...document.querySelectorAll('.sr-chip[aria-pressed="true"]')].map((c) => c.dataset.tone), check: !!document.querySelector('.sr-chip-active .sr-chip-check'), label: document.getElementById('sr-result-label').textContent };
+      const heights = [h()];
+      for (const v of ['result', 'original', 'changes']) { document.querySelector(`[data-view="${v}"]`).click(); heights.push(h()); }
+      // Copy and the write-back always take the result, whatever view is showing.
+      document.querySelector('[data-view="original"]').click();
+      document.getElementById('sr-copy-btn').click();
+      await new Promise((res) => setTimeout(res, 50));
+      const copied = { text: wrote[0], label: document.getElementById('sr-copy-btn').textContent };
+      // Cmd/Ctrl+Enter is the write-back.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
+      await new Promise((res) => setTimeout(res, 100));
+      const replaced = { text: window.__replaced, label: document.querySelector('#sr-action-btn').textContent };
+      await new Promise((res) => setTimeout(res, 800));
+      const closed = !M.isVisible;
+      // Another tone: Result | Original, Result first, and the write-back is still there.
+      M.showResult('teh report', 'the report', 'grammar', 'custom', null, { action: { label: 'Replace anyway', otherLabel: 'Replace selection', run: () => true } });
+      M.switching = true;
+      M.showLoading('teh report', 'professional');
+      const busy = { label: document.getElementById('sr-result-label').textContent, spin: !!document.querySelector('.sr-chip[data-tone="professional"] .sr-chip-spin'), pressed: document.querySelector('.sr-chip[data-tone="professional"]').getAttribute('aria-pressed') };
+      let asked = 0;
+      const real = M.rewriteWithTone; M.rewriteWithTone = () => { asked++; };
+      document.querySelector('.sr-chip[data-tone="friendly"]').click(); // ignored while busy
+      M.showResult('teh report', 'Please find the report.', 'professional', 'custom');
+      const pro = { views: views(), action: document.querySelector('#sr-action-btn span')?.textContent, label: document.getElementById('sr-result-label').textContent };
+      document.querySelector('.sr-chip[data-tone="professional"]').click(); // already showing
+      M.rewriteWithTone = real;
+      // Arrow keys walk the grid: one tab stop, Right then Down.
+      const start = document.querySelector('.sr-chip[tabindex="0"]');
+      start.focus();
+      const key = (k) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+      key('ArrowRight'); const right = document.activeElement.dataset.tone;
+      key('ArrowDown'); const down = document.activeElement.dataset.tone;
+      const stops = document.querySelectorAll('.sr-chip[tabindex="0"]').length;
+      const cols = getComputedStyle(document.querySelector('.sr-chips')).gridTemplateColumns.split(' ').length;
+      const order = [...document.querySelectorAll('.sr-chip')].map((c) => c.dataset.tone);
+      const wantDown = order[2 + cols];
+      M.hide();
+      return { proof, heights, copied, replaced, closed, busy, asked, pro, start: start.dataset.tone, right, down, stops, wantDown, cols };
+    });
+    check(r.proof.views.join() === 'result,changes*,original' && r.proof.group === 'group', `Proofread: Result | Changes | Original, Changes first (got ${JSON.stringify(r.proof)})`);
+    check(r.proof.pressed.join() === 'grammar' && r.proof.check && r.proof.label === 'Proofread', `the active tone is pressed and checked, and named above the box (got ${JSON.stringify(r.proof)})`);
+    check(new Set(r.heights).size === 1, `switching views never changes the dialog's height (got ${r.heights})`);
+    check(r.copied.text === 'The report is ready, and the long original sentence goes on for a while here.' && r.copied.label === 'Copied', `Copy takes the result even on the Original view, then says Copied (got ${JSON.stringify(r.copied)})`);
+    check(r.replaced.text === r.copied.text && r.replaced.label === 'Replaced' && r.closed, `Cmd/Ctrl+Enter replaces with the result, says Replaced, then closes (got ${JSON.stringify(r.replaced)}, closed ${r.closed})`);
+    check(r.busy.label === 'Rewriting…' && r.busy.spin && r.busy.pressed === 'true', `while rewriting: the tile spins and is pressed, the label says Rewriting… (got ${JSON.stringify(r.busy)})`);
+    check(r.asked === 0, `tiles do nothing while a rewrite runs, or when already showing (asked ${r.asked})`);
+    check(r.pro.views.join() === 'result*,original' && r.pro.label === 'Professional', `other tones: Result | Original, Result first (got ${JSON.stringify(r.pro)})`);
+    check(r.pro.action === 'Replace selection', `a tone picked in the dialog keeps the write-back, as "Replace selection" (got ${JSON.stringify(r.pro.action)})`);
+    check(r.start === 'professional' && r.right === 'friendly' && r.down === r.wantDown && r.stops === 1, `arrow keys move across the grid (down = one row), one tab stop (got ${JSON.stringify({ start: r.start, right: r.right, down: r.down, wantDown: r.wantDown, cols: r.cols, stops: r.stops })})`);
   });
   await step('toast undo', async () => {
     const r = await inModal(async () => {
@@ -301,15 +360,16 @@ try {
       const ev = () => { const e = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
       getSelection().removeAllRanges();
       const empty = ev();
-      document.querySelector('.sr-original').open = true;
-      const r = document.createRange(); r.selectNodeContents(document.querySelector('.sr-original-text'));
+      const hintChanges = document.querySelector('#sr-modal-footer .sr-hint').textContent;
+      document.querySelector('#smart-rewrite-modal [data-view="original"]').click();
+      const r = document.createRange(); r.selectNodeContents(document.querySelector('.sr-view-original'));
       getSelection().removeAllRanges(); getSelection().addRange(r);
       const selected = ev();
       getSelection().removeAllRanges();
-      return { empty, selected, hint: document.querySelector('#sr-modal-footer .sr-hint').textContent };
+      return { empty, selected, hintChanges, hint: document.querySelector('#sr-modal-footer .sr-hint').textContent };
     });
     check(k5.empty && !k5.selected, `dialog: Ctrl/Cmd+C intercepted only with no selection (got ${JSON.stringify(k5)})`);
-    check(/^Click a tone/.test(k5.hint), `dialog: hint says "Click a tone" (got ${JSON.stringify(k5.hint)})`);
+    check(/^Click a change to undo it/.test(k5.hintChanges) && /^Click a tone to rewrite/.test(k5.hint), `dialog: the hint fits the view (got ${JSON.stringify(k5)})`);
     await page.keyboard.press('Escape');
     const back = await inModal(() => ({ visible: window.SmartRewriteModal.isVisible, focus: document.activeElement.id }));
     check(!back.visible && back.focus === 'ta', `dialog: Esc closes at once and gives focus back (got ${JSON.stringify(back)})`);
@@ -340,7 +400,7 @@ try {
     check(r.role === 'dialog' && r.spots === n && r.gaps === 1, `coach: ${n} spots marked, one a gap (got ${r.spots}, gaps ${r.gaps})`);
     check(r.text === before, `coach: shows the original, no fix (got ${JSON.stringify(r.text)})`);
     check(r.count === `${n} spots to check. Fix them in your text box, or show the fixes.`, `coach: says how many (got ${JSON.stringify(r.count)})`);
-    check(r.focus === 'sr-coach-self' && r.buttons.join() === "I'll fix them,Show fixes", `coach: buttons, focus on "I'll fix them" (got ${r.focus}, ${r.buttons})`);
+    check(r.focus === 'sr-coach-self' && r.buttons.join() === "Show fixes,I'll fix them", `coach: buttons (primary last, like every footer), focus on "I'll fix them" (got ${r.focus}, ${r.buttons})`);
     check(!r.copied, 'coach: Ctrl/Cmd+C does not copy the hidden fix');
     const shown = await inModal(() => {
       document.getElementById('sr-coach-reveal').click();
@@ -411,7 +471,7 @@ try {
       const evil = '" onmouseover="window.__pwned=1" x="';
       M.showResult('teh cat', `the${evil} cat`, 'grammar', 'custom', null, { where: `Sent to Custom · m${evil}` });
       const bad = [...document.querySelectorAll('[onmouseover]')].length;
-      const tag = document.querySelector('.sr-engine');
+      const tag = document.querySelector('#sr-where');
       const out = { bad, title: tag && tag.title, esc: M.escapeHtml(`"'<>&`) };
       M.hide();
       return out;
@@ -522,9 +582,9 @@ try {
     await page.evaluate(() => document.querySelector('.sr-success-notification .sr-success-review').click());
     const reviewed = await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text ins.sr-diff-ins')), 3000);
     check(reviewed, 'in-place toast: Review opens the result with the diff');
-    const where = await page.evaluate(() => (document.querySelector('#sr-modal-footer .sr-engine') || {}).textContent);
+    const where = await page.evaluate(() => (document.querySelector('#smart-rewrite-modal .sr-modal-header #sr-where') || {}).textContent);
     // The mock is on localhost, so nothing left this computer.
-    check(where === 'On your computer or network · mock-model', // the label names the model too (CJ asked which model answered)
+    check(where === 'Local · mock-model', // the label names the model too (CJ asked which model answered)
       `result dialog: says where the text went (got ${JSON.stringify(where)})`);
     await page.keyboard.press('Escape');
   });
@@ -659,7 +719,7 @@ try {
     await page.evaluate(() => document.querySelector('#sr-toast .sr-success-review').click());
     const d = await page.evaluate(() => ({
       notice: (document.querySelector('#sr-modal-content .sr-notice') || {}).textContent || '',
-      action: (document.getElementById('sr-action-btn') || {}).textContent || '',
+      action: (document.querySelector('#sr-action-btn span') || {}).textContent || '',
       ta: document.querySelector('#ta').value,
     }));
     check(/not/.test(d.notice) && d.action === 'Replace anyway' && d.ta === risky, `guarded result for a box you left: Review shows the reason and Replace anyway, field untouched (got ${JSON.stringify(d)})`);
