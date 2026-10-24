@@ -2186,10 +2186,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     await refreshProviderPill();
     showSavedToast();
   });
-  refs.customNameInput.addEventListener('change', async () => {
-    await CloudProvider.updateCustom(activeServiceId, { name: refs.customNameInput.value.trim() });
-    await refreshCloudSection();
+  // The name saves as it's typed, so closing the panel mid-word keeps it;
+  // leaving the field confirms with the Saved toast.
+  let nameSave = null;
+  const saveName = async () => {
+    clearTimeout(nameSave);
+    const id = activeServiceId;
+    const name = refs.customNameInput.value.trim();
+    await CloudProvider.updateCustom(id, { name });
+    if (id !== activeServiceId) return;
+    refs.cloudServiceBtnLabel.textContent = SR_customDisplayName({ name, baseURL: refs.customBaseURLInput.value.trim() });
+    await renderProviderMenu(id);
     await refreshProviderPill();
+  };
+  refs.customNameInput.addEventListener('input', () => {
+    clearTimeout(nameSave);
+    nameSave = setTimeout(saveName, 300);
+  });
+  refs.customNameInput.addEventListener('change', async () => {
+    await saveName();
     showSavedToast();
   });
   // Removes the endpoint with its key and model, then falls back to another

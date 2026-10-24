@@ -439,6 +439,13 @@ await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
   }, second.id);
   check('Remove drops that endpoint, its key and model, and keeps the other', gone.list.length === 1 && gone.list[0].id === 'custom' && !gone.key && !gone.model && gone.firstKey === 'test-key-123456', JSON.stringify(gone));
   check('after Remove, the remaining ready endpoint is active', gone.active === 'custom', gone.active);
+  // Naming saves while typing: no blur, the way a panel gets closed mid-edit.
+  await focusSel(panel, '#customNameInput');
+  await panel.keyboard.type('Home');
+  await sleep(700);
+  const named = await panel.evaluate(async () => ({ list: (await chrome.storage.sync.get('srCustomEndpoints')).srCustomEndpoints, label: document.getElementById('cloudServiceBtnLabel').textContent, focus: document.activeElement.id }));
+  check('a name saves as it is typed, without leaving the field', named.list[0].name === 'Home' && named.label === 'Home' && named.focus === 'customNameInput', JSON.stringify(named));
+  await panel.evaluate(async () => { const s = await chrome.storage.sync.get('srCustomEndpoints'); s.srCustomEndpoints[0].name = ''; await chrome.storage.sync.set(s); });
   await clk(panel, '#btnSettingsBack'); await sleep(300);
   await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
 }
