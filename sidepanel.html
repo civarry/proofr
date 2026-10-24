@@ -833,6 +833,8 @@
       z-index: 5;
     }
     .cloud-select-menu.hidden { display: none; }
+    .cloud-select-sep { height: 1px; background: var(--line); margin: 4px 5px; }
+    .cloud-select-item.add { color: var(--accent-ink); font-weight: 600; }
     .cloud-select-item {
       display: flex; align-items: center; justify-content: space-between;
       padding: 8px 9px;
@@ -1200,8 +1202,14 @@
           <p class="settings-hint" id="providerNote"></p>
 
           <div id="customBaseURLRow" class="hidden" style="margin-top:10px;">
-            <label for="customBaseURLInput">Base URL</label>
+            <label for="customNameInput">Name</label>
+            <input type="text" id="customNameInput" class="cloud-field" placeholder="Shown in menus, e.g. Work server" autocomplete="off" spellcheck="false" maxlength="40">
+            <label for="customBaseURLInput" style="margin-top:12px;">Base URL</label>
             <input type="text" id="customBaseURLInput" class="cloud-field" placeholder="https://your-endpoint.example.com/v1" autocomplete="off" spellcheck="false">
+            <div class="settings-actions">
+              <span></span>
+              <button id="btnRemoveCustom" class="link-danger" type="button">Remove endpoint</button>
+            </div>
           </div>
 
           <div id="keySection">

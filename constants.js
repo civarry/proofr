@@ -345,7 +345,29 @@ const SR_CLOUD_SERVICES = [
 ];
 
 function SR_cloudServiceMeta(id) {
+  if (SR_isCustomId(id)) return { ...SR_CLOUD_SERVICES.find((s) => s.id === 'custom'), id };
   return SR_CLOUD_SERVICES.find((s) => s.id === id) || SR_CLOUD_SERVICES[0];
+}
+
+// Custom endpoints are a list, each with its own key and model under its id
+// ("custom-<n>"). 'custom' is the single endpoint older versions saved, whose
+// base URL sits in srCloudCustomBaseURL until the list is first written.
+function SR_isCustomId(id) {
+  return id === 'custom' || /^custom-[a-z0-9]+$/.test(String(id || ''));
+}
+
+// [{ id, name, baseURL }] from a storage.sync read of
+// ['srCustomEndpoints', 'srCloudCustomBaseURL'].
+function SR_customEndpoints(r) {
+  const list = Array.isArray(r && r.srCustomEndpoints) ? r.srCustomEndpoints.filter((c) => c && SR_isCustomId(c.id)) : [];
+  if (r && r.srCloudCustomBaseURL && !list.some((c) => c.id === 'custom')) list.unshift({ id: 'custom', name: '', baseURL: r.srCloudCustomBaseURL });
+  return list;
+}
+
+// The name the user gave it, else the server's host ("localhost:4000").
+function SR_customDisplayName(c) {
+  if (c && String(c.name || '').trim()) return String(c.name).trim();
+  try { return new URL(c.baseURL).host || 'Custom'; } catch (_) { return 'Custom'; }
 }
 
 // This computer or the user's own network: loopback, the RFC 1918 ranges,
@@ -1068,10 +1090,11 @@ async function SR_rewriteAuto(text, tone, opts = {}) {
 }
 
 // 'device' → "On-device"; any cloud service id → its friendly name (falls
-// back to Custom's generic label for an unrecognized id).
-function SR_providerDisplayLabel(providerId) {
+// back to Custom's generic label for an unrecognized id). `name` is the
+// provider config's displayName when the caller has it (a custom endpoint's own name).
+function SR_providerDisplayLabel(providerId, name) {
   if (providerId === 'device') return 'On-device';
-  return SR_cloudServiceMeta(providerId).name;
+  return name || SR_cloudServiceMeta(providerId).name;
 }
 
 // === Word diff (Proofread results) ===
@@ -2483,6 +2506,9 @@ if (typeof self !== 'undefined') {
   self.SR_isValidApiKey = SR_isValidApiKey;
   self.SR_CLOUD_SERVICES = SR_CLOUD_SERVICES;
   self.SR_cloudServiceMeta = SR_cloudServiceMeta;
+  self.SR_isCustomId = SR_isCustomId;
+  self.SR_customEndpoints = SR_customEndpoints;
+  self.SR_customDisplayName = SR_customDisplayName;
   self.SR_isLocalURL = SR_isLocalURL;
   self.SR_providerReady = SR_providerReady;
   self.SR_needsHostAccess = SR_needsHostAccess;

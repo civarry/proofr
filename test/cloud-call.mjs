@@ -64,4 +64,21 @@ for (const s of SR_CLOUD_SERVICES) {
   if (s.keyless) assert.ok(SR_isLocalURL(s.baseURL), `${s.id} keyless but remote`);
 }
 
+// Several custom endpoints, each its own id. The one older versions saved
+// (srCloudCustomBaseURL) is listed first as 'custom' until the list is written.
+assert.ok(SR_isCustomId('custom') && SR_isCustomId('custom-mvm3l3is'));
+assert.ok(!SR_isCustomId('groq') && !SR_isCustomId('custom-') && !SR_isCustomId('customx') && !SR_isCustomId(undefined));
+assert.equal(SR_cloudServiceMeta('custom-abc').id, 'custom-abc');
+assert.ok(SR_needsHostAccess('custom-abc'), 'every custom endpoint needs host access');
+assert.deepEqual(SR_customEndpoints({ srCloudCustomBaseURL: 'http://localhost:4000/v1' }), [{ id: 'custom', name: '', baseURL: 'http://localhost:4000/v1' }]);
+assert.deepEqual(SR_customEndpoints({ srCloudCustomBaseURL: 'http://old/v1', srCustomEndpoints: [{ id: 'custom-a', name: 'A', baseURL: 'https://a/v1' }] }).map((c) => c.id), ['custom', 'custom-a']);
+assert.deepEqual(SR_customEndpoints({ srCloudCustomBaseURL: 'http://old/v1', srCustomEndpoints: [{ id: 'custom', name: '', baseURL: 'http://new/v1' }] }).map((c) => c.baseURL), ['http://new/v1'], 'the list wins over the old key');
+assert.deepEqual(SR_customEndpoints({ srCustomEndpoints: [null, { id: 'groq' }, { id: 'custom-b', baseURL: '' }] }).map((c) => c.id), ['custom-b'], 'junk entries dropped');
+assert.deepEqual(SR_customEndpoints({}), []);
+assert.equal(SR_customDisplayName({ name: '  Work  ', baseURL: 'http://x/v1' }), 'Work');
+assert.equal(SR_customDisplayName({ name: '', baseURL: 'http://localhost:4000/v1' }), 'localhost:4000');
+assert.equal(SR_customDisplayName({ name: '', baseURL: '' }), 'Custom');
+assert.equal(SR_providerDisplayLabel('custom-a', 'Work'), 'Work');
+assert.equal(SR_providerDisplayLabel('groq'), 'Groq');
+
 console.log('cloud-call: all checks passed');

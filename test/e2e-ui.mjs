@@ -381,11 +381,11 @@ await panel.evaluate(async () => {
 });
 await sleep(600);
 const menu = await panel.evaluate(() => [...document.querySelectorAll('#engineMenu .engine-item b')].map(b => b.textContent.replace(' ✓', '')));
-check('pill menu lists on-device, connected provider, Auto, settings', ['On this computer', 'Custom', 'Auto', 'Add or change a provider…'].every(t => menu.includes(t)), menu.join(' | '));
+check('pill menu lists on-device, connected provider, Auto, settings', ['On this computer', 'localhost:8766', 'Auto', 'Add or change a provider…'].every(t => menu.includes(t)), menu.join(' | '));
 await panel.evaluate(() => document.querySelector('#engineMenu [data-choice="cloud:custom"]').click());
 await sleep(600);
 const afterPick = await panel.evaluate(async () => ({ s: await chrome.storage.sync.get(['srEngine', 'srCloudService']), pill: document.getElementById('providerPillText').textContent, open: !document.getElementById('engineMenu').classList.contains('hidden') }));
-check('picking a provider switches engine to it', afterPick.s.srEngine === 'cloud' && afterPick.s.srCloudService === 'custom' && /Custom/.test(afterPick.pill) && !afterPick.open, JSON.stringify(afterPick));
+check('picking a provider switches engine to it', afterPick.s.srEngine === 'cloud' && afterPick.s.srCloudService === 'custom' && /localhost:8766/.test(afterPick.pill) && !afterPick.open, JSON.stringify(afterPick));
 await panel.evaluate(() => { document.getElementById('providerPill').click(); });
 await sleep(400);
 await panel.evaluate(() => document.querySelector('#engineMenu [data-choice="device"]').click());
@@ -393,6 +393,55 @@ await sleep(600);
 const back = await panel.evaluate(async () => ({ e: (await chrome.storage.sync.get(['srEngine'])).srEngine, pill: document.getElementById('providerPillText').textContent }));
 check('picking on-device switches back', back.e === 'device' && /On-device/.test(back.pill), JSON.stringify(back));
 await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
+
+// 6e'. A second custom endpoint, added from Settings, sits beside the first
+// (the old single slot made you remove one to add another). Each keeps its own
+// URL and key; both are in the pill menu; Remove takes only the one shown.
+{
+  await panel.evaluate(() => chrome.storage.sync.set({ srCloudService: 'custom' }));
+  await clk(panel, '#btnSettings'); await sleep(500);
+  await clk(panel, '#cloudServiceBtn'); await sleep(200);
+  const items = await panel.evaluate(() => [...document.querySelectorAll('#cloudServiceMenu .cloud-select-item')].map((i) => i.querySelector('span').textContent));
+  check('provider menu: the existing endpoint, then Add', items.includes('localhost:8766') && items.at(-1) === 'Add custom endpoint…', items.join(' | '));
+  await clk(panel, '#cloudServiceMenu [data-value="add-custom"]'); await sleep(600);
+  const fresh = await panel.evaluate(() => ({ active: document.activeElement.id, url: document.getElementById('customBaseURLInput').value, row: !document.getElementById('customBaseURLRow').classList.contains('hidden') }));
+  check('Add opens an empty endpoint with the name field focused', fresh.active === 'customNameInput' && fresh.url === '' && fresh.row, JSON.stringify(fresh));
+  await panel.keyboard.type('Second server');
+  await focusSel(panel, '#customBaseURLInput');
+  await panel.keyboard.type('http://127.0.0.1:8766/v1');
+  await focusSel(panel, '#apiKeyInput'); await sleep(500);
+  await panel.keyboard.type('second-key-123456');
+  await clk(panel, '#btnSaveKey'); await sleep(1500);
+  const st = await panel.evaluate(async () => {
+    const s = await chrome.storage.sync.get(null), l = await chrome.storage.local.get(null);
+    return { list: s.srCustomEndpoints, legacy: s.srCloudCustomBaseURL, active: s.srCloudService, keys: Object.keys(l).filter((k) => k.startsWith('srCloudKey_custom')).map((k) => [k, l[k]]), label: document.getElementById('cloudServiceBtnLabel').textContent };
+  });
+  const second = (st.list || []).find((c) => c.id !== 'custom');
+  check('both endpoints saved, the first unchanged', st.list?.length === 2 && st.list[0].id === 'custom' && st.list[0].baseURL === 'http://localhost:8766/v1'
+    && second && second.name === 'Second server' && second.baseURL === 'http://127.0.0.1:8766/v1' && st.active === second.id && st.legacy === undefined, JSON.stringify(st));
+  check('each endpoint keeps its own key', st.keys.length === 2 && st.keys.some(([k, v]) => k === 'srCloudKey_custom' && v === 'test-key-123456') && st.keys.some(([k, v]) => k === `srCloudKey_${second.id}` && v === 'second-key-123456'), JSON.stringify(st.keys));
+  check('the picker shows the new name', st.label === 'Second server', st.label);
+
+  await clk(panel, '#btnSettingsBack'); await sleep(300);
+  await panel.evaluate(() => document.getElementById('providerPill').click()); await sleep(600);
+  const pm = await panel.evaluate(() => [...document.querySelectorAll('#engineMenu .engine-item b')].map((b) => b.textContent));
+  check('pill menu lists both endpoints', pm.includes('localhost:8766') && pm.includes('Second server'), pm.join(' | '));
+  await panel.evaluate(() => document.querySelector('#engineMenu [data-choice="cloud:custom"]').click()); await sleep(600);
+  check('switching to the first endpoint', /localhost:8766/.test(await panel.evaluate(() => document.getElementById('providerPillText').textContent)));
+
+  // Remove the second one from its own settings.
+  await panel.evaluate((id) => chrome.storage.sync.set({ srCloudService: id }), second.id);
+  await clk(panel, '#btnSettings'); await sleep(500);
+  await clk(panel, '#btnRemoveCustom'); await sleep(800);
+  const gone = await panel.evaluate(async (id) => {
+    const s = await chrome.storage.sync.get(null), l = await chrome.storage.local.get(null);
+    return { list: s.srCustomEndpoints, active: s.srCloudService, key: l[`srCloudKey_${id}`], model: s[`srCloudModel_${id}`], firstKey: l.srCloudKey_custom };
+  }, second.id);
+  check('Remove drops that endpoint, its key and model, and keeps the other', gone.list.length === 1 && gone.list[0].id === 'custom' && !gone.key && !gone.model && gone.firstKey === 'test-key-123456', JSON.stringify(gone));
+  check('after Remove, the remaining ready endpoint is active', gone.active === 'custom', gone.active);
+  await clk(panel, '#btnSettingsBack'); await sleep(300);
+  await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
+}
 
 // 6f. A slow result must not pull focus back or type into a box the user
 // left (SATISFACTION.md gap 1): it waits behind "Apply" instead.
