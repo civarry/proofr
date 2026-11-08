@@ -1,9 +1,12 @@
 #!/bin/sh
 # Uploads the packaged zip to the Chrome Web Store as a new draft and,
 # with --submit, submits it for review. Uses the Chrome Web Store API with
-# gcloud application-default credentials that include the Web Store scope:
+# gcloud application-default credentials that include the Web Store scope. Use
+# your own OAuth client from Google Cloud: with gcloud's default client, Google
+# blocks this scope.
 #
 #   gcloud auth application-default login \
+#     --client-id-file=path/to/client_secret_XXXX.apps.googleusercontent.com.json \
 #     --scopes=https://www.googleapis.com/auth/chromewebstore,https://www.googleapis.com/auth/cloud-platform
 #
 # usage: sh store/publish.sh            (upload only; check the draft, then)
