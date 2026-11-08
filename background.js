@@ -364,10 +364,7 @@ async function handleMenuClick(info, tab) {
 
   if (info.menuItemId === 'srField:grammar') {
     try {
-      const [{ result: field } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: selectWholeField });
-      // A rich editor's whole content (Gmail: quoted thread, signature, links)
-      // would come back as plain text, so only plain fields are replaced in place.
-      await handleRewrite(tab.id, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain) });
+      await proofreadWholeBox(tab.id, info.frameId || 0);
     } catch (error) {
       console.warn('Proofr could not read this text box:', error?.message || error);
     }
@@ -386,8 +383,29 @@ async function handleMenuClick(info, tab) {
 
   if (typeof info.menuItemId === 'string' && info.menuItemId.startsWith('sr:')) {
     const tone = info.menuItemId.slice(3);
-    await handleRewrite(tab.id, info.selectionText, tone, { ensure: true });
+    await handleRewrite(tab.id, info.selectionText, tone, { ensure: true, frameId: info.frameId || 0 });
   }
+}
+
+// Nothing selected: the whole text box the cursor is in. Plain text and plain
+// lines are replaced in place; a rich box's links, lists or quoted email would
+// come back as plain text, so that result opens in the dialog, which says why.
+async function proofreadWholeBox(tabId, frameId) {
+  await injectWriteBack(tabId, frameId);
+  const [{ result: field } = {}] = await chrome.scripting.executeScript({ target: frameTarget(tabId, frameId), func: () => self.SR_WB.selectWhole() });
+  const rich = !!(field && field.text && !field.plain);
+  await handleRewrite(tabId, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain), frameId, richBox: rich });
+}
+
+// The shortcut: the selection may be in any frame. The focused one wins, since
+// other frames can keep an old selection.
+async function runProofreadShortcut(tab) {
+  const frames = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: readSelectionText });
+  const read = frames.map((f) => ({ frameId: f.frameId, ...(f.result || {}) }));
+  const focused = read.find((f) => f.focused);
+  const picked = (focused && focused.text.trim()) ? focused : read.find((f) => f.text && f.text.trim());
+  if (picked) { await handleRewrite(tab.id, picked.text, 'grammar', { ensure: true, frameId: picked.frameId }); return; }
+  await proofreadWholeBox(tab.id, focused ? focused.frameId : 0);
 }
 
 // === Keyboard shortcut (manifest "commands", rebindable at chrome://extensions/shortcuts) ===
@@ -451,18 +469,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== 'proofread-selection') return;
   if (isBlockedPage(tab.url)) { explainBlockedPage(tab.id, true); return; }
   try {
-    const [{ result: text } = {}] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: readSelectionText,
-    });
-    if (text && text.trim()) {
-      await handleRewrite(tab.id, text, 'grammar', { ensure: true });
-      return;
-    }
-    // Nothing selected: proofread the whole text box the cursor is in, with
-    // the same plain-field-only replace rule as the context menu.
-    const [{ result: field } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: selectWholeField });
-    await handleRewrite(tab.id, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain) });
+    await runProofreadShortcut(tab);
   } catch (error) {
     console.warn('Proofr shortcut could not run on this page:', error?.message || error);
     explainBlockedPage(tab.id, false);
@@ -476,8 +483,18 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 // to the hover script so it can open it in the modal itself.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'rewriteWithTone') {
-    handleRewrite(sender.tab.id, message.text, message.tone, { targetLang: message.targetLang, engine: message.engine });
+    handleRewrite(sender.tab.id, message.text, message.tone, { targetLang: message.targetLang, engine: message.engine, frameId: message.frameId || 0 });
     return false;
+  }
+  // The dialog is in the top page; a box in a frame is written from that frame.
+  if (message.action === 'targetOp') {
+    if (!sender.tab || !['insert', 'undo', 'applyAccepted'].includes(message.op)) return false;
+    chrome.scripting.executeScript({
+      target: frameTarget(sender.tab.id, message.frameId),
+      func: (op, id, args) => self.SR_WB[op](id, ...args),
+      args: [message.op, message.requestId, message.args],
+    }).then(([r]) => sendResponse(r && r.result), () => sendResponse(null));
+    return true; // async sendResponse
   }
   if (message.action === 'stopRewrite') {
     const controller = activeRewrites.get(message.requestId);
@@ -551,7 +568,7 @@ async function handleHoverAskAI(message, sendResponse) {
 // Rewrites in flight, by request id, so the toast's Stop (or Esc) can end one.
 const activeRewrites = new Map();
 
-async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false, engine: forceEngine } = {}) {
+async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false, engine: forceEngine, frameId = 0, richBox = false } = {}) {
   let requestId = null;
   let usedDevice = false;
   try {
@@ -584,12 +601,13 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // is in one, or the whole box was read), never text selected on a page,
     // which someone else wrote.
     let ownText = noReplace;
+    let target = null;
     if (!noReplace) {
-      const [captured] = await chrome.scripting.executeScript({ target: { tabId }, func: captureReplaceTarget, args: [text, requestId] });
-      ownText = !!(captured && captured.result);
+      target = await captureTarget(tabId, frameId, requestId, text);
+      ownText = !!target;
     }
     const onDevice = status.settings.engine === 'device' || (status.settings.engine === 'auto' && status.deviceNow);
-    inject(tabId, showLoadingModal, [text, tone, lang, requestId, onDevice]);
+    inject(tabId, showLoadingModal, [text, tone, lang, requestId, onDevice, !!target]);
 
     // On-device answers stream; show them arriving in the dialog instead of a
     // long skeleton. Throttled: each update is a script injection.
@@ -610,7 +628,7 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // proofread can be named in its toast.
     const mastered = tone === 'grammar' && ownText ? await recordInsights(text, rewritten) : [];
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider, engine), coach, mastered]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider, engine), coach, mastered, target, richBox]);
   } catch (error) {
     // Stopped from the toast: it already says "Stopped.", so add nothing.
     if (error && error.name === 'AbortError') return;
@@ -625,8 +643,8 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     }
     // Every model error can be retried in place; an on-device failure can go
     // straight to the connected cloud provider instead.
-    const retry = { text, tone, targetLang, label: 'Try again' };
-    const alternative = usedDevice && cloudReady ? { text, tone, targetLang, engine: 'cloud', label: `Use ${cloud.displayName} instead` } : null;
+    const retry = { text, tone, targetLang, frameId, label: 'Try again' };
+    const alternative = usedDevice && cloudReady ? { text, tone, targetLang, frameId, engine: 'cloud', label: `Use ${cloud.displayName} instead` } : null;
     const title = error.name === 'SuspectOutput' ? 'Proofr didn\'t use that answer' : null;
     inject(tabId, showErrorMessage, [message, title, { retry, alternative }]);
   } finally {
@@ -638,6 +656,32 @@ function inject(tabId, func, args) {
   chrome.scripting.executeScript({ target: { tabId }, func, args }).catch((error) => {
     console.warn('Could not show Proofr on this page:', error?.message || error);
   });
+}
+
+function frameTarget(tabId, frameId) {
+  return frameId ? { tabId, frameIds: [frameId] } : { tabId };
+}
+
+async function injectWriteBack(tabId, frameId) {
+  await chrome.scripting.executeScript({ target: frameTarget(tabId, frameId), files: ['write-back.js'] });
+}
+
+// Where the result can go back to: { frameId }, or null for page text. A frame
+// Proofr can't reach (another site's, under the one-tab grant) ends up in the
+// dialog, with Copy.
+async function captureTarget(tabId, frameId, requestId, text) {
+  try {
+    await injectWriteBack(tabId, frameId);
+    const [r] = await chrome.scripting.executeScript({
+      target: frameTarget(tabId, frameId),
+      func: (id, original) => self.SR_WB.capture(id, original),
+      args: [requestId, text],
+    });
+    return r && r.result ? { frameId } : null;
+  } catch (error) {
+    console.warn('Proofr can\'t reach this text box:', error?.message || error);
+    return null;
+  }
 }
 
 // Make sure the modal is on the page. Pages with hover actions on already
@@ -661,40 +705,17 @@ async function ensureContentAssets(tabId) {
 
 // === Functions injected into the page ===
 // Text fields keep their selection in selectionStart/End, which
-// window.getSelection() doesn't report.
+// window.getSelection() doesn't report, and a web component keeps its own.
 function readSelectionText() {
-  const el = document.activeElement;
+  let el = document.activeElement;
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+  const focused = document.hasFocus();
   if (el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|email|url|)$/i.test(el.type)))) {
-    return el.value.slice(el.selectionStart, el.selectionEnd);
+    return { text: el.value.slice(el.selectionStart, el.selectionEnd), focused };
   }
-  return String(window.getSelection() || '');
-}
-
-// "Proofread this text box": a plain field gets selected whole so the normal
-// capture and in-place replace path handles it. A rich editor is only read.
-function selectWholeField() {
-  const el = document.activeElement;
-  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
-    el.select();
-    return { text: el.value, plain: true };
-  }
-  if (el && el.isContentEditable) return { text: el.innerText, plain: false };
-  return { text: '', plain: false };
-}
-
-function captureReplaceTarget(originalText, requestId) {
-  const el = document.activeElement;
-  const targets = window.__srTargets || (window.__srTargets = new Map());
-  if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.selectionStart !== el.selectionEnd) {
-    targets.set(requestId, { kind: 'field', el, start: el.selectionStart, end: el.selectionEnd, original: originalText });
-    return 'field';
-  }
-  const sel = window.getSelection();
-  if (el && el.isContentEditable && sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-    targets.set(requestId, { kind: 'editable', el, range: sel.getRangeAt(0).cloneRange(), original: originalText });
-    return 'editable';
-  }
-  return null; // page text: someone else's writing
+  const root = el && el.getRootNode();
+  const sel = root && root.getSelection ? root.getSelection() : window.getSelection();
+  return { text: String(sel || ''), focused };
 }
 
 // `actions.retry` / `actions.alternative` arrive as plain data (injected
@@ -705,7 +726,7 @@ function showErrorMessage(message, title, actions) {
   if (title) opts.title = title;
   if (actions && actions.light) opts.light = true;
   const rerun = (a) => a && { label: a.label, run: () => {
-    chrome.runtime.sendMessage({ action: 'rewriteWithTone', text: a.text, tone: a.tone, targetLang: a.targetLang, engine: a.engine });
+    chrome.runtime.sendMessage({ action: 'rewriteWithTone', text: a.text, tone: a.tone, targetLang: a.targetLang, engine: a.engine, frameId: a.frameId });
     return true;
   } };
   if (actions && actions.retry) opts.retry = rerun(actions.retry);
@@ -725,52 +746,35 @@ function streamPartial(soFar) {
   if (window.SmartRewriteModal && window.SmartRewriteModal.streamText) window.SmartRewriteModal.streamText(soFar);
 }
 
-function showLoadingModal(originalText, tone, targetLang, requestId, onDevice) {
+function showLoadingModal(originalText, tone, targetLang, requestId, onDevice, inPlace) {
   if (window.SmartRewriteModal) {
-    window.SmartRewriteModal.showLoading(originalText, tone, targetLang, { requestId, onDevice });
+    window.SmartRewriteModal.showLoading(originalText, tone, targetLang, { requestId, onDevice, inPlace });
   }
 }
 
-// Replaces the captured selection through the browser's own editing command,
-// so the page's editor (React, Lexical, ProseMirror…) sees a normal input
-// event and Ctrl+Z restores the original. Only replaces when the captured
-// text is still there; otherwise the result opens in the modal instead.
-function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered) {
-  const targets = window.__srTargets;
-  const target = targets && targets.get(requestId);
-  if (targets) targets.delete(requestId);
-  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+// Puts the result back through write-back.js, in the frame that holds the box.
+// If the captured text is gone, the result opens in the modal instead.
+async function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered, target, richBox) {
   let replaced = false;
-
-  // Proofread should only fix mistakes. If it changed much more, or dropped a
-  // number, name, or "not", don't paste it in silently: show it for review.
-  const insertInto = (t, text) => {
-    if (t.kind === 'field' && t.el.isConnected
-        && norm(t.el.value.slice(t.start, t.end)) === norm(t.original)) {
-      t.el.focus();
-      t.el.setSelectionRange(t.start, t.end);
-      if (document.execCommand('insertText', false, text)) return 'undoable';
-      t.el.setRangeText(text, t.start, t.end, 'end');
-      t.el.dispatchEvent(new Event('input', { bubbles: true }));
-      return 'replaced';
-    }
-    if (t.kind === 'editable' && t.el.isConnected && t.range.startContainer.isConnected
-        && norm(t.range.toString()) === norm(t.original)) {
-      t.el.focus();
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(t.range);
-      return document.execCommand('insertText', false, text) ? 'undoable' : null;
-    }
-    return null;
+  const inFrame = !!(target && target.frameId);
+  // Which box has focus now? In a frame, the top page knows if focus left it.
+  const movedOnFrom = async () => {
+    if (!inFrame) return self.SR_WB.movedOn(requestId);
+    const a = document.activeElement;
+    return !!a && a !== document.body && a.tagName !== 'IFRAME' && !(a.closest && a.closest('#smart-rewrite-modal, #sr-toast'));
   };
+  const op = (name, ...args) => (inFrame
+    ? chrome.runtime.sendMessage({ action: 'targetOp', op: name, frameId: target.frameId, requestId, args })
+    : self.SR_WB[name](requestId, ...args));
+  const insertInto = (text) => op('insert', text);
+  const insertSafely = async (text) => { try { return !!(await insertInto(text)); } catch (_) { return false; } };
 
   const guard = (tone === 'grammar' && typeof SR_changeGuard === 'function') ? SR_changeGuard(originalText, rewrittenText) : null;
   const guardFailed = !!(guard && !guard.ok);
   // "Replace anyway" after a guard trip: same target, same safety re-check.
   // The dialog hands back the accepted text (changes clicked off are put
   // back), so that's what goes in, not the full suggestion.
-  const replaceAnyway = target ? { label: 'Replace anyway', otherLabel: 'Replace selection', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
+  const replaceAnyway = target ? { label: 'Replace anyway', otherLabel: 'Replace selection', run: (accepted) => insertSafely(accepted ?? rewrittenText) } : null;
   const guardNotice = guardFailed ? `Check this before using it: ${guard.reasons.join(', ')}.` : null;
 
   // The user moved on to another field while this was running: never pull
@@ -778,9 +782,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   // box they're typing in. Offer it in the toast instead; Apply is their
   // click, so focusing the old box then is expected. A result the guard
   // flagged gets no one-click Apply: Review shows why, with Replace anyway.
-  const active = document.activeElement;
-  const movedOn = target && active && active !== document.body
-    && active !== target.el && !target.el.contains(active) && !(active.closest && active.closest('#smart-rewrite-modal, #sr-toast'));
+  const movedOn = target && await movedOnFrom();
   if (movedOn) {
     const review = { original: originalText, rewritten: rewrittenText, tone, provider, where };
     if (guardFailed) { review.notice = guardNotice; review.action = replaceAnyway; }
@@ -788,7 +790,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
     if (window.SmartRewriteModal) {
       window.SmartRewriteModal.showSuccess(
         guardFailed ? 'Proofread ready for the box you left. It changed more than usual: review it first.' : 'Proofread ready for the box you left.',
-        guardFailed ? { review } : { review, apply: { label: 'Apply', run: () => { try { return !!insertInto(target, rewrittenText); } catch (_) { return false; } } } });
+        guardFailed ? { review } : { review, apply: { label: 'Apply', run: () => insertSafely(rewrittenText) } });
     }
     return;
   }
@@ -800,7 +802,7 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   if (coach && coachSpots > 0 && window.SmartRewriteModal && window.SmartRewriteModal.showCoach) {
     const opts = { notice: guardNotice, where };
     const apply = guardFailed ? replaceAnyway
-      : target ? { label: 'Apply to text box', run: (accepted) => { try { return !!insertInto(target, accepted ?? rewrittenText); } catch (_) { return false; } } } : null;
+      : target ? { label: 'Apply to text box', run: (accepted) => insertSafely(accepted ?? rewrittenText) } : null;
     if (apply) opts.action = apply;
     window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: apply };
     window.SmartRewriteModal.showCoach(originalText, rewrittenText, {
@@ -821,56 +823,16 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
   }
 
   try {
-    const how = target ? insertInto(target, rewrittenText) : null;
-    replaced = !!how;
+    replaced = target ? !!(await insertInto(rewrittenText)) : false;
   } catch (_) {
     replaced = false;
   }
 
   // A visible Undo on the toast: Cmd/Ctrl+Z doesn't work in every editor.
-  // A plain field gets its original text put back exactly; a rich editor
-  // uses the browser's own undo for the edit just made.
-  const undo = () => {
-    try {
-      if (target.kind === 'field' && target.el.isConnected
-          && target.el.value.slice(target.start, target.start + rewrittenText.length) === rewrittenText) {
-        target.el.focus();
-        target.el.setSelectionRange(target.start, target.start + rewrittenText.length);
-        if (!document.execCommand('insertText', false, target.original)) {
-          target.el.setRangeText(target.original, target.start, target.start + rewrittenText.length, 'end');
-          target.el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        return true;
-      }
-      if (target.kind === 'editable' && target.el.isConnected) {
-        target.el.focus();
-        const before = target.el.innerText;
-        document.execCommand('undo');
-        return target.el.innerText !== before;
-      }
-    } catch (_) { /* fall through */ }
-    return false;
-  };
-
+  const undo = async () => { try { return !!(await op('undo', rewrittenText)); } catch (_) { return false; } };
   // After an in-place fix, Review can still change it: changes the user clicks
   // off in the diff are applied to the text box (not just to Copy).
-  const applyAccepted = (accepted) => {
-    try {
-      if (target.kind === 'field' && target.el.isConnected
-          && target.el.value.slice(target.start, target.start + rewrittenText.length) === rewrittenText) {
-        target.el.focus();
-        target.el.setSelectionRange(target.start, target.start + rewrittenText.length);
-        if (!document.execCommand('insertText', false, accepted)) {
-          target.el.setRangeText(accepted, target.start, target.start + rewrittenText.length, 'end');
-          target.el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        return true;
-      }
-      // A rich editor: undo the edit just made, then insert what was kept.
-      if (target.kind === 'editable' && target.el.isConnected && undo()) return !!insertInto(target, accepted);
-    } catch (_) { /* fall through */ }
-    return false;
-  };
+  const applyAccepted = async (accepted) => { try { return !!(await op('applyAccepted', rewrittenText, accepted)); } catch (_) { return false; } };
 
   if (replaced) {
     if (window.SmartRewriteModal) {
@@ -899,7 +861,8 @@ function showRewriteResult(originalText, rewrittenText, tone, provider, targetLa
 
   if (window.SmartRewriteModal) {
     window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where };
-    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, { where });
+    const notice = richBox ? 'This box has links or formatting that Proofr would lose, so it wasn\'t changed. Select just your text to replace it.' : null;
+    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, { where, notice });
   } else {
     navigator.clipboard.writeText(rewrittenText)
       .then(() => alert('Rewritten text copied to clipboard:\n\n' + rewrittenText))

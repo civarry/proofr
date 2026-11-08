@@ -357,7 +357,7 @@
 
       // Editable target → the result gets replaced in place, so skip the big modal
       // and show a light corner indicator instead.
-      if (this.isEditableTarget()) { this.showLoadingToast(tone, opts); return; }
+      if (opts.inPlace || this.isEditableTarget()) { this.showLoadingToast(tone, opts); return; }
 
       if (!this.modal) this.createModal();
 
