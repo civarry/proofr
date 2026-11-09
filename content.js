@@ -8,7 +8,7 @@
 
   const IS_MAC = /mac|iphone|ipad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');
   const MOD = IS_MAC ? '⌘' : 'Ctrl ';
-  const SVG = (d, w = 14) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const SVG = (d, w = 14) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" style="width:${w}px;height:${w}px" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   const ICON_CHECK = SVG('<path d="M20 6 9 17l-5-5"/>');
   const ICON_COPY = SVG('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
   const ICON_X = SVG('<path d="M18 6 6 18M6 6l12 12"/>', 16);
@@ -560,7 +560,7 @@
 
       document.getElementById('sr-modal-content').innerHTML = `
         <div class="sr-error-content">
-          <div class="sr-error-icon"><svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7.5" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg></div>
+          <div class="sr-error-icon"><svg viewBox="0 0 24 24" width="38" height="38" style="width:38px;height:38px" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7.5" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12.01" y2="16.5"/></svg></div>
           <h4>${this.escapeHtml(title || 'Something went wrong')}</h4>
           <p class="sr-error-message">${this.escapeHtml(message)}</p>
         </div>
@@ -599,7 +599,7 @@
       if (unmarked) review = null;
       const t = this.renderToast('success', `
         <div class="sr-success-content">
-          <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
+          <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" style="width:16px;height:16px" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
           ${this.masteredLine(mastered)}
           ${apply ? `<button type="button" class="sr-success-review sr-success-apply">${this.escapeHtml(apply.label)}</button>` : ''}
@@ -642,7 +642,7 @@
       const w = (Array.isArray(words) ? words : []).filter((x) => typeof x === 'string' && x).map((x) => `<b>${this.escapeHtml(x)}</b>`);
       if (!w.length) return '';
       const text = w.length === 1 ? `${w[0]}: 3 right in a row. Mastered.` : `${w.slice(0, -1).join(', ')} and ${w[w.length - 1]}: mastered.`;
-      return `<span class="sr-success-mastered"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>${text}</span></span>`;
+      return `<span class="sr-success-mastered"><svg viewBox="0 0 24 24" width="14" height="14" style="width:14px;height:14px" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span>${text}</span></span>`;
     }
 
     // The result dialog for a replace already done (toast Review, or the

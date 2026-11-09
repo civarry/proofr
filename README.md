@@ -113,6 +113,9 @@ PUPPETEER=/path/to/puppeteer.js node test/e2e-upgrade.mjs
 # Replace in place: every kind of text box, by menu and shortcut, multi-line, shadow DOM, frames, redraws, Undo
 PUPPETEER=/path/to/puppeteer.js node test/e2e-replace.mjs
 
+# Proofr's dialog, note and hover menu look the same on pages with hostile CSS as on a clean page
+PUPPETEER=/path/to/puppeteer.js node test/e2e-page-css.mjs
+
 # After Proofr is reloaded or updated, an open tab's old copy says to reload the page instead of throwing
 PUPPETEER=/path/to/puppeteer.js node test/e2e-orphan.mjs
 # Hover detection speed on heavy pages (Gmail-like, Reddit-like, worst case), old code against new, same block picked for every target
@@ -125,8 +128,9 @@ Each script exits non-zero if any check fails. On macOS, Chrome stops painting w
 
 `test/run_injection.mjs` is a live prompt-injection check against Groq and needs a real key: `GROQ_API_KEY=... node test/run_injection.mjs`.
 
-## What's new in 1.4.1
+## What's new in 1.4.2
 
+- Proofr's dialog, notes and hover menu no longer pick up a website's CSS. On sites like Google Cloud's docs, the page's button rules had pushed the tone grid out of line.
 - Replace now works where it used to leave you with Copy: a selection across several lines in a rich editor such as Gmail, boxes inside web components and same-site frames, and editors that redraw while the rewrite runs.
 - Rich editors with their own data (Lexical, Slate, ProseMirror/Tiptap, Quill, TinyMCE, CKEditor) really take the change, line breaks included, and Undo on the note restores the original.
 - With nothing selected, a box holding only plain lines is replaced whole. A box with links, lists or a quoted email isn't overwritten, and the dialog says to select just your text.

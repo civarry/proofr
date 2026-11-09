@@ -93,6 +93,39 @@
 }
 :root[data-sr-theme="dark"] #smart-rewrite-modal { color-scheme: dark; }
 
+@keyframes sr-toast-rot { to { transform: rotate(360deg); } }
+@keyframes sr-hover-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes sr-ins-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Proofr's UI lives in the page, so the page's CSS can reach it: one docs site's
+   `button + button { margin-left: 16px }` knocked the tone grid out of line.
+   Two defenses, tested by test/e2e-page-css.mjs:
+   1. Everything below sits inside this block, which outranks site selectors.
+   2. First in the block, each element goes back to browser defaults, so nothing
+      a site set survives, whether or not a rule below sets that property.
+   :where() keeps the reset weaker than every Proofr rule below it.
+   Icons skip the reset, which would also drop their SVG attributes. */
+html:not(#\#) {
+:where(#smart-rewrite-modal, #sr-toast, .sr-hover-icon, .sr-hover-popover, #smart-rewrite-modal *:not(svg, svg *), #sr-toast *:not(svg, svg *), .sr-hover-icon *:not(svg, svg *), .sr-hover-popover *:not(svg, svg *)) { all: revert; }
+:where(#smart-rewrite-modal svg, #sr-toast svg, .sr-hover-icon svg, .sr-hover-popover svg) { margin: 0; padding: 0; float: none; }
+:where(#smart-rewrite-modal svg, #smart-rewrite-modal svg *, #sr-toast svg, #sr-toast svg *, .sr-hover-icon svg, .sr-hover-icon svg *, .sr-hover-popover svg, .sr-hover-popover svg *) { box-sizing: content-box; }
+/* These roots would otherwise inherit from the page's body. (The hover icon is
+   a button, which gets its own from the browser.) */
+:where(#smart-rewrite-modal, #sr-toast, .sr-hover-popover) {
+  font-size: medium;
+  font-weight: 400;
+  font-style: normal;
+  line-height: normal;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-transform: none;
+  text-indent: 0;
+  text-align: start;
+  text-shadow: none;
+  white-space: normal;
+  visibility: visible;
+}
+
 #smart-rewrite-modal {
   display: none;
   position: fixed;
@@ -675,7 +708,6 @@
   flex-shrink: 0;
 }
 
-@keyframes sr-toast-rot { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
   .sr-toast-spin { animation: none; }
@@ -715,7 +747,6 @@
 .sr-hover-icon:hover { transform: scale(1.08); border-color: var(--sr-gray-400); }
 .sr-hover-icon svg { width: 15px; height: 15px; display: block; }
 .sr-hover-icon.sr-hover-busy { opacity: 0.6; cursor: progress; animation: sr-hover-pulse 1s ease-in-out infinite; }
-@keyframes sr-hover-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
 .sr-hover-popover {
   position: absolute;
@@ -921,7 +952,6 @@
 @media (prefers-reduced-motion: no-preference) {
   /* The added words arrive once, so the eye finds what changed (under 200ms). */
   .sr-diff-anim .sr-diff-ins { animation: sr-ins-in 180ms ease-out both; }
-  @keyframes sr-ins-in { from { opacity: 0; } to { opacity: 1; } }
   .sr-success-notification.sr-show .sr-success-icon { animation: sr-ins-in 150ms ease-out both; }
 }
 
@@ -930,3 +960,5 @@
 .sr-spot { background: var(--sr-spot-bg); color: inherit; border-bottom: 2px solid var(--sr-spot-line); padding: 0 1px; }
 .sr-spot-gap { display: inline-block; width: 6px; height: 1em; vertical-align: -0.15em; margin: 0 1px; }
 .sr-coach-count { font-size: 13px; color: var(--sr-gray-600); margin: 10px 0 0; }
+
+} /* html:not(#\#) */
