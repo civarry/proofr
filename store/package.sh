@@ -18,6 +18,10 @@ for r in $refs; do
   case " $FILES " in *" $r "*) ;; *) echo "referenced but not packaged: $r" >&2; exit 1 ;; esac
 done
 
+# The website's proofreader (docs/proofread.html) runs the extension's own
+# constants.js, from a copy GitHub Pages can serve. It must be the same file.
+cmp -s constants.js docs/constants.js || { echo "docs/constants.js differs from constants.js: run cp constants.js docs/constants.js" >&2; exit 1; }
+
 version=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' manifest.json)
 out="store/proofr-$version.zip"
 rm -f "$out"

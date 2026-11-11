@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofr on-device injection check</title>
+<style>
+  :root { --paper:#FAF9F7; --card:#FFF; --ink:#23221E; --soft:#5E5B53; --line:#E6E3DC; --accent:#1D64D8; --good:#276B41; --bad:#B4443A; }
+  @media (prefers-color-scheme: dark) { :root { --paper:#1B1A17; --card:#24231F; --ink:#EDEBE5; --soft:#C2BEB3; --line:#34322C; --accent:#7EA8F8; --good:#8FD3A6; --bad:#E58A80; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: var(--paper); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { color: var(--soft); margin: 0 0 16px; }
+  button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { margin-left: 12px; color: var(--soft); }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Proofr on-device injection check</h1>
+  <p>Runs the attacks in injection-cases.js through Proofr's own on-device path (Gemini Nano, and Chrome's Translator for Translate) in this Chrome. Nothing is sent anywhere. Add <code>?constants=URL</code> to test another constants.js, <code>&amp;tones=a,b</code> to pick modes, <code>&amp;run=1</code> to start at once.</p>
+  <button id="run" type="button" disabled>Run</button><span id="status" role="status">Loading…</span>
+  <pre id="out"></pre>
+</main>
+<script src="injection-device.js"></script>
+</body>
+</html>

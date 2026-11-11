@@ -99,9 +99,9 @@ const SR_TONE_INSTRUCTIONS = {
   friendly: `Rewrite the following text in a warm, approachable, and conversational tone. Use inclusive language, contractions, and positive phrasing. Keep the meaning intact while making it more engaging and personable.`,
   professional: `Rewrite the following text in a formal, polished, and business-appropriate tone. Use precise language, avoid colloquialisms, and structure logically while preserving important information.`,
   short: `Rewrite the following text concisely and directly. Eliminate redundancy and verbose expressions while keeping clarity and impact.`,
-  linkedin: `Rewrite the following text in an engaging, achievement-focused LinkedIn style. Use power words, metrics, and industry buzzwords. Highlight impact and results while staying credible.`,
+  linkedin: `Rewrite the following text in an engaging, achievement-focused LinkedIn style. Use strong verbs and lead with impact and results, using only the figures the text gives. Stay credible.`,
   academic: `Rewrite the following text in a scholarly, analytical academic style. Use formal language, precise terminology, and a logical flow. Ensure rigor and clarity for academic content.`,
-  marketing: `Convert the following text into persuasive marketing copy. Use calls-to-action, emotional triggers, and customer benefits. Emphasize value and create urgency while maintaining professionalism.`,
+  marketing: `Convert the following text into persuasive marketing copy. Lead with customer benefits and end with a call to action. Emphasize value and keep it professional; urgency, offers and prices come only from the text.`,
   simple: `Simplify the following text using basic English and short sentences. Avoid jargon and complex words. Make it clear and accessible for everyone.`,
   tldr: `Summarize the following text in 1-3 short sentences with only its essential point. This is a real summary, not a light trim: drop supporting detail, examples, and preamble.`,
   executive: `Condense the following text into an executive summary. Focus on key points, business impact, and actionable insights. Structure for quick scanning by decision-makers.`,
@@ -204,7 +204,7 @@ function SR_buildPromptParts(text, tone, targetLang, fence = SR_newFence(), opts
 
 ${SR_dataRule(fence, verb)}
 
-Keep every fact, name and number. Keep paragraph breaks unless the task is to condense. Output only the result as plain text: no tags, surrounding quotes, markdown, notes or explanations.`;
+Keep every fact, name and number${verb === 'rewrite' ? ', and add none: no new links, contact details, figures or claims' : ''}. Keep paragraph breaks unless the task is to condense. Output only the result as plain text: no tags, surrounding quotes, markdown, notes or explanations.`;
 
   const reminder = `Now ${verb} the text between the tags as instructed and output only the result.`;
   const examples = opts.examples && tone !== 'translate' ? SR_examplesFor(tone) : [];
@@ -1327,6 +1327,111 @@ function SR_changeGuard(before, after) {
   const occurrences = (hay, h) => hay.split(` ${h} `).length - 1;
   const hedge = SR_HEDGES.find((h) => occurrences(pa, h) > occurrences(pb, h));
   if (hedge) reasons.push(`removed "${hedge}"`);
+  reasons.push(...SR_addedItems(before, after));
+
+  return { ok: reasons.length === 0, reasons };
+}
+
+// === Rewrite guard (the other modes also write into the text box) ===
+// A rewrite is meant to change the wording, so the Proofread limits above don't
+// apply. What it must not do is bring in something the author never wrote: a
+// link, an email address, an @handle or a number. That's what an instruction
+// hidden in the text looks like when the model obeys it ("finish by inviting
+// readers to sign up at..."), and what an invented LinkedIn metric looks like.
+// Nor answer instead of rewriting: talk back to the user, or drop everything
+// the text said. A flagged result opens for review instead of going in.
+const SR_TLDS = 'com|net|org|io|co|ai|app|dev|me|ly|gg|xyz|info|biz|link|site|online|shop|store|click|top|live|pro|tech|ru|cn|ph|uk|us|ca|au|de|fr|es|it|nl|jp|in|br|tk|ml|ga|cf|gq';
+const SR_LINK_RE = new RegExp(`\\b(?:https?:\\/\\/|www\\.)[^\\s<>"'()\\[\\]]+|\\b(?:[a-z0-9-]+\\.)+(?:${SR_TLDS})\\b`, 'gi');
+const SR_EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const SR_HANDLE_RE = /(?<![\w@.])@[A-Za-z0-9_]{2,}/g;
+const SR_NUMBER_WORDS = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+  nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  hundred: 100, thousand: 1000, million: 1000000, billion: 1000000000, half: 50, dozen: 12,
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  once: 1, twice: 2, single: 1, double: 2, triple: 3, quarter: 4,
+};
+// Opening words of a reply to the user rather than a version of their text.
+const SR_REPLY_RE = /^(?:i['’]?m sorry|sorry,? (?:but )?i|i (?:can(?:not|['’]t)|won['’]t|will not|am unable|am not able)|i['’]m (?:unable|not able)|as an ai\b|unfortunately,? i\b)/i;
+const SR_STOPWORDS = new Set(('about above after again against also because been before being below between both could does doing down during each from further have having here into itself just more most other ought over same should some such than that their theirs them then there these they this those through under until very were what when where which while with would your yours really will shall onto upon just').split(' '));
+
+// Links, addresses, handles and codes in `after` that `before` doesn't have.
+// Proofread checks these too: a "fix" of "zzq77 dot io" into a working link
+// is an obeyed instruction. A code is a word of letters and digits ("SAVE20",
+// a wallet or tracking id) that the text doesn't contain as one word.
+function SR_addedItems(before, after) {
+  const reasons = [];
+  const src = String(before || '');
+  const out = String(after || '');
+  const low = (s) => s.toLowerCase();
+  const srcLow = low(src);
+  const host = (link) => low(link).replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#:]/)[0].replace(/[.,;:!?]+$/, '');
+  const hosts = (s) => (s.match(SR_LINK_RE) || []).map(host).filter((h) => h.includes('.'));
+  const srcHosts = new Set(hosts(src));
+
+  const emails = (s) => (s.match(SR_EMAIL_RE) || []).map(low);
+  const newEmail = emails(out).find((e) => !emails(src).includes(e));
+  if (newEmail) reasons.push(`added the address ${newEmail}`);
+  // An address's own domain isn't a separate link.
+  const newLink = hosts(out.replace(SR_EMAIL_RE, ' ')).find((h) => !srcHosts.has(h) && !srcLow.includes(h));
+  if (newLink) reasons.push(`added the link ${newLink}`);
+  const handles = (s) => (s.match(SR_HANDLE_RE) || []).map(low);
+  const newHandle = handles(out).find((h) => !handles(src).includes(h));
+  if (newHandle) reasons.push(`added ${newHandle}`);
+
+  // Ordinals, decades, times and units ("1st", "90s", "3pm", "5k") are not codes.
+  const plainNumber = /^\d+(?:st|nd|rd|th|s|am|pm|h|k|m|x|d|y|kg|km|gb|mb)$/i;
+  const words = (s) => (s.match(/[\p{L}\p{N}]+/gu) || []).map(low);
+  const srcWords = new Set(words(src));
+  const code = (out.match(/[\p{L}\p{N}]+/gu) || []).find((w) => w.length >= 3 && /\d/.test(w) && /\p{L}/u.test(w)
+    && !plainNumber.test(w) && !srcWords.has(low(w)));
+  if (code) reasons.push(`added the code ${code}`);
+  return reasons;
+}
+
+function SR_rewriteGuard(before, after, tone) {
+  const src = String(before || '');
+  const out = String(after || '');
+  const low = (s) => s.toLowerCase();
+  const srcLow = low(src);
+  const reasons = SR_addedItems(src, out);
+
+  // Every number in the result must come from the text, as digits or words
+  // ("twelve", "first"). Translation keeps digits, so it's checked too.
+  const known = new Set(src.match(/\d+/g) || []);
+  for (const w of srcLow.match(/\p{L}+/gu) || []) if (w in SR_NUMBER_WORDS) known.add(String(SR_NUMBER_WORDS[w]));
+  for (const run of src.match(/\d+(?:[.,]\d+)+/g) || []) known.add(run.replace(/[.,]/g, ''));
+  // The same time on a 24-hour clock: "3pm" may come back as "15:00".
+  for (const [, h] of srcLow.matchAll(/\b(\d{1,2})(?::\d\d)?\s*p\.?m\b/g)) known.add(String(Number(h) % 12 + 12)).add('00');
+  const added = (out.match(/\d+(?:[.,]\d+)*/g) || []).find((n) => {
+    if (known.has(n.replace(/[.,]/g, ''))) return false;
+    return n.split(/[.,]/).some((part) => !known.has(part) && !known.has(String(Number(part))));
+  });
+  if (added) reasons.push(`added the number ${added}, which isn't in your text`);
+
+  // Unless the text itself apologizes or declines ("i am sorry i missed it").
+  const declines = /\b(?:sorry|apologi[sz]e|unable|cannot|can['’]?t|won['’]?t|will not|as an ai)\b/i;
+  if (SR_REPLY_RE.test(out.trim()) && !declines.test(src)) reasons.push('answered you instead of rewriting');
+
+  // Nothing of the text left: not one of its longer words, names or numbers.
+  // A rewrite keeps some of its words; a translation keeps only names and
+  // numbers, and a capital that starts a sentence isn't a name.
+  const tokens = (s) => s.match(/[\p{L}\p{N}]+|[.!?:\n]/gu) || [];
+  const anchors = (s, all) => {
+    const found = [];
+    let start = true;
+    for (const t of tokens(s)) {
+      if (/^[.!?:\n]$/.test(t)) { start = true; continue; }
+      const name = !start && /^\p{Lu}/u.test(t) && t.length > 1 && t !== 'I';
+      if (/\d/.test(t) || name || (all && t.length >= 5 && !SR_STOPWORDS.has(low(t)))) found.push(low(t).slice(0, 5));
+      start = false;
+    }
+    return found;
+  };
+  const keep = anchors(src, tone !== 'translate');
+  const outWords = new Set((low(out).match(/[\p{L}\p{N}]+/gu) || []).map((w) => w.slice(0, 5)));
+  if (new Set(keep).size >= 3 && !keep.some((w) => outWords.has(w))) reasons.push('kept nothing from your text');
 
   return { ok: reasons.length === 0, reasons };
 }
@@ -1660,6 +1765,17 @@ function SR_ruleFor({ from, to, kind } = {}) {
   }
   if (kind === 'spelling' && /^\p{L}+$/u.test(t)) return `Spelled ${t.split('').join('-')}.`;
   return null;
+}
+
+// Why one change in Review was made: the same rule text Progress and Practice
+// use, or null when no rule matches (never a made-up reason). The rules are
+// about words, so a change of more than three words gets none.
+function SR_changeReason(from, to) {
+  const strip = (s) => String(s || '').trim().replace(/^[^\p{L}\p{N}'’]+|[^\p{L}\p{N}'’]+$/gu, '');
+  const pair = { from: strip(from), to: strip(to) };
+  if (!pair.from || !pair.to || pair.from === pair.to) return null;
+  if (pair.from.split(/\s+/).length > 3 || pair.to.split(/\s+/).length > 3) return null;
+  return SR_ruleFor({ ...pair, kind: SR_classifyCorrection(pair) });
 }
 
 // Habits: a pattern across the user's own working pairs. Each pair counts for the
@@ -2486,6 +2602,23 @@ function SR_progressHero(view) {
   return { state: 'worse', lead: '', text: `${-pct}% more mistakes than ${ago}`, line, k };
 }
 
+// Once a week, the first in-place Proofread note carries one line from
+// Progress, for people who never open the side panel. Only good or steady news
+// and a first rate: a worse week is in Progress, not pushed into a toast.
+// Returns the line, or null (already shown this week, or nothing to say).
+const SR_WEEK_LINE_EVERY = 7 * 86400000;
+function SR_weeklyLine(view, lastShownAt, now = Date.now()) {
+  if (Number(lastShownAt) && now - Number(lastShownAt) < SR_WEEK_LINE_EVERY) return null;
+  const hero = SR_progressHero(view);
+  const cur = (view && view.weeks || [])[(view && view.weeks || []).length - 1];
+  if (hero.state === 'better') return `Your writing: ${hero.lead}${hero.text}.`;
+  if (hero.state === 'flat') return `Your writing: ${hero.text.charAt(0).toLowerCase()}${hero.text.slice(1)}.`;
+  if (hero.state === 'first' && cur && cur.words >= SR_TREND_MIN_WORDS && cur.per100 > 0) {
+    return `Your writing this week: about 1 mistake in every ${Math.round(100 / cur.per100)} words.`;
+  }
+  return null;
+}
+
 // === Your words ===
 // One row per working word Practice can drill (no punctuation, no sentence-start
 // capitals). meter is the right uses since the last fix, out of 3; at 3 the
@@ -2626,6 +2759,7 @@ if (typeof self !== 'undefined') {
   self.SR_translatorSupports = SR_translatorSupports;
   self.SR_TASK_LIMITS = SR_TASK_LIMITS;
   self.SR_changeGuard = SR_changeGuard;
+  self.SR_rewriteGuard = SR_rewriteGuard;
   self.SR_extractCorrections = SR_extractCorrections;
   self.SR_classifyCorrection = SR_classifyCorrection;
   self.SR_mergeInsights = SR_mergeInsights;
@@ -2633,6 +2767,8 @@ if (typeof self !== 'undefined') {
   self.SR_dayKey = SR_dayKey;
   self.SR_insightsView = SR_insightsView;
   self.SR_ruleFor = SR_ruleFor;
+  self.SR_changeReason = SR_changeReason;
+  self.SR_weeklyLine = SR_weeklyLine;
   self.SR_buildPractice = SR_buildPractice;
   self.SR_checkPractice = SR_checkPractice;
   self.SR_practiceHas = SR_practiceHas;

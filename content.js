@@ -506,6 +506,16 @@
           if (again) again.focus();
         };
         box.addEventListener('click', (e) => { const el = e.target.closest('.sr-change'); if (el) flip(el); });
+        // The hint line explains the change under the pointer or focus, then goes back.
+        const hint = document.getElementById('sr-hint');
+        const explain = (e) => {
+          const el = e.target.closest && e.target.closest('.sr-change[data-why]');
+          if (hint) hint.innerHTML = el ? `<span class="sr-why">${this.escapeHtml(el.dataset.why)}</span>` : hintFor();
+        };
+        box.addEventListener('mouseover', explain);
+        box.addEventListener('focusin', explain);
+        box.addEventListener('mouseleave', () => { if (hint) hint.innerHTML = hintFor(); });
+        box.addEventListener('focusout', () => { if (hint) hint.innerHTML = hintFor(); });
         box.addEventListener('keydown', (e) => {
           const el = e.target.closest('.sr-change');
           if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); flip(el); }
@@ -591,7 +601,7 @@
     // A Proofread with nothing changed gets no Review or Undo; one that only fixed
     // spacing keeps Undo (Review would mark nothing). opts.mastered: [word]
     // that this Proofread made mastered, shown as one extra line.
-    showSuccess(message, { review, undo, apply, mastered } = {}) {
+    showSuccess(message, { review, undo, apply, mastered, week } = {}) {
       this.busy = false;
       const unmarked = !!(review && review.tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
         && SR_diffCount(SR_wordDiffForDisplay(review.original, review.rewritten, 'grammar')) === 0);
@@ -602,7 +612,8 @@
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" style="width:16px;height:16px" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
           <span class="sr-success-text">${this.escapeHtml(message)}</span>
           ${this.masteredLine(mastered)}
-          ${apply ? `<button type="button" class="sr-success-review sr-success-apply">${this.escapeHtml(apply.label)}</button>` : ''}
+          ${week ? `<span class="sr-success-mastered sr-success-week">${this.escapeHtml(week)}</span>` : ''}
+          ${apply ?`<button type="button" class="sr-success-review sr-success-apply">${this.escapeHtml(apply.label)}</button>` : ''}
           ${review ? '<button type="button" class="sr-success-review">Review</button>' : ''}
           ${undo ? '<button type="button" class="sr-success-undo">Undo</button>' : ''}
         </div>
@@ -806,7 +817,10 @@
           ? `${del ? `<span class="sr-diff-kept">${this.escapeHtml(del)}</span>` : ''}${ins ? `<s class="sr-diff-off">${this.escapeHtml(ins)}</s>` : ''}`
           : `${del ? `<del class="sr-diff-del">${this.escapeHtml(del)}</del>` : ''}${ins ? `<ins class="sr-diff-ins">${this.escapeHtml(ins)}</ins>` : ''}`;
         const label = off ? 'Change undone. Activate to apply it again.' : 'Activate to undo this change.';
-        html += `<span class="sr-change${off ? ' sr-change-rejected' : ''}" data-g="${g}" role="button" tabindex="0" aria-pressed="${off}" title="${label}" aria-label="${this.escapeHtml(`${del.trim() || '(nothing)'} to ${ins.trim() || '(removed)'}`)}. ${label}">${inner}</span>`;
+        // Why it changed, when a known rule matches (SR_changeReason never guesses).
+        const why = typeof SR_changeReason === 'function' ? SR_changeReason(del, ins) : null;
+        const whyAttr = why ? ` data-why="${this.escapeHtml(why)}"` : '';
+        html += `<span class="sr-change${off ? ' sr-change-rejected' : ''}" data-g="${g}"${whyAttr} role="button" tabindex="0" aria-pressed="${off}" title="${this.escapeHtml(why ? `${why} ${label}` : label)}" aria-label="${this.escapeHtml(`${del.trim() || '(nothing)'} to ${ins.trim() || '(removed)'}.${why ? ` ${why}` : ''}`)} ${label}">${inner}</span>`;
       }
       return html;
     }

@@ -524,6 +524,8 @@ html:not(#\#) {
   color: var(--sr-gray-500);
   line-height: 1.6;
 }
+/* Why a change was made, while it is hovered or focused: a step darker than the hint. */
+.sr-why { color: var(--sr-gray-700); }
 .sr-kbd {
   display: inline-block;
   padding: 0 5px;

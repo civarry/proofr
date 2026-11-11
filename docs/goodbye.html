@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proofr removed</title>
+  <meta name="robots" content="noindex">
+  <style>
+    :root {
+      --ink: #26251f; --muted: #57554e; --faint: #8a887f;
+      --line: #e4e2db; --paper: #faf9f7; --canvas: #f3f2ee; --accent: #1d64d8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--paper); color: var(--ink);
+      line-height: 1.65; -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 56px 16px 80px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .logo {
+      width: 34px; height: 34px; border-radius: 9px; background: var(--ink);
+      color: var(--paper); display: flex; align-items: center; justify-content: center;
+    }
+    .logo svg { width: 20px; height: 20px; }
+    h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.4px; }
+    p { color: var(--muted); font-size: 15px; margin-bottom: 12px; }
+    .reasons { display: grid; gap: 8px; margin: 20px 0 16px; }
+    .reasons a {
+      display: block; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px;
+      background: #fff; color: var(--ink); font-size: 15px; text-decoration: none;
+    }
+    .reasons a:hover, .reasons a:focus-visible { border-color: var(--accent); outline: none; }
+    .note { font-size: 13px; color: var(--faint); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4.5" y1="7.5" x2="13.5" y2="7.5"/><line x1="4.5" y1="11.5" x2="10.5" y2="11.5"/><line x1="4.5" y1="15.5" x2="8.5" y2="15.5"/><path d="M18.4 8 20 9.6l-5.3 5.3-2.1.5.5-2.1L18.4 8z"/></svg></div>
+      <h1>Proofr is removed</h1>
+    </header>
+    <p>Thanks for trying it. Proofr is built by one person, and knowing why it didn't work for you is the only way to make it better.</p>
+    <p><strong>What was the main reason?</strong> Pick one and your email app opens with it filled in. Add anything you like, or just send.</p>
+    <div class="reasons" id="reasons">
+      <a data-reason="It didn't work on the site I needed">It didn't work on the site I needed</a>
+      <a data-reason="The results weren't good enough">The results weren't good enough</a>
+      <a data-reason="My computer couldn't run it, and setting up an AI service was too much">My computer couldn't run it, and setting up an AI service was too much</a>
+      <a data-reason="I wanted it to check my writing as I type">I wanted it to check my writing as I type</a>
+      <a data-reason="I didn't know how to use it">I didn't know how to use it</a>
+      <a data-reason="I only needed it once">I only needed it once</a>
+      <a data-reason="Something else">Something else</a>
+    </div>
+    <p class="note">Nothing was sent when you removed Proofr, and nothing is sent from this page. Only the email you choose to send reaches me, at cjcarito15@gmail.com. <a href="privacy.html">Privacy policy</a></p>
+  </main>
+  <script>
+    // The version comes from the extension (?v=1.5.0) so a reply can say which one; nothing else is in the link.
+    const version = (new URLSearchParams(location.search).get('v') || '').replace(/[^\d.]/g, '').slice(0, 12);
+    for (const a of document.querySelectorAll('#reasons a')) {
+      const body = `Why I removed Proofr: ${a.dataset.reason}.\n\n${version ? `(Proofr ${version})\n` : ''}`;
+      a.href = `mailto:cjcarito15@gmail.com?subject=${encodeURIComponent('Why I removed Proofr')}&body=${encodeURIComponent(body)}`;
+    }
+  </script>
+</body>
+</html>

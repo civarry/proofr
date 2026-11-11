@@ -82,6 +82,21 @@ function bumpDay(days) {
 // now get right. Writes are chained so two results landing together can't
 // overwrite each other's update. Resolves to the words this proofread
 // mastered (for the toast), or [].
+// One line from Progress, at most once a week (SR_weeklyLine). Marked shown
+// here, so a line is never repeated even if that note is missed.
+async function weeklyLine() {
+  try {
+    const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
+    if (srInsightsOn === false) return null;
+    const { srInsights, srWeekLineAt } = await chrome.storage.local.get(['srInsights', 'srWeekLineAt']);
+    const line = SR_weeklyLine(SR_insightsView(srInsights), srWeekLineAt);
+    if (line) await chrome.storage.local.set({ srWeekLineAt: Date.now() });
+    return line;
+  } catch (_) {
+    return null;
+  }
+}
+
 let insightsQueue = Promise.resolve();
 function recordInsights(before, after) {
   const run = insightsQueue.then(async () => {
@@ -319,6 +334,13 @@ async function buildContextMenusNow() {
   // Plain page, nothing selected: a way into the panel.
   add({ id: 'openPanel', title: 'Open Proofr panel', contexts: ['page'] });
 }
+
+// After removal, Chrome opens a page asking why, with one tap to an email
+// draft. Only the version is in the link. Set on every start, so it always
+// names the version installed.
+try {
+  chrome.runtime.setUninstallURL(`https://civarry.github.io/proofr/goodbye.html?v=${chrome.runtime.getManifest().version}`);
+} catch (_) { /* not available in this context */ }
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await buildContextMenus().catch((e) => console.warn('Context menu:', e?.message || e));
@@ -627,8 +649,10 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // Local storage only, a few ms: awaited so a word mastered by this very
     // proofread can be named in its toast.
     const mastered = tone === 'grammar' && ownText ? await recordInsights(text, rewritten) : [];
+    // Only when the text can go in place: the dialog path has no note to carry it.
+    const week = tone === 'grammar' && ownText && target && !coach ? await weeklyLine() : null;
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider, engine), coach, mastered, target, richBox]);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider, engine), coach, mastered, target, richBox, week]);
   } catch (error) {
     // Stopped from the toast: it already says "Stopped.", so add nothing.
     if (error && error.name === 'AbortError') return;
@@ -754,7 +778,7 @@ function showLoadingModal(originalText, tone, targetLang, requestId, onDevice, i
 
 // Puts the result back through write-back.js, in the frame that holds the box.
 // If the captured text is gone, the result opens in the modal instead.
-async function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered, target, richBox) {
+async function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered, target, richBox, week) {
   let replaced = false;
   const inFrame = !!(target && target.frameId);
   // Which box has focus now? In a frame, the top page knows if focus left it.
@@ -769,8 +793,13 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
   const insertInto = (text) => op('insert', text);
   const insertSafely = async (text) => { try { return !!(await insertInto(text)); } catch (_) { return false; } };
 
-  const guard = (tone === 'grammar' && typeof SR_changeGuard === 'function') ? SR_changeGuard(originalText, rewrittenText) : null;
+  // Proofread must keep the meaning; every other mode must add nothing the
+  // author didn't write (a link or number an instruction hidden in the text asked for).
+  const guard = tone === 'grammar'
+    ? (typeof SR_changeGuard === 'function' ? SR_changeGuard(originalText, rewrittenText) : null)
+    : (typeof SR_rewriteGuard === 'function' ? SR_rewriteGuard(originalText, rewrittenText, tone) : null);
   const guardFailed = !!(guard && !guard.ok);
+  const doneName = tone === 'grammar' ? 'Proofread' : tone === 'translate' ? 'Translation' : 'Rewrite';
   // "Replace anyway" after a guard trip: same target, same safety re-check.
   // The dialog hands back the accepted text (changes clicked off are put
   // back), so that's what goes in, not the full suggestion.
@@ -789,7 +818,7 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
     window.__srLastReview = review;
     if (window.SmartRewriteModal) {
       window.SmartRewriteModal.showSuccess(
-        guardFailed ? 'Proofread ready for the box you left. It changed more than usual: review it first.' : 'Proofread ready for the box you left.',
+        guardFailed ? `${doneName} ready for the box you left. Review it first: it ${guard.reasons[0]}.` : `${doneName} ready for the box you left.`,
         guardFailed ? { review } : { review, apply: { label: 'Apply', run: () => insertSafely(rewrittenText) } });
     }
     return;
@@ -854,6 +883,7 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
       if (fixes !== 0) window.__srLastReview = review; // for the "review last change" shortcut
       // A word this proofread mastered is named in the same toast (no extra UI).
       const won = mastered && mastered.length ? { mastered } : {};
+      if (week) won.week = week;
       window.SmartRewriteModal.showSuccess(what, nothing ? won : { review, undo, ...won });
     }
     return;
