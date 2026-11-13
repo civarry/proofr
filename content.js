@@ -83,6 +83,8 @@
     // is marked (and pressed); while it runs, its icon is a spinner. One tab
     // stop for the grid, arrow keys move between tiles.
     toneChipsHtml(activeTone, busy = false) {
+      // The School setting fixes mistakes only, so there's no tone to switch to.
+      if (this.school) return '';
       const tones = (typeof SR_TONES !== 'undefined') ? SR_TONES : [];
       const icon = (id) => (typeof SR_iconFor === 'function') ? SR_iconFor(id) : '';
       return `<div class="sr-chips" role="group" aria-label="Rewrite as">${tones.map((t) => {
@@ -405,7 +407,10 @@
       box.textContent = text;
     }
 
-    showResult(originalText, rewrittenText, tone, provider, targetLang, { notice, where, action } = {}) {
+    // opts.reasons: the rule hits behind the fixes (their reasons show in Review).
+    // opts.hints: School suggestions on the result, shown as changes that are
+    // off until clicked (Copy and Apply use only what's switched on).
+    showResult(originalText, rewrittenText, tone, provider, targetLang, { notice, where, action, reasons, hints } = {}) {
       this.currentText = originalText;
       this.currentRewrite = rewrittenText;
       this.currentTone = tone;
@@ -424,10 +429,14 @@
       // Proofread shows what changed; null (too long) or no changes → no
       // Changes view. Clicking a change puts the original words back; Copy
       // and the write-back use the text with only the accepted changes.
-      const ops = tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
+      const hinted = tone === 'grammar' && typeof SR_hintDiff === 'function' ? SR_hintDiff(originalText, rewrittenText, hints) : null;
+      const ops = hinted ? hinted.ops : tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
         ? SR_wordDiffForDisplay(originalText, rewrittenText, tone) : null;
       const hasDiff = !!(ops && SR_diffCount(ops));
-      const rejected = new Set();
+      const hintGroups = hinted ? hinted.hintGroups : new Set();
+      const rejected = new Set(hintGroups);
+      this.diffReasons = [...(Array.isArray(reasons) ? reasons : []), ...(hinted ? hints : [])];
+      this.hintGroups = hintGroups;
       const accepted = () => (hasDiff ? SR_applyDiff(ops, rejected) : rewrittenText);
       // A word diff only helps a Proofread; a full rewrite would be all red and green.
       const views = hasDiff ? ['result', 'changes', 'original'] : ['result', 'original'];
@@ -601,20 +610,25 @@
     // A Proofread with nothing changed gets no Review or Undo; one that only fixed
     // spacing keeps Undo (Review would mark nothing). opts.mastered: [word]
     // that this Proofread made mastered, shown as one extra line.
-    showSuccess(message, { review, undo, apply, mastered, week } = {}) {
+    // opts.useAll: { label, run } puts every School suggestion in at once; run()
+    // shows the next note itself, or returns false when the box changed.
+    // opts.sub: a lighter second part after the main line ("3 suggestions for formal writing").
+    showSuccess(message, { review, undo, apply, mastered, week, useAll, sub } = {}) {
       this.busy = false;
       const unmarked = !!(review && review.tone === 'grammar' && typeof SR_wordDiffForDisplay === 'function'
         && SR_diffCount(SR_wordDiffForDisplay(review.original, review.rewritten, 'grammar')) === 0);
       if (unmarked && review.original === review.rewritten) undo = null;
-      if (unmarked) review = null;
+      // School suggestions are worth a Review even when nothing was fixed.
+      if (unmarked && !(review.hints && review.hints.length)) review = null;
       const t = this.renderToast('success', `
         <div class="sr-success-content">
           <span class="sr-success-icon"><svg viewBox="0 0 24 24" width="16" height="16" style="width:16px;height:16px" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></span>
-          <span class="sr-success-text">${this.escapeHtml(message)}</span>
+          <span class="sr-success-text">${this.escapeHtml(message)}${sub ? `<span class="sr-success-sub"> · ${this.escapeHtml(sub)}</span>` : ''}</span>
           ${this.masteredLine(mastered)}
           ${week ? `<span class="sr-success-mastered sr-success-week">${this.escapeHtml(week)}</span>` : ''}
           ${apply ?`<button type="button" class="sr-success-review sr-success-apply">${this.escapeHtml(apply.label)}</button>` : ''}
           ${review ? '<button type="button" class="sr-success-review">Review</button>' : ''}
+          ${useAll ? `<button type="button" class="sr-success-review sr-success-use">${this.escapeHtml(useAll.label)}</button>` : ''}
           ${undo ? '<button type="button" class="sr-success-undo">Undo</button>' : ''}
         </div>
       `);
@@ -628,7 +642,14 @@
         this.dismissToast(ms);
       };
       if (review) {
-        t.querySelector('.sr-success-review:not(.sr-success-apply)').addEventListener('click', () => this.showReview(review));
+        t.querySelector('.sr-success-review:not(.sr-success-apply):not(.sr-success-use)').addEventListener('click', () => this.showReview(review));
+      }
+      if (useAll) {
+        t.querySelector('.sr-success-use').addEventListener('click', async () => {
+          let ok = false;
+          try { ok = await useAll.run(); } catch (_) { ok = false; }
+          if (!ok) settle("Couldn't change it: that text box changed.", 4000);
+        });
       }
       if (apply) {
         t.querySelector('.sr-success-apply').addEventListener('click', async () => {
@@ -645,7 +666,7 @@
         });
       }
       // Buttons and the mastered line need time to read and reach.
-      this.dismissToast(/undo/i.test(message) || review || undo || apply || t.querySelector('.sr-success-mastered') ? 8000 : 3000);
+      this.dismissToast(/undo/i.test(message) || review || undo || apply || useAll || t.querySelector('.sr-success-mastered') ? 8000 : 3000);
     }
 
     // "<b>receive</b>: 3 right in a row. Mastered." or "<b>a</b> and <b>b</b>: mastered."
@@ -660,7 +681,7 @@
     // "review last change" shortcut after the toast has gone).
     showReview(review) {
       this.removeToast();
-      this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where, action: review.action, notice: review.notice });
+      this.showResult(review.original, review.rewritten, review.tone, review.provider, null, { where: review.where, action: review.action, notice: review.notice, reasons: review.reasons, hints: review.hints });
     }
 
     // Coach mode: the original text with each spot Proofread would change marked,
@@ -690,7 +711,7 @@
       }
       if (!ops) html = this.escapeHtml(original);
       const count = !ops ? 'Too long to mark the spots. Show fixes to see them.'
-        : spots === 0 ? 'Nothing to fix.'
+        : spots === 0 ? 'No mistakes found.'
         : `${spots} spot${spots === 1 ? '' : 's'} to check. Fix ${spots === 1 ? 'it' : 'them'} in your text box, or show the fixes.`;
 
       document.getElementById('sr-modal-content').innerHTML = `
@@ -818,9 +839,13 @@
           : `${del ? `<del class="sr-diff-del">${this.escapeHtml(del)}</del>` : ''}${ins ? `<ins class="sr-diff-ins">${this.escapeHtml(ins)}</ins>` : ''}`;
         const label = off ? 'Change undone. Activate to apply it again.' : 'Activate to undo this change.';
         // Why it changed, when a known rule matches (SR_changeReason never guesses).
-        const why = typeof SR_changeReason === 'function' ? SR_changeReason(del, ins) : null;
+        const why = typeof SR_changeReason === 'function' ? SR_changeReason(del, ins, this.diffReasons) : null;
         const whyAttr = why ? ` data-why="${this.escapeHtml(why)}"` : '';
-        html += `<span class="sr-change${off ? ' sr-change-rejected' : ''}" data-g="${g}"${whyAttr} role="button" tabindex="0" aria-pressed="${off}" title="${this.escapeHtml(why ? `${why} ${label}` : label)}" aria-label="${this.escapeHtml(`${del.trim() || '(nothing)'} to ${ins.trim() || '(removed)'}.${why ? ` ${why}` : ''}`)} ${label}">${inner}</span>`;
+        // A School suggestion: the writer's words stay, the suggestion sits beside them until clicked.
+        const hint = this.hintGroups && this.hintGroups.has(g);
+        const body = hint && off ? `<span class="sr-diff-kept">${this.escapeHtml(del)}</span><span class="sr-diff-suggest">${this.escapeHtml(ins.trim())}</span>` : inner;
+        const lab = hint && off ? 'Suggestion for formal writing. Activate to use it.' : label;
+        html += `<span class="sr-change${off ? ' sr-change-rejected' : ''}${hint ? ' sr-change-hint' : ''}" data-g="${g}"${whyAttr} role="button" tabindex="0" aria-pressed="${off}" title="${this.escapeHtml(why ? `${why} ${lab}` : lab)}" aria-label="${this.escapeHtml(`${del.trim() || '(nothing)'} to ${ins.trim() || '(removed)'}.${why ? ` ${why}` : ''}`)} ${lab}">${body}</span>`;
       }
       return html;
     }

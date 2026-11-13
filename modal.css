@@ -28,6 +28,7 @@
   --sr-on-primary: #faf9f7;   /* text on ink fills: primary buttons, the toast */
   --sr-on-primary-line: rgba(255, 255, 255, 0.55);
   --sr-on-primary-hover: rgba(255, 255, 255, 0.15);
+  --sr-on-primary-soft: rgba(250, 249, 247, 0.72); /* the toast's second part */
   --sr-scrim: rgba(38, 37, 31, 0.28);
   --sr-ins-bg: #e3f1e7;
   --sr-ins-fg: #1f5c36;
@@ -74,6 +75,7 @@
   --sr-on-primary: #1b1a17;
   --sr-on-primary-line: rgba(27, 26, 23, 0.45);
   --sr-on-primary-hover: rgba(27, 26, 23, 0.1);
+  --sr-on-primary-soft: rgba(27, 26, 23, 0.7);
   --sr-scrim: rgba(0, 0, 0, 0.5);
   --sr-ins-bg: #1f3326;
   --sr-ins-fg: #8fd3a6;
@@ -674,6 +676,8 @@ html:not(#\#) {
   font-weight: 500;
   font-size: 14px;
 }
+/* The note's detail, after the count: "5 fixes · 3 suggestions for formal writing". */
+.sr-success-sub { color: var(--sr-on-primary-soft); font-weight: 400; }
 
 /* Light corner indicator for inline (in-field) replacements */
 .sr-loading-toast {
@@ -918,6 +922,9 @@ html:not(#\#) {
 .sr-change:hover, .sr-change:focus-visible { outline: 1px solid var(--sr-gray-400); outline-offset: 1px; }
 .sr-change:focus:not(:focus-visible) { outline: none; }
 .sr-diff-off { color: var(--sr-gray-500); text-decoration: line-through; margin-left: 3px; }
+/* A School suggestion not yet used: offered beside the writer's words, dashed, not struck. */
+.sr-diff-suggest { color: var(--sr-accent); border-bottom: 1px dashed var(--sr-accent); margin-left: 3px; }
+.sr-diff-suggest::before { content: "→ "; }
 .sr-success-undo {
   margin-left: 4px;
   padding: 3px 9px;

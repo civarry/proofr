@@ -22,6 +22,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // DOM-level click/focus: puppeteer's mouse click waits on rendering, which stalls when the display sleeps.
 const clk = (pg, sel) => pg.$eval(sel, (el) => el.click()).catch(() => console.log('missing:', sel));
 const focusSel = (pg, sel) => pg.$eval(sel, (el) => el.focus()).catch(() => console.log('missing:', sel));
+// Settings folds AI to one line; a person clicks it open to reach the provider form.
+const unfoldAI = (pg) => pg.evaluate(() => { const d = document.getElementById('aiSection'); if (d && !d.open) d.querySelector('summary').click(); });
 const shot = (pg, file) => process.env.NO_SHOTS ? Promise.resolve() : pg.screenshot({ path: `${out}/${file}` }).catch(() => {});
 
 // Static checks on the real manifest (what ships).
@@ -45,7 +47,9 @@ const FIXED = 'Jane said we were hoping to receive it by Friday at 3pm.';
 const REWRITE = 'please send the files to the team before noon today';
 // Already correct: the model returns it unchanged, so its words are right uses.
 const CLEAN = 'We will receive it soon.';
-const FIXES = { [SENT]: FIXED, [CLEAN]: CLEAN, [REWRITE]: 'Kindly forward every document to all colleagues ahead of lunchtime.' };
+// Proofr's rules fix SENT before the model sees it, so the model gets FIXED
+// and, like a real one, returns it unchanged.
+const FIXES = { [SENT]: FIXED, [FIXED]: FIXED, [CLEAN]: CLEAN, [REWRITE]: 'Kindly forward every document to all colleagues ahead of lunchtime.' };
 // Tips as a model might write them, one with an example the user never wrote.
 const TIPS = 'receive | You wrote "recieve" for receive: i before e, except after c.\nwere | With we, use were, not "was".\ndefinitely | You also wrote "definately" for definitely.';
 // Mock provider: records request bodies, answers /models and /chat/completions.
@@ -134,9 +138,21 @@ if (welcomeT) {
     tryDisabled: document.getElementById('btnTry').disabled,
     tryStatus: document.getElementById('tryStatus').textContent,
   }));
-  check('welcome: no-AI state offers to connect a provider', /can't run on-device AI/.test(w.ai) && w.connect.includes('Connect a provider'), JSON.stringify(w.connect));
-  check('welcome: try-it waits for setup instead of failing', w.tryDisabled && /step 2/.test(w.tryStatus));
+  check('welcome: no-AI state offers a provider as optional, without naming what this computer can\'t run', /connect an AI provider/.test(w.ai) && !/can't|isn't available|unavailable|on-device/i.test(w.ai) && /Proofr's own rules/.test(w.ai) && w.connect.includes('Connect a provider (optional)'), JSON.stringify([w.ai.slice(0, 60), w.connect]));
+  check('welcome: try-it works with no AI set up', !w.tryDisabled && w.tryStatus === '', JSON.stringify(w));
+  // The first proofread on a computer with no AI: Proofr's rules fix the demo text.
+  await wp.evaluate(() => document.getElementById('btnTry').click());
+  await sleep(500);
+  const tried = await wp.evaluate(() => ({ status: document.getElementById('tryStatus').textContent, shown: !document.getElementById('tryResult').classList.contains('hidden'), ins: [...document.querySelectorAll('#tryResult ins')].map((n) => n.textContent.trim()) }));
+  check('welcome: try-it fixes the demo text with the rules alone', /^[6-9] fixes · on this computer, no AI needed$/.test(tried.status) && tried.shown && tried.ins.includes('were') && tried.ins.includes('Friday'), JSON.stringify(tried));
   await shot(wp, '1-welcome.png');
+  // Step 5: School in one click, then back off, with no trip to Settings.
+  const school = async () => wp.evaluate(async () => ({ btn: document.getElementById('btnSchool').textContent, status: document.getElementById('schoolStatus').textContent, on: (await chrome.storage.sync.get(['srSchool'])).srSchool }));
+  await wp.evaluate(() => document.getElementById('btnSchool').click()); await sleep(300);
+  const schoolOn = await school();
+  await wp.evaluate(() => document.getElementById('btnSchool').click()); await sleep(300);
+  const schoolOff = await school();
+  check('welcome: School turns on and off in one click', schoolOn.on === true && schoolOn.btn === 'Turn off School' && /School is on/.test(schoolOn.status) && schoolOff.on === false && schoolOff.btn === 'Turn on School' && schoolOff.status === '', JSON.stringify({ schoolOn, schoolOff }));
   await wp.close();
 }
 
@@ -154,9 +170,38 @@ console.log('STEP 3');
 const panel = await browser.newPage(); watch(panel, 'panel');
 await panel.setViewport({ width: 400, height: 800 });
 await panel.goto(`chrome-extension://${extId}/sidepanel.html`);
+// No AI on this Chrome: the panel still opens on Write, ready to type
+// (Proofread works with the rules), not on Settings. Wait past the on-device
+// check's 3 s limit, when the old code opened Settings by itself.
+await sleep(4500);
+const landing = await panel.evaluate(() => ({ settings: !document.getElementById('settingsPanel').classList.contains('hidden'), focus: document.activeElement && document.activeElement.id }));
+check('first open with no AI lands on Write with the cursor in the box, not on Settings', !landing.settings && landing.focus === 'ta', JSON.stringify(landing));
+// Settings: everyday choices first, AI folded to one line at the bottom.
+await clk(panel, '#btnSettings'); await sleep(500);
+const settingsLayout = await panel.evaluate(() => {
+  const body = document.querySelector('#settingsPanel .settings-body');
+  const order = [...body.children].map((n) => n.classList.contains('settings-section-label') ? n.textContent : n.id === 'aiSection' ? 'AI' : null).filter(Boolean);
+  const ai = document.getElementById('aiSection');
+  return { order, folded: !ai.open, status: document.getElementById('aiStatusLine').textContent, keyVisible: document.getElementById('apiKeyInput').checkVisibility(),
+    advancedHidden: document.getElementById('advancedSection').hidden, card: document.getElementById('setupCard').textContent };
+});
+check('Settings with no Chrome AI on this computer: only what it can use (no engine choice, nothing about what it can\'t run)', settingsLayout.advancedHidden && !/can't|isn't available|unavailable|on-device|Chrome's own AI/i.test(settingsLayout.card), JSON.stringify({ advancedHidden: settingsLayout.advancedHidden, card: settingsLayout.card.replace(/\s+/g, ' ').slice(0, 200) }));
+check('Settings: Proofread, Appearance and web pages come first; AI is folded at the bottom with one status line', settingsLayout.order.join() === 'Proofread,Appearance,On web pages,AI,About' && settingsLayout.folded && !settingsLayout.keyVisible && settingsLayout.status === "Not set up. Proofread works with Proofr's rules.", JSON.stringify(settingsLayout));
+await clk(panel, '#btnSettingsBack'); await sleep(300);
+// "On-device", synced from a computer that has Chrome's AI, acts as Auto here.
+await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'device' }));
+await panel.reload(); await sleep(3800);
+const syncedPill = await panel.evaluate(() => document.getElementById('providerPillText').textContent);
+check('a synced "On-device" choice acts as Auto on a computer without Chrome\'s AI (no "Unavailable")', syncedPill === 'Set up AI', syncedPill);
+await panel.evaluate(() => chrome.storage.sync.remove('srEngine'));
+await clk(panel, '#providerPill'); await sleep(600);
+const setupJump = await panel.evaluate(() => ({ settings: !document.getElementById('settingsPanel').classList.contains('hidden'), aiOpen: document.getElementById('aiSection').open, menu: !document.getElementById('engineMenu').classList.contains('hidden') }));
+check('"Set up AI" with nothing set up opens Settings straight at the AI section (no menu in between)', setupJump.settings && setupJump.aiOpen && !setupJump.menu, JSON.stringify(setupJump));
+await clk(panel, '#btnSettingsBack'); await sleep(300);
 await panel.evaluate(() => chrome.storage.sync.set({ srCloudService: 'custom', srCloudCustomBaseURL: 'http://localhost:8766/v1' }));
-await panel.reload(); await sleep(1000);
+await panel.reload(); await sleep(3500);
 await panel.bringToFront();
+await clk(panel, '#providerPill'); await sleep(500);
 await focusSel(panel, '#customKeyInput');
 await panel.keyboard.type('test-key-123456');
 await clk(panel, '#btnSaveCustom'); await sleep(1500);
@@ -192,10 +237,10 @@ console.log('STEP 4');
 // 4. Successful side panel rewrite through the mock, plus the rating line.
 await panel.evaluate(() => chrome.storage.local.set({ rewriteStats: { totalRewrites: 9, styleUsage: {}, lastUsed: null } }));
 await panel.evaluate(() => document.getElementById('btnSettingsBack').click());
-await focusSel(panel, '#ta'); await panel.keyboard.type('we was going to the store yesterday');
+await focusSel(panel, '#ta'); await panel.keyboard.type('we walk to the store yesterday'); // no rule matches, so the model's answer is all there is
 await clk(panel, '#sendBtn'); await sleep(2500);
 const card = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1)?.querySelector('.assistant-body')?.innerText || '');
-check('side panel rewrite succeeds end-to-end', /^R\(we was going/.test(card), card.slice(0, 80));
+check('side panel rewrite succeeds end-to-end', /R\(We walk to the store yesterday\)$/.test(card), card.slice(0, 80)); // the panel's text is whole: its first word is capitalized before the model sees it, so the card shows we→We then the model's answer
 const counted = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1); const t = turns.at(-1); return { label: c.querySelector('.result-count')?.textContent, want: `${t.outputText.length.toLocaleString()} chars` }; });
 check('result shows its character count', counted.label && counted.label === counted.want, JSON.stringify(counted));
 check('rating line shown after 10th success', await panel.evaluate(() => !!document.querySelector('.rate-line')));
@@ -215,7 +260,7 @@ check('rating line: asked once more at 40, with "No thanks"', again === 'No than
 await clk(panel, '.rate-line [data-rate="later"]'); await sleep(300);
 check('No thanks: never asked again', (await panel.evaluate(() => chrome.storage.local.get(['srRateAsked']))).srRateAsked === true);
 // Hidden characters in pasted AI text: gone from the result, and counted.
-await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 'we\u200b was\u00a0ready\u2060 today'; t.dispatchEvent(new Event('input')); });
+await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 'we\u200b goes\u00a0ready\u2060 today'; t.dispatchEvent(new Event('input')); });
 await clk(panel, '#sendBtn'); await sleep(2500);
 const hid = await panel.evaluate(() => { const c = [...document.querySelectorAll('.turn')].at(-1).querySelector('.result-count'); return { out: turns.at(-1).outputText, line: c?.textContent, title: c?.title }; });
 check('Proofread takes hidden characters out of pasted text and says how many', !/[\u200b\u00a0\u2060]/.test(hid.out) && / · 3 hidden removed$/.test(hid.line || '') && / · 3 hidden characters removed$/.test(hid.title || ''), JSON.stringify(hid));
@@ -226,7 +271,7 @@ check('Proofread takes hidden characters out of pasted text and says how many', 
   await wp.goto(`chrome-extension://${extId}/welcome.html`); await sleep(1200);
   await clk(wp, '#btnTry'); await sleep(1500);
   const r = await wp.evaluate(() => ({ html: document.getElementById('tryResult').innerHTML, status: document.getElementById('tryStatus').textContent }));
-  check('welcome: try-it proofreads and marks changes', /<ins class="diff-ins">/.test(r.html) && /Fixed \d+ thing/.test(r.status), r.status + ' | ' + r.html.slice(0, 160));
+  check('welcome: try-it proofreads and marks changes', /<ins class="diff-ins">/.test(r.html) && /^\d+ fix(es)?$/.test(r.status), r.status + ' | ' + r.html.slice(0, 160));
   await wp.close();
 }
 // 4c. Panel history shows the diff for Proofread turns.
@@ -265,17 +310,22 @@ await panel.evaluate(() => { const t = document.getElementById('ta'); t.value = 
   await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1).querySelector('[data-action="tryas"]').focus());
   await panel.keyboard.press('Enter'); await sleep(200);
   const src = await panel.evaluate(() => [...document.querySelectorAll('.turn')].at(-1).dataset.id);
+  // Every status line the source card shows is recorded as it renders: a fast
+  // rewrite can come and go between two polls.
+  await panel.evaluate((id) => {
+    window.__lines = [];
+    window.__obs = new MutationObserver(() => {
+      const line = document.querySelector(`.turn[data-id="${id}"] .result-count`)?.textContent || '';
+      if (line && window.__lines.at(-1) !== line) window.__lines.push(line);
+    });
+    window.__obs.observe(document.getElementById('thread'), { childList: true, subtree: true, characterData: true });
+  }, src);
   await panel.keyboard.press('Enter');
   // The card it came from says what is running, until the new result lands.
-  const running = await panel.evaluate(async (id) => {
-    for (let i = 0; i < 100; i++) {
-      const line = document.querySelector(`.turn[data-id="${id}"] .result-count`)?.textContent || '';
-      if (/^Rewriting as /.test(line)) return line;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    return null;
-  }, src);
-  check('while a Try as rewrite runs, its source card says "Rewriting as Professional…"', running === 'Rewriting as Professional…', String(running));
+  await sleep(1000);
+  const lines = await panel.evaluate(() => { window.__obs.disconnect(); return window.__lines; });
+  const running = lines.find((l) => /^Rewriting as /.test(l)) || null;
+  check('while a Try as rewrite runs, its source card says "Rewriting as Professional…"', running === 'Rewriting as Professional…', JSON.stringify(lines));
   await sleep(1500);
   const settled = await panel.evaluate((id) => document.querySelector(`.turn[data-id="${id}"] .result-count`)?.textContent, src);
   check('then it goes back to the character count', /^\d+ chars$/.test(settled || ''), String(settled));
@@ -436,18 +486,18 @@ console.log('STEP 6');
 // 6. Right-click flow (SW handleRewrite) into a textarea: in-place, undoable.
 await demo.bringToFront();
 await demo.evaluate(() => {
-  const ta = document.createElement('textarea'); ta.id = 'probe'; ta.value = 'hello we was here ok'; ta.style.cssText = 'position:fixed;top:10px;left:10px;width:400px;height:60px;z-index:99999';
-  document.body.appendChild(ta); ta.focus(); ta.setSelectionRange(6, 12); // exactly "we was"
+  const ta = document.createElement('textarea'); ta.id = 'probe'; ta.value = 'hello we go here ok'; ta.style.cssText = 'position:fixed;top:10px;left:10px;width:400px;height:60px;z-index:99999';
+  document.body.appendChild(ta); ta.focus(); ta.setSelectionRange(6, 11); // exactly "we go"
 });
 const tabId = await sw.evaluate(async () => (await chrome.tabs.query({ url: 'http://localhost:8765/*' }))[0].id);
-await sw.evaluate((id) => handleRewrite(id, 'we was', 'grammar', { ensure: true }), tabId); await sleep(1500);
+await sw.evaluate((id) => handleRewrite(id, 'we go', 'grammar', { ensure: true }), tabId); await sleep(1500);
 const after = await demo.evaluate(() => document.getElementById('probe').value);
-check('in-place replace in textarea', after === 'hello R(we was) here ok', after);
+check('in-place replace in textarea', after === 'hello R(we go) here ok', after);
 await demo.evaluate(() => document.getElementById('probe').focus());
 // Synthetic Cmd+Z doesn't reach macOS editing commands; name the command, which is what the real keystroke maps to.
 await demo.keyboard.down('Meta'); await demo.keyboard.press('KeyZ', { commands: ['undo'] }); await demo.keyboard.up('Meta'); await sleep(300);
 const undone = await demo.evaluate(() => document.getElementById('probe').value);
-check('Cmd+Z restores original after replace', undone === 'hello we was here ok', undone);
+check('Cmd+Z restores original after replace', undone === 'hello we go here ok', undone);
 // Two rewrites in flight: each result must land on its own selection (board N1).
 await demo.evaluate(() => {
   const mk = (id, top, v) => { const t = document.createElement('textarea'); t.id = id; t.value = v; t.style.cssText = `position:fixed;top:${top}px;left:10px;width:400px;height:40px;z-index:99999`; document.body.appendChild(t); return t; };
@@ -546,7 +596,7 @@ await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
       hint: document.getElementById('customHint').textContent, active: document.activeElement.id };
   });
   await panel.evaluate(() => chrome.storage.sync.set({ srCloudService: 'custom' }));
-  await clk(panel, '#btnSettings'); await sleep(500);
+  await clk(panel, '#btnSettings'); await sleep(500); await unfoldAI(panel);
   const clean = await form();
   check('a saved endpoint: Save off, no Cancel, Remove shown, the preset key row hidden', clean.save && clean.saveOff && !clean.cancel && clean.remove && !clean.presetKey && clean.model, JSON.stringify(clean));
 
@@ -612,7 +662,7 @@ await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
 
   // Remove asks once; Keep backs out.
   await panel.evaluate((id) => chrome.storage.sync.set({ srCloudService: id }), second.id);
-  await clk(panel, '#btnSettings'); await sleep(500);
+  await clk(panel, '#btnSettings'); await sleep(500); await unfoldAI(panel);
   await clk(panel, '#btnRemoveCustom'); await sleep(300);
   const ask = await form();
   check('Remove asks first, naming the endpoint', ask.confirm && !ask.save && /Remove Lab\? Its key is deleted/.test(await panel.evaluate(() => document.getElementById('customConfirmText').textContent)) && ask.active === 'btnRemoveKeep', JSON.stringify(ask));
@@ -640,7 +690,7 @@ await panel.evaluate(() => chrome.storage.sync.set({ srEngine: 'auto' }));
   await panel.bringToFront();
   await panel.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
   await demo.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
-  await clk(panel, '#btnSettings'); await sleep(500);
+  await clk(panel, '#btnSettings'); await sleep(500); await unfoldAI(panel);
   const start = await panelTheme();
   check('Appearance starts on Auto, following a light computer', start.on === 'auto' && start.attr === 'light' && start.bg === 'rgb(250, 249, 247)', JSON.stringify(start));
   await clk(panel, '#themeSeg [data-value="dark"]'); await sleep(400);
@@ -863,7 +913,7 @@ if (icon2) {
   check('Ask box hidden when no AI is set up', !(await demo.$('#srHoverAskForm')));
   await clk(demo, '.sr-hover-action[data-tone="tldr"]'); await sleep(1500);
   const errText = await demo.evaluate(() => document.querySelector('#smart-rewrite-modal')?.innerText || '');
-  check('no-AI hover action explains setup', /Set up Proofr/.test(errText) && /connect an AI provider/.test(errText), errText.replace(/\s+/g, ' ').slice(0, 120));
+  check('no-AI hover action explains setup, without saying what this computer can\'t run', /Set up Proofr/.test(errText) && /connect a provider/.test(errText) && !/isn.t available|can.t run|unavailable/i.test(errText), errText.replace(/\s+/g, ' ').slice(0, 120));
   await shot(demo, '3-setup-error.png');
 } else check('hover icon present for no-key test', false);
 
@@ -877,8 +927,34 @@ await panel.evaluate(async () => {
 const coachDefault = await sw.evaluate(async () => (await chrome.storage.sync.get(['srCoach'])).srCoach);
 check('coach mode is off by default', coachDefault !== true, String(coachDefault));
 await panel.reload(); await sleep(800);
+await clk(panel, '#btnSettings'); await sleep(500); await unfoldAI(panel);
+const proofUI = await panel.evaluate(() => ({
+  active: [...document.querySelectorAll('#proofSeg .seg-btn.active')].map((b) => b.dataset.value),
+  hint: document.getElementById('proofHint').textContent,
+  toggles: [...document.querySelectorAll('#settingsPanel input[type=checkbox]')].map((i) => i.id),
+}));
+check('Settings: Proofread is one choice, starting on Fix, with a line saying what it does', proofUI.active.join() === 'fix' && /Fixes mistakes in place/.test(proofUI.hint), JSON.stringify(proofUI));
+check('Settings: the only switches are the two that need page access, Check as I type and hover actions (School, Coach, sounds and Progress moved to where they are used)', proofUI.toggles.join() === 'liveToggle,hoverToggle', JSON.stringify(proofUI.toggles));
+await clk(panel, '#proofSeg .seg-btn[data-value="school"]'); await sleep(400);
+const slid = await panel.evaluate(() => { const seg = document.getElementById('proofSeg'); const ind = seg.querySelector('.seg-ind'); const b = seg.querySelector('[data-value="school"]'); const x = Number((ind.style.transform.match(/translate\(([\d.]+)px/) || [])[1]); /* the target: a background tab runs no transitions */ return { x, want: b.offsetLeft, w: ind.offsetWidth, bw: b.offsetWidth, opacity: getComputedStyle(ind).opacity }; });
+check('Settings: the choice highlight slides to the option picked', Math.abs(slid.x - slid.want) < 1 && Math.abs(slid.w - slid.bw) < 1 && slid.opacity === '1', JSON.stringify(slid));
+const schoolFlags = await sw.evaluate(async () => chrome.storage.sync.get(['srSchool', 'srCoach']));
+const schoolHint = await panel.evaluate(() => document.getElementById('proofHint').textContent);
+check('Settings: picking School saves it and says what it does', schoolFlags.srSchool === true && schoolFlags.srCoach === false && /never rewrites/.test(schoolHint), JSON.stringify({ schoolFlags, schoolHint }));
+await clk(panel, '#proofSeg .seg-btn[data-value="fix"]'); await sleep(400);
+const fixFlags = await sw.evaluate(async () => chrome.storage.sync.get(['srSchool', 'srCoach']));
+check('Settings: back to Fix turns School off', fixFlags.srSchool === false && fixFlags.srCoach === false, JSON.stringify(fixFlags));
+// What sits beside the box: shown only with Check as I type on; Caterpillar by default.
+const lookOff = await panel.evaluate(() => document.getElementById('liveLookRow').hidden);
+await sw.evaluate(() => chrome.storage.sync.set({ srLiveCheck: true }));
+await panel.reload(); await sleep(800);
 await clk(panel, '#btnSettings'); await sleep(500);
-check('coach mode switch starts off in Settings', await panel.evaluate(() => document.getElementById('coachToggle').checked === false));
+const lookOn = await panel.evaluate(() => ({ hidden: document.getElementById('liveLookRow').hidden, active: [...document.querySelectorAll('#liveLookSeg .seg-btn.active')].map((b) => b.dataset.value), opts: [...document.querySelectorAll('#liveLookSeg .seg-btn')].map((b) => b.textContent), hint: document.getElementById('liveLookHint').textContent }));
+check('Settings: "Beside the text box" shows only with Check as I type on, starting on Caterpillar', lookOff === true && !lookOn.hidden && lookOn.active.join() === 'caterpillar' && lookOn.opts.join() === 'Caterpillar,Capsule,Plain' && /segment for each line/.test(lookOn.hint), JSON.stringify({ lookOff, lookOn }));
+await clk(panel, '#liveLookSeg .seg-btn[data-value="plain"]'); await sleep(400);
+const lookPlain = { saved: (await sw.evaluate(async () => chrome.storage.sync.get(['srLiveLook']))).srLiveLook, hint: await panel.evaluate(() => document.getElementById('liveLookHint').textContent) };
+check('Settings: picking Plain saves it and says there is no face', lookPlain.saved === 'plain' && /no face/.test(lookPlain.hint), JSON.stringify(lookPlain));
+await sw.evaluate(() => chrome.storage.sync.remove(['srLiveCheck', 'srLiveLook']));
 await clk(panel, '#btnSettingsBack'); await sleep(300);
 const putBox = (id, value) => demo.evaluate((id, value) => {
   document.getElementById(id)?.remove();
@@ -967,6 +1043,9 @@ await panel.evaluate(() => {
   };
 });
 mockRequests.length = 0;
+// The suite runs in a visible window: park the pointer in a corner so a real
+// cursor resting over the panel can't put one tile in its hover state.
+await panel.mouse.move(1, 1);
 await clk(panel, '#btnPractice'); await sleep(300);
 const OWN = ['receive', 'Friday', 'were'];
 const cardState = () => panel.evaluate((own) => {
@@ -1273,6 +1352,7 @@ check('M2: Quick ends at 10 (12 words, all right)', quick.done && quick.log.leng
 check('M1: the mode picked is saved', quick.mode === 'quick', String(quick.mode));
 check('F4: sounds off (the default): no AudioContext made in any round so far', await panel.evaluate(() => window.__ac) === 0);
 // M1: the mode is remembered.
+await panel.mouse.move(1, 1);
 await panel.evaluate(() => chrome.storage.local.set({ srPracticeMode: 'keep' }));
 await clk(panel, '#btnPractice'); await sleep(250);
 const m1k = await cardState();
@@ -1414,12 +1494,23 @@ check('new user: a Mix-ups round never writes to the history (srInsights)', insi
 await panel.evaluate(async (ins) => { await chrome.storage.local.set({ srInsights: ins }); await chrome.storage.sync.set({ srInsightsOn: false }); await renderProgress(); }, keptInsights).catch(() => {});
 await panel.evaluate(async () => renderProgress());
 
-// F4: the Settings toggle turns sounds on; then a right answer chimes (two notes), a wrong one a low tone.
-await clk(panel, '#btnSettings'); await sleep(400);
-await clk(panel, '#soundToggle'); await sleep(300);
-check('F4: the Practice sounds toggle saves', (await sw.evaluate(async () => (await chrome.storage.sync.get(['srPracticeSound'])).srPracticeSound)) === true);
-await clk(panel, '#btnSettingsBack'); await sleep(200);
+// Progress turns keeping words off and on from its own page, history kept.
 await clk(panel, '#tabProgress'); await sleep(300);
+await panel.evaluate(async () => { await chrome.storage.sync.set({ srInsightsOn: true }); await renderProgress(); });
+const keepLine = async () => panel.evaluate(async () => ({ btn: document.getElementById('btnInsightsOff').textContent, shown: !document.getElementById('progPrivacy').hidden, on: (await chrome.storage.sync.get(['srInsightsOn'])).srInsightsOn }));
+await clk(panel, '#btnInsightsOff'); await sleep(300);
+const offLine = await keepLine();
+await clk(panel, '#btnInsightsOff'); await sleep(300);
+const onLine = await keepLine();
+check('Progress: "Turn off" stops keeping words and the same line offers "Turn on"', offLine.on === false && offLine.shown && offLine.btn === 'Turn on' && onLine.on === true && onLine.btn === 'Turn off', JSON.stringify({ offLine, onLine }));
+
+// F4: the sound button in Practice turns sounds on; then a right answer chimes (two notes), a wrong one a low tone.
+await panel.evaluate(() => startPractice()); await sleep(400);
+const soundBefore = await panel.evaluate(() => document.getElementById('btnPrSound').getAttribute('aria-pressed'));
+await clk(panel, '#btnPrSound'); await sleep(300);
+const soundAfter = await panel.evaluate(() => document.getElementById('btnPrSound').getAttribute('aria-pressed'));
+check('F4: the sound button in Practice turns sounds on and saves', soundBefore === 'false' && soundAfter === 'true' && (await sw.evaluate(async () => (await chrome.storage.sync.get(['srPracticeSound'])).srPracticeSound)) === true, JSON.stringify({ soundBefore, soundAfter }));
+await clk(panel, '#btnPracticeBack'); await sleep(300);
 await panel.evaluate(() => { window.__osc = []; });
 const loud = await playRound('quick', MANY.slice(0, 2), { wrongAt: [1] });
 const osc = await panel.evaluate(() => ({ ac: window.__ac, osc: window.__osc }));
@@ -1507,11 +1598,11 @@ check('no AI: the link is hidden and the line says to connect one', t3.btn === n
 await reopenProgress();
 
 // Coach mode on: spots marked, text untouched; Show fixes then Apply.
-await clk(panel, '#btnSettings'); await sleep(500);
-await clk(panel, '#coachToggle'); await sleep(500);
+await clk(panel, '#btnSettings'); await sleep(500); await unfoldAI(panel);
+await clk(panel, '#proofSeg .seg-btn[data-value="coach"]'); await sleep(500);
 const chrome1 = await panel.evaluate(() => ({ tabs: document.getElementById('tabBar').hidden, trash: document.getElementById('btnClearHistory').hidden }));
 check('settings is its own page: no tabs, no trash icon', chrome1.tabs && chrome1.trash, JSON.stringify(chrome1));
-check('coach toggle saves', (await sw.evaluate(async () => (await chrome.storage.sync.get(['srCoach'])).srCoach)) === true);
+check('picking Coach saves it', (await sw.evaluate(async () => (await chrome.storage.sync.get(['srCoach'])).srCoach)) === true);
 await demo.bringToFront();
 await putBox('coach', SENT);
 await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, SENT); await sleep(1500);
@@ -1525,7 +1616,7 @@ check('coach: Show fixes then Apply fixes the box', (await boxValue('coach')) ==
 await putBox('coach', CLEAN);
 await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, CLEAN); await sleep(1200);
 const cleanCoach = await demo.evaluate(() => ({ dialog: !!document.querySelector('#smart-rewrite-modal.sr-visible #sr-coach-text, #sr-coach-text'), toast: document.getElementById('sr-toast')?.innerText || '' }));
-check('coach with nothing to fix shows the toast, not a dialog', !cleanCoach.dialog && /Nothing to fix/.test(cleanCoach.toast), JSON.stringify(cleanCoach));
+check('coach with nothing to fix shows the toast, not a dialog', !cleanCoach.dialog && /No mistakes found/.test(cleanCoach.toast), JSON.stringify(cleanCoach));
 await sw.evaluate(() => chrome.storage.sync.set({ srCoach: false }));
 await panel.bringToFront();
 await clk(panel, '#btnSettingsBack'); await sleep(300);

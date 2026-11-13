@@ -183,12 +183,16 @@ async function refreshWeekLine() {
 // Every field here persists immediately on change. There is no batched
 // "commit on close" step for any of these, so the engine control and the
 // key field can each use whichever save pattern actually fits them.
+// This computer can't run Chrome's AI at all (set by refreshProviderPill).
+// Then "On-device", synced from a computer that can, acts as Auto here.
+let deviceUnavailable = false;
 class Settings {
   static async get() {
     try {
       const r = await chrome.storage.sync.get(['srEngine', 'srTargetLang', 'srLastTone']);
+      const engine = r.srEngine || 'auto';
       return {
-        engine: r.srEngine || 'auto',
+        engine: engine === 'device' && deviceUnavailable ? 'auto' : engine,
         targetLang: r.srTargetLang || 'en',
         lastTone: r.srLastTone || 'grammar',
       };
@@ -237,6 +241,9 @@ let deviceSetupRunning = false;
 let keyEditing = false;
 let turns = [];
 let currentMode = 'grammar';
+// The School setting: Proofread only (mistakes fixed, nothing rewritten),
+// plus suggestions for formal writing that the user applies one by one.
+let schoolOn = false;
 let currentTargetLang = 'en';
 let paletteView = 'modes'; // 'modes' | 'languages'
 let paletteFiltered = [];
@@ -269,6 +276,7 @@ const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 // === Provider status pill ===
 async function refreshProviderPill() {
   const availability = await SR_deviceAvailability();
+  deviceUnavailable = availability === 'unavailable';
   deviceReady = availability === 'available' || availability === 'downloadable' || availability === 'downloading';
   deviceNeedsSetup = availability === 'downloadable' || availability === 'downloading';
   const provider = await CloudProvider.getConfig();
@@ -299,6 +307,13 @@ async function refreshProviderPill() {
   refs.cloudOffer.classList.toggle('hidden', !offerCloud);
   refs.cloudSection.classList.toggle('collapsed', offerCloud);
   refs.deviceSetupCard.classList.toggle('hidden', !(deviceNeedsSetup || deviceSetupRunning));
+  // The folded AI section's one line: what's in use, in plain words.
+  const deviceOn = deviceReady && !deviceNeedsSetup && engine !== 'cloud';
+  const cloudOn = hasKey && (engine === 'cloud' || (engine === 'auto' && !deviceOn));
+  refs.aiStatusLine.textContent = cloudOn ? `${provider.displayName} is connected.`
+    : deviceOn ? 'On-device AI is on. Your text stays on this computer.'
+    : deviceNeedsSetup ? 'Chrome\'s own AI needs a one-time download.'
+    : 'Not set up. Proofread works with Proofr\'s rules.';
   return { deviceReady, hasKey, runnable };
 }
 
@@ -335,6 +350,8 @@ async function engineChoices() {
 
 async function openEngineMenu() {
   const choices = await engineChoices();
+  // Nothing to pick between yet: "Set up AI" goes straight to the setup.
+  if (!choices.length) { openAISettings(); return; }
   refs.engineMenu.innerHTML = choices.map((c) => `
     <button type="button" class="engine-item" role="menuitemradio" aria-checked="${c.current}" data-choice="${escapeHtml(c.id)}">
       <b>${escapeHtml(c.title)}</b><span>${escapeHtml(c.sub || '')}</span>
@@ -348,7 +365,7 @@ async function openEngineMenu() {
 
 async function chooseEngine(choice) {
   closeEngineMenu();
-  if (choice === 'settings') { toggleSettingsPanel(true); return; }
+  if (choice === 'settings') { openAISettings(); return; }
   if (choice === 'device') {
     await Settings.set({ srEngine: 'device' });
   } else {
@@ -359,7 +376,7 @@ async function chooseEngine(choice) {
   await refreshProviderPill();
   if (!refs.settingsPanel.classList.contains('hidden')) await refreshSettingsPanel();
   // On-device picked but the model isn't downloaded yet: show the setup card.
-  if (choice === 'device' && deviceNeedsSetup) toggleSettingsPanel(true);
+  if (choice === 'device' && deviceNeedsSetup) openAISettings();
   showSavedToast();
 }
 
@@ -404,6 +421,9 @@ async function refreshSettingsPanel() {
     btn.classList.toggle('active', btn.dataset.value === engine);
     btn.disabled = btn.dataset.value === 'device' && !deviceReady;
   });
+  // No Chrome AI on this computer: a provider is the only AI, so there is
+  // nothing to choose between. Show only what this computer can use.
+  refs.advancedSection.hidden = !deviceReady;
   updateEngineHint(engine);
 
   refs.cloudSection.classList.toggle('hidden', engine === 'device');
@@ -411,14 +431,51 @@ async function refreshSettingsPanel() {
   if (engine !== 'auto') refs.advancedSection.open = true;
   await refreshCloudSection();
 
-  const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
+  const { srHoverAssist, srLiveCheck } = await chrome.storage.sync.get(['srHoverAssist', 'srLiveCheck']);
   refs.hoverToggle.checked = !!srHoverAssist;
+  refs.liveToggle.checked = !!srLiveCheck;
+  await refreshLiveLook();
   await refreshHoverKeyHint();
-  const { srInsightsOn, srCoach, srPracticeSound } = await chrome.storage.sync.get(['srInsightsOn', 'srCoach', 'srPracticeSound']);
-  refs.soundToggle.checked = srPracticeSound === true;
-  refs.insightsToggle.checked = srInsightsOn !== false;
-  refs.coachToggle.checked = srCoach === true;
+  await refreshProofSeg();
   refreshWeekLine();
+}
+
+// What sits beside the box while Check as I type is on: Proofr's caterpillar
+// (the default), the capsule face, or a plain dot with no face.
+const LOOK_HINTS = {
+  caterpillar: 'Proofr\'s face, with a segment for each line of text. A dot on a segment marks a line with a mistake.',
+  capsule: 'Proofr\'s face on a capsule as tall as your text, with a dot beside each line with a mistake.',
+  plain: 'A plain blue dot and bar, no face and no character animation. Dots still mark lines with mistakes.',
+};
+async function refreshLiveLook() {
+  const { srLiveLook, srLiveCheck } = await chrome.storage.sync.get(['srLiveLook', 'srLiveCheck']);
+  const value = LOOK_HINTS[srLiveLook] ? srLiveLook : 'caterpillar';
+  refs.liveLookSeg.querySelectorAll('.seg-btn').forEach((btn) => {
+    const on = btn.dataset.value === value;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  refs.liveLookHint.textContent = LOOK_HINTS[value];
+  refs.liveLookRow.hidden = !srLiveCheck;
+  if (!refs.liveLookRow.hidden) segPlacers.forEach((p) => p());
+}
+
+// What Proofread does, as one choice: Fix (the default), School or Coach.
+// Stored as the two flags the rest of Proofr reads (srSchool, srCoach).
+const PROOF_HINTS = {
+  fix: 'Fixes mistakes in place. Rewriting styles are in the right-click menu.',
+  school: 'Fixes mistakes only and never rewrites your sentences. Suggests formal wording, like "do not" for "don\'t", that you choose to use.',
+  coach: 'Marks the mistakes in your text box so you can fix them yourself. Show fixes is one click away.',
+};
+async function refreshProofSeg() {
+  const { srSchool, srCoach } = await chrome.storage.sync.get(['srSchool', 'srCoach']);
+  const value = srCoach === true ? 'coach' : srSchool === true ? 'school' : 'fix';
+  refs.proofSeg.querySelectorAll('.seg-btn').forEach((btn) => {
+    const on = btn.dataset.value === value;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  refs.proofHint.textContent = PROOF_HINTS[value];
 }
 
 // === Settings panel: cloud provider picker (service + model + base URL) ===
@@ -895,8 +952,8 @@ async function saveKey() {
 async function releaseEndpointAccess(baseURL) {
   let origin;
   try { origin = new URL(baseURL).origin + '/*'; } catch { return; }
-  const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
-  if (srHoverAssist) return;
+  const { srHoverAssist, srLiveCheck } = await chrome.storage.sync.get(['srHoverAssist', 'srLiveCheck']);
+  if (srHoverAssist || srLiveCheck) return;
   await chrome.permissions.remove({ origins: [origin] }).catch(() => {});
 }
 
@@ -975,6 +1032,37 @@ async function setUpOnDevice() {
   }
 }
 
+// Settings, unfolded at the AI section: for every "set up AI" path.
+function openAISettings() {
+  toggleSettingsPanel(true);
+  refs.aiSection.open = true;
+  requestAnimationFrame(() => refs.aiSection.scrollIntoView({ block: 'start' }));
+}
+
+// A segmented choice: one highlight that slides to the option picked, so the
+// change is seen, not just the end state. Placed without motion the first
+// time it shows (opening Settings), with motion when the choice changes.
+const segPlacers = [];
+function segIndicator(seg) {
+  const ind = document.createElement('span');
+  ind.className = 'seg-ind';
+  ind.setAttribute('aria-hidden', 'true');
+  seg.prepend(ind);
+  seg.classList.add('has-ind');
+  let placed = false;
+  const place = () => {
+    const a = seg.querySelector('.seg-btn.active');
+    if (!a || !seg.offsetWidth) { ind.style.opacity = '0'; placed = false; return; }
+    if (!placed) ind.style.transition = 'none';
+    Object.assign(ind.style, { opacity: '1', width: `${a.offsetWidth}px`, height: `${a.offsetHeight}px`, transform: `translate(${a.offsetLeft}px, ${a.offsetTop}px)` });
+    if (!placed) { void ind.offsetWidth; ind.style.transition = ''; placed = true; }
+  };
+  new MutationObserver(place).observe(seg, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  segPlacers.push(place);
+  return place;
+}
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 function toggleSettingsPanel(forceOpen) {
   const panel = refs.settingsPanel;
   const open = forceOpen !== undefined ? forceOpen : panel.classList.contains('hidden');
@@ -982,6 +1070,7 @@ function toggleSettingsPanel(forceOpen) {
   syncChrome();
   if (open) {
     keyEditing = false;
+    for (const place of segPlacers) place();
     refreshSettingsPanel();
   } else {
     closeCloudMenu();
@@ -1011,7 +1100,7 @@ function renderPalette(query = '') {
     paletteFiltered = SR_LANGUAGES_FULL;
     refs.paletteHintLeft.textContent = 'TRANSLATE TO';
   } else {
-    paletteFiltered = SR_TONES.filter((t) => t.name.toLowerCase().includes(query.toLowerCase()));
+    paletteFiltered = SR_TONES.filter((t) => (!schoolOn || t.id === 'grammar') && t.name.toLowerCase().includes(query.toLowerCase()));
     refs.paletteHintLeft.textContent = 'MODE';
   }
   paletteActiveIndex = 0;
@@ -1119,20 +1208,27 @@ async function sendMessage() {
 // Starts a new entry for `text` in `mode`. Used by Send and by the "Try as"
 // chips on a result (same text, another tone). Returns false when nothing
 // can run yet and Settings was opened instead.
-async function startTurn(text, mode, targetLang) {
-  if (activeRun) return false;
-
+// Whether an AI can answer now (the engine setting, a saved key, Chrome's model).
+async function aiRunnable() {
   const hasKey = await CloudProvider.isReady();
   const { engine } = await Settings.get();
-  const runnable = engine === 'cloud' ? hasKey : engine === 'device' ? deviceReady : (deviceReady || hasKey);
-  if (!runnable) {
-    toggleSettingsPanel(true);
+  return engine === 'cloud' ? hasKey : engine === 'device' ? deviceReady : (deviceReady || hasKey);
+}
+
+async function startTurn(text, mode, targetLang) {
+  if (activeRun) return false;
+  if (schoolOn) mode = 'grammar';
+
+  const hasKey = await CloudProvider.isReady();
+  // Proofread always runs: with no AI set up, Proofr's own rules answer alone.
+  if (mode !== 'grammar' && !(await aiRunnable())) {
+    openAISettings();
     return false;
   }
 
   // On-device only covers five languages; anything else needs a cloud key.
   if (mode === 'translate' && !SR_isOnDeviceLanguage(targetLang) && !hasKey) {
-    toggleSettingsPanel(true);
+    openAISettings();
     return false;
   }
 
@@ -1225,9 +1321,10 @@ async function runTurn(turn, opts = {}) {
     const availability = await SR_deviceAvailability();
     const engine = (settings.engine === 'auto' && providerReady(provider) && availability !== 'available')
       ? 'cloud' : settings.engine;
-    turn.onDevice = engine === 'device' || (engine === 'auto' && availability !== 'unavailable');
+    const useAI = await aiRunnable();
+    turn.onDevice = useAI && (engine === 'device' || (engine === 'auto' && availability !== 'unavailable'));
     repaint();
-    const { text: rewritten, provider: providerId, engine: engineName } = await SR_rewriteAuto(turn.inputText, turn.mode, {
+    const askAI = (text) => SR_rewriteAuto(text, turn.mode, {
       provider,
       engine,
       allowDownload: true, // Send is a click, so a translation language pack may download
@@ -1237,13 +1334,29 @@ async function runTurn(turn, opts = {}) {
       onStatus: (msg) => { turn.statusText = msg; repaint(); },
       onToken: (soFar) => { turn.streamed = soFar; repaint(); },
     });
+    let rewritten, providerId, engineName;
+    delete turn.ruleCount;
+    delete turn.hints;
+    if (turn.mode === 'grammar') {
+      // Rules first, then the AI when one is ready, then the rules again.
+      const res = await SR_proofreadHybrid(turn.inputText, { school: schoolOn, atStart: true, runAI: useAI ? askAI : null });
+      rewritten = res.text;
+      providerId = res.ai ? res.ai.provider : 'rules';
+      turn.rulesOnly = !res.ai;
+      engineName = res.ai && res.ai.engine;
+      if (res.ruleCount) turn.ruleCount = res.ruleCount;
+      if (res.hints.length) turn.hints = res.hints;
+    } else {
+      ({ text: rewritten, provider: providerId, engine: engineName } = await askAI(turn.inputText));
+    }
     turn.outputText = rewritten;
     turn.provider = providerId;
     // Same wording as background.js whereLabel: a server on this machine or
     // network isn't "sent" anywhere a user would worry about.
     // Also which model answered, like the page's result label.
     const model = provider && provider.model ? ` · ${String(provider.model).split('/').pop()}` : '';
-    turn.where = providerId === 'device' ? `On this computer · ${engineName || 'Gemini Nano'}`
+    turn.where = providerId === 'rules' ? SR_RULES_LABEL
+      : providerId === 'device' ? `On this computer · ${engineName || 'Gemini Nano'}`
       : (typeof SR_isLocalURL === 'function' && SR_isLocalURL(provider.baseURL)) ? `Local${model}`
       : `Sent to ${SR_providerDisplayLabel(providerId, provider && provider.displayName)}${model}`;
     turn.latencyMs = Math.round(performance.now() - start);
@@ -1254,7 +1367,7 @@ async function runTurn(turn, opts = {}) {
     if (turn.mode === 'grammar') {
       // Text pasted here is taken as the user's own draft. A word it masters
       // is named on the card.
-      const res = await recordInsights(turn.inputText, rewritten);
+      const res = await recordInsights(turn.inputText, rewritten, turn.rulesOnly === true);
       if (res && Array.isArray(res.mastered) && res.mastered.length) turn.mastered = res.mastered.slice(0, 3).map(String);
     }
   } catch (error) {
@@ -1373,6 +1486,38 @@ function resultStatusLine(turn) {
   return `${charCountLabel(turn.outputText)}${hiddenRemovedLabel(turn)}`;
 }
 
+// School suggestions under a Proofread: each one is used with a click, which
+// changes the result (Copy then copies it). Shown only while it still applies.
+function hintsHtml(turn) {
+  if (!Array.isArray(turn.hints) || !turn.hints.length) return '';
+  return `<div class="hint-list" role="group" aria-label="Suggestions for formal writing">
+    <div class="hint-head"><span>For formal writing</span>${turn.hints.length > 1 ? '<button class="pill-btn" data-action="hints-all" type="button">Use all</button>' : ''}</div>
+    ${turn.hints.map((h, i) => `<div class="hint-row">
+      <span class="hint-text"><span class="hint-pair"><span class="hint-from">${escapeHtml(h.from)}</span> → <b>${escapeHtml(h.to)}</b></span><span class="hint-why">${escapeHtml(h.why)}</span></span>
+      <button class="pill-btn" data-action="hint" data-i="${i}" type="button" aria-label="Use ${escapeHtml(h.to)} instead of ${escapeHtml(h.from)}">Use</button>
+    </div>`).join('')}
+  </div>`;
+}
+
+async function useAllHints(turn) {
+  const hints = (turn.hints || []).filter((h) => turn.outputText.slice(h.start, h.end) === h.from);
+  if (!hints.length) return;
+  turn.outputText = SR_applyHits(turn.outputText, hints);
+  delete turn.hints;
+  await saveTurns();
+  renderThread();
+}
+
+async function useHint(turn, i) {
+  const h = turn.hints && turn.hints[i];
+  if (!h || turn.outputText.slice(h.start, h.end) !== h.from) return;
+  turn.outputText = SR_applyHits(turn.outputText, [h]);
+  const left = SR_freshHints(turn.inputText, turn.outputText);
+  if (left.length) turn.hints = left; else delete turn.hints;
+  await saveTurns();
+  renderThread();
+}
+
 // Older entries were saved with the long local label.
 function whereLabelFor(turn) {
   const where = turn.where || (turn.provider === 'device' ? 'On this computer' : `Sent to ${SR_providerDisplayLabel(turn.provider)}`);
@@ -1412,10 +1557,11 @@ function renderAssistantCard(turn) {
   return `<div class="assistant-card${turn.justFinished ? ' reveal' : ''}">
     ${cardHead(modeName, where, { title: `${SR_getToneName(turn.mode)} · ${where}${turn.latencyMs != null ? ` · took ${formatLatency(turn.latencyMs)}` : ''}` })}
     <div class="assistant-body">${turnBodyHtml(turn)}</div>
+    ${hintsHtml(turn)}
     ${turn.mastered ? `<div class="mastered-line"><span class="prog-icon ok" aria-hidden="true">${ICON_CHECK}</span><span>${turn.mastered.map((w) => `<b>${escapeHtml(w)}</b>`).join(' and ')}: ${turn.mastered.length === 1 ? '3 right in a row. Mastered.' : 'mastered.'}</span></div>` : ''}
     <div class="assistant-actions">
       <span class="result-count" title="${escapeHtml(status.replace('hidden removed', 'hidden characters removed'))}">${escapeHtml(status)}</span>
-      <button class="pill-btn" data-action="tryas" type="button" aria-haspopup="menu" aria-expanded="false">Try as${ICON_CHEVRON}</button>
+      ${schoolOn ? '' : `<button class="pill-btn" data-action="tryas" type="button" aria-haspopup="menu" aria-expanded="false">Try as${ICON_CHEVRON}</button>`}
       <button class="pill-btn primary" data-action="copy" type="button">${ICON_COPY}Copy</button>
     </div>
   </div>`;
@@ -1576,8 +1722,8 @@ async function loadShortcut() {
 // and only when asked.
 let progressView = null;
 
-function recordInsights(before, after) {
-  return chrome.runtime.sendMessage({ action: 'recordInsights', before, after }).catch(() => {});
+function recordInsights(before, after, rulesOnly = false) {
+  return chrome.runtime.sendMessage({ action: 'recordInsights', before, after, rulesOnly }).catch(() => {});
 }
 
 function showTab(name) {
@@ -1648,12 +1794,18 @@ async function renderProgress() {
   refs.progEmpty.hidden = !empty;
   refs.progBody.hidden = empty;
   refs.btnProgEmpty.hidden = srInsightsOn !== false;
+  // Off with no history: the empty card has the Turn on button. Otherwise the
+  // line under Progress turns keeping words off and on.
+  const off = srInsightsOn === false;
+  refs.progPrivacy.hidden = off && empty;
+  refs.progPrivacyText.textContent = off ? 'Proofr isn\'t keeping new words right now.' : 'Only corrected words and word counts are kept, on this computer. Never your sentences.';
+  refs.btnInsightsOff.textContent = off ? 'Turn on' : 'Turn off';
   // A brand-new user has no words yet, but Mix-ups needs none.
   refs.btnProgMixups.hidden = !empty || srInsightsOn === false;
   if (empty) {
     refs.progEmptyTitle.textContent = srInsightsOn === false ? 'Progress is turned off' : 'Nothing here yet';
     refs.progEmptyText.textContent = srInsightsOn === false
-      ? 'Turn on "Learn from my proofreads" and Proofr will keep the words it fixes for you, on this computer.'
+      ? 'Turn it on and Proofr will keep the words it fixes for you, on this computer. Never your sentences.'
       : 'Proofread something you wrote. The words Proofr fixes for you show up here, and so does how your mistake rate changes week to week.';
     return view;
   }
@@ -1836,6 +1988,8 @@ async function startPractice(e) {
   refs.progressPanel.classList.add('hidden');
   refs.practicePanel.classList.remove('hidden');
   syncChrome(); // Practice is its own screen: no tabs above it
+  practice.sound = (await chrome.storage.sync.get(['srPracticeSound'])).srPracticeSound === true;
+  renderPracticeSound();
   for (const x of [refs.prDone, refs.prStage, refs.prCheckpoint, refs.prBar, refs.prTally, refs.prCombo]) x.hidden = true;
   closeSheet();
   refs.prChoose.hidden = false;
@@ -2208,6 +2362,14 @@ function closeCheckpoint(more) {
   askNext();
 }
 
+// The sound button in Practice's top bar: a speaker, crossed out when off.
+function renderPracticeSound() {
+  const on = !!practice.sound;
+  refs.btnPrSound.setAttribute('aria-pressed', String(on));
+  refs.btnPrSound.title = on ? 'Sounds on' : 'Sounds off';
+  refs.btnPrSound.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/>${on ? '<path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>' : '<path d="m22 9-6 6"/><path d="m16 9 6 6"/>'}</svg>`;
+}
+
 // Optional (srPracticeSound, off by default): a soft two-note chime for a
 // right answer, one low tone for a wrong one, made here with Web Audio.
 let practiceAudio = null;
@@ -2325,6 +2487,16 @@ function bindThreadDelegation() {
       else openTryMenu(btn, turn);
     }
     else if (btn.dataset.action === 'delete') await deleteTurn(turn);
+    else if (btn.dataset.action === 'hint' || btn.dataset.action === 'hints-all') {
+      const all = btn.dataset.action === 'hints-all';
+      const rows = all ? [...turnEl.querySelectorAll('.hint-row')] : [btn.closest('.hint-row')];
+      rows.forEach((r) => r && r.classList.add('used'));
+      if (!reducedMotion()) await new Promise((r) => setTimeout(r, 160));
+      if (all) await useAllHints(turn); else await useHint(turn, Number(btn.dataset.i));
+      // The text changed: the card's one short reveal says so.
+      const card = document.querySelector(`.turn[data-id="${CSS.escape(turn.id)}"] .assistant-card`);
+      if (card) { card.classList.remove('reveal'); void card.offsetWidth; card.classList.add('reveal'); }
+    }
   });
 }
 
@@ -2365,13 +2537,13 @@ const InfoOverlays = {
 document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'tabBar', 'btnSettings', 'btnSettingsBack',
-    'settingsPanel', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
-    'hoverToggle', 'hoverHint', 'hoverKeyHint', 'engineSeg', 'engineHint', 'themeSeg',
+    'settingsPanel', 'aiSection', 'aiStatusLine', 'advancedSection', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
+    'hoverToggle', 'hoverHint', 'liveToggle', 'liveHint', 'liveLookRow', 'liveLookSeg', 'liveLookHint', 'hoverKeyHint', 'engineSeg', 'engineHint', 'themeSeg',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'undoToast', 'undoToastText', 'btnUndo', 'sendTip', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
     'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progStart', 'progStartFill', 'progStartText', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
     'progHabitsCard', 'progHabitTitle', 'progHabitEg', 'progHabitAlso', 'progWordsCard', 'progTipsState', 'progTipsNote', 'progWords', 'btnAllWords', 'progMasteredLine',
-    'btnTips', 'btnClearInsights', 'insightsToggle', 'coachToggle', 'soundToggle',
+    'btnTips', 'btnClearInsights', 'btnInsightsOff', 'progPrivacy', 'progPrivacyText', 'proofSeg', 'proofHint', 'btnPrSound',
     'prChoose', 'prWhy', 'prBestLine', 'prTiles', 'prQuick', 'prKeep', 'prMix', 'prTally', 'prCheckpoint', 'prCheckText', 'btnPrMore', 'btnPrStop', 'prSheetLevel',
     'practicePanel', 'btnPracticeBack', 'prBar', 'prBarFill', 'prCombo', 'prStage', 'prAsk', 'prLeft', 'prSentence', 'prHint', 'prChoices', 'prType', 'prInput', 'prCheck',
     'prDone', 'prRing', 'prRingSvg', 'prScore', 'prDoneTitle', 'prDoneText', 'prWords', 'btnPracticeAgain', 'btnPracticeDone',
@@ -2385,11 +2557,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     'thread', 'palette', 'paletteHintLeft', 'paletteList',
     'modeTag', 'modeTagLabel', 'ta', 'charCount', 'sendBtn',
   ].forEach((id) => { refs[id] = el(id); });
+  for (const seg of [refs.proofSeg, refs.themeSeg, refs.engineSeg, refs.liveLookSeg]) if (seg) segIndicator(seg);
 
   if (typeof SR_LOGO_SVG !== 'undefined') refs.mark.innerHTML = SR_LOGO_SVG;
 
   const { lastTone, targetLang } = await Settings.get();
-  currentMode = lastTone;
+  schoolOn = (await chrome.storage.sync.get(['srSchool'])).srSchool === true;
+  currentMode = schoolOn ? 'grammar' : lastTone;
   currentTargetLang = targetLang;
   updateModeTag();
 
@@ -2467,7 +2641,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       Settings.set({ srHoverAssist: false }).then(async () => {
         await refreshHoverKeyHint();
-        await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
+        // Check as I type uses the same access: keep it while that's on.
+        if (!(await chrome.storage.sync.get(['srLiveCheck'])).srLiveCheck) await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
         refs.hoverHint.textContent = '';
         // A provider outside the CORS-verified presets may have been relying on that broad access.
         const cfg = await CloudProvider.getConfig();
@@ -2478,6 +2653,34 @@ document.addEventListener('DOMContentLoaded', async () => {
             refs.hoverHint.textContent = `${cfg.displayName} needs access again: under AI provider, press ${cfg.keyless ? 'Connect' : 'Save'}.`;
           }
         }
+        showSavedToast();
+      });
+    }
+  });
+
+  refs.liveLookSeg.querySelectorAll('.seg-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await Settings.set({ srLiveLook: btn.dataset.value });
+      await refreshLiveLook();
+      showSavedToast();
+    });
+  });
+
+  // Check as I type: the same page access as hover actions, asked for here.
+  refs.liveToggle.addEventListener('change', () => {
+    if (refs.liveToggle.checked) {
+      chrome.permissions.request({ origins: ['<all_urls>'] }).then(async (granted) => {
+        refs.liveToggle.checked = granted;
+        await Settings.set({ srLiveCheck: granted });
+        await refreshLiveLook();
+        refs.liveHint.textContent = granted ? '' : 'Check as I type stays off: Chrome needs your permission to read text boxes on pages.';
+        if (granted) showSavedToast();
+      }, () => { refs.liveToggle.checked = false; });
+    } else {
+      Settings.set({ srLiveCheck: false }).then(async () => {
+        refs.liveHint.textContent = '';
+        await refreshLiveLook();
+        if (!(await chrome.storage.sync.get(['srHoverAssist'])).srHoverAssist) await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
         showSavedToast();
       });
     }
@@ -2729,7 +2932,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.srInsights && !refs.progressPanel.classList.contains('hidden')) renderProgress();
   });
-  refs.btnProgEmpty.addEventListener('click', () => toggleSettingsPanel(true));
+  refs.btnProgEmpty.addEventListener('click', async () => { await Settings.set({ srInsightsOn: true }); renderProgress(); });
   refs.btnTips.addEventListener('click', getTips);
   refs.progWords.addEventListener('click', (e) => {
     const b = e.target.closest('.prog-word-row');
@@ -2743,17 +2946,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     await chrome.storage.local.remove(['srInsights', 'srTipsCache', 'srPracticeStats', 'srPracticePool', 'srPracticeSeen', 'srPracticeBest', 'srPracticeMode']);
     renderProgress();
   });
-  refs.insightsToggle.addEventListener('change', async () => {
-    await Settings.set({ srInsightsOn: refs.insightsToggle.checked });
-    showSavedToast();
+  refs.btnInsightsOff.addEventListener('click', async () => {
+    const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
+    await Settings.set({ srInsightsOn: srInsightsOn === false });
+    renderProgress();
   });
-  refs.coachToggle.addEventListener('change', async () => {
-    await Settings.set({ srCoach: refs.coachToggle.checked });
-    showSavedToast();
+  refs.proofSeg.querySelectorAll('.seg-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const v = btn.dataset.value;
+      schoolOn = v === 'school';
+      await Settings.set({ srSchool: schoolOn, srCoach: v === 'coach' });
+      if (schoolOn && currentMode !== 'grammar') {
+        currentMode = 'grammar';
+        Settings.set({ srLastTone: 'grammar' });
+        updateModeTag();
+      }
+      renderThread();
+      await refreshProofSeg();
+      showSavedToast();
+    });
   });
-  refs.soundToggle.addEventListener('change', async () => {
-    await Settings.set({ srPracticeSound: refs.soundToggle.checked });
-    showSavedToast();
+  refs.btnPrSound.addEventListener('click', async () => {
+    practice.sound = !practice.sound;
+    renderPracticeSound();
+    await Settings.set({ srPracticeSound: practice.sound });
   });
   refs.btnPractice.addEventListener('click', startPractice);
   refs.btnProgMixups.addEventListener('click', startPractice);
@@ -2811,9 +3027,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     refreshProviderPill();
   });
 
-  if ((!deviceReady && !hasKey) || deviceNeedsSetup) {
-    toggleSettingsPanel(true);
-  } else {
-    setTimeout(() => refs.ta.focus(), 100);
-  }
+  // Always open on Write, ready to type. Proofread works with no AI (Proofr's
+  // rules), so a missing AI is no reason to land on Settings; the "Set up AI"
+  // pill in the header is there for anyone who wants one.
+  setTimeout(() => refs.ta.focus(), 100);
 });

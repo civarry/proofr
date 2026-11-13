@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Proofr: Private AI Proofreader & Rewriter",
-  "version": "1.5.0",
-  "description": "Fix grammar and tone right where you type. Shows what changed and why. No account. Runs on your computer when Chrome supports it.",
+  "version": "1.6.0",
+  "description": "Fix grammar right where you type and see why each fix was made. Works with no account or setup. Add AI to rewrite in any tone.",
   "permissions": [
     "contextMenus",
     "scripting",

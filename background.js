@@ -98,7 +98,9 @@ async function weeklyLine() {
 }
 
 let insightsQueue = Promise.resolve();
-function recordInsights(before, after) {
+// rulesOnly: Proofr's own rules made every change, so they're the writer's
+// mistakes for sure and the change guard (which watches the AI) doesn't apply.
+function recordInsights(before, after, rulesOnly = false) {
   const run = insightsQueue.then(async () => {
     if (typeof SR_extractCorrections !== 'function' || typeof SR_mergeInsights !== 'function') return [];
     const { srInsightsOn } = await chrome.storage.sync.get(['srInsightsOn']);
@@ -109,7 +111,7 @@ function recordInsights(before, after) {
     // numbers) don't read as fewer mistakes.
     // A result the change guard flagged rewrote more than it fixed; learning
     // from it would teach the model's mistakes, not the user's.
-    if (typeof SR_changeGuard === 'function' && !SR_changeGuard(before, after).ok) return [];
+    if (!rulesOnly && typeof SR_changeGuard === 'function' && !SR_changeGuard(before, after).ok) return [];
     const pairs = SR_extractCorrections(before, after);
     const words = (String(before).match(/[\p{L}\p{N}]+/gu) || []).length;
     const ops = SR_wordDiffForDisplay(before, after, 'grammar');
@@ -148,6 +150,9 @@ async function aiStatus() {
   const [settings, provider, availability] = await Promise.all([
     getSettings(), CloudProvider.getConfig(), SR_deviceAvailability(),
   ]);
+  // Settings sync between computers: "On-device" picked on one that has
+  // Chrome's AI acts as Auto on one that can't run it (the saved choice stays).
+  if (settings.engine === 'device' && availability === 'unavailable') settings.engine = 'auto';
   return {
     settings,
     provider,
@@ -167,12 +172,12 @@ function setupProblem({ settings, provider, hasKey, deviceNow, deviceNeedsSetup 
   if (settings.engine === 'device' && !deviceNow) {
     return deviceNeedsSetup
       ? { title, message: 'On-device AI needs a one-time setup. Click the Proofr toolbar icon and choose "Set up on-device AI".' }
-      : { title, message: 'The engine is set to "On-device only", but Chrome’s built-in AI isn’t available here. Switch it to Auto or Cloud in the Proofr side panel.' };
+      : { title, message: 'Connect an AI provider in the Proofr side panel to use this.' };
   }
   if (!deviceNow && !hasKey) {
     return deviceNeedsSetup
       ? { title, message: 'On-device AI needs a one-time setup. Click the Proofr toolbar icon and choose "Set up on-device AI", or connect an AI provider there instead.' }
-      : { title, message: 'No AI is set up yet. Chrome’s built-in AI isn’t available here, so click the Proofr toolbar icon and connect an AI provider (Groq has a free tier; Ollama and LM Studio need no key).' };
+      : { title, message: 'This needs an AI. Click the Proofr toolbar icon and connect a provider: Groq has a free tier, and Ollama or LM Studio run on your computer with no key. Proofread works without one.' };
   }
   return null;
 }
@@ -226,20 +231,42 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   });
 }
 
-// === Hover actions: page scripts registered only while the user has them on ===
-// No content script runs on any page by default. Turning on "Hover actions"
-// in the side panel requests host access (a user gesture there); this keeps
-// the registered scripts in step with that setting and that permission.
-const HOVER_SCRIPT_ID = 'proofr-hover';
-const HOVER_SCRIPT = {
-  id: HOVER_SCRIPT_ID,
-  matches: ['<all_urls>'],
-  js: ['constants.js', 'theme.js', 'dom-scan.js', 'hover-assist.js', 'content.js'],
-  css: ['modal.css'],
-  runAt: 'document_end',
-};
+// === Page scripts: registered only while the user has a page feature on ===
+// No content script runs on any page by default. Turning on "Hover actions" or
+// "Check as I type" in the side panel requests host access (a user gesture
+// there); this keeps one registration in step with those settings and that
+// permission. One registration, not two: constants.js declares top-level
+// names and must load once per page.
+const HOVER_SCRIPT_ID = 'proofr-hover'; // the id older versions registered
+function pageScript({ hover, live }) {
+  return {
+    id: HOVER_SCRIPT_ID,
+    matches: ['<all_urls>'],
+    js: ['constants.js', 'theme.js', ...(hover ? ['dom-scan.js', 'hover-assist.js'] : []), ...(live ? ['write-back.js', 'live-check.js'] : []), 'content.js'],
+    css: ['modal.css'],
+    runAt: 'document_end',
+  };
+}
+// Frames get a small loader instead; it asks for the checker (below) once a
+// text box in that frame gets focus. matchOriginAsFallback reaches frames with
+// no address of their own (about:blank, srcdoc), like a "Try it" result.
+const LIVE_FRAMES_ID = 'proofr-live-frames';
+const LIVE_FRAMES_SCRIPT = { id: LIVE_FRAMES_ID, matches: ['<all_urls>'], js: ['live-frame.js'], allFrames: true, matchOriginAsFallback: true, runAt: 'document_end' };
+const LIVE_FILES = ['write-back.js', 'live-check.js'];
+async function addLiveCheckToFrame(tabId, frameId) {
+  const target = { tabId, frameIds: [frameId] };
+  const [{ result } = {}] = await chrome.scripting.executeScript({ target, func: () => ({ live: !!self.SR_LIVE, base: typeof SR_ruleCheck === 'function' }) });
+  if (!result || result.live) return;
+  await chrome.scripting.executeScript({ target, files: [...(result.base ? [] : ['constants.js', 'theme.js']), ...LIVE_FILES] });
+}
 
-// One at a time: turning hover on fires both permissions.onAdded and the
+// A page feature on means host access is in use.
+async function pageFeaturesOn() {
+  const { srHoverAssist, srLiveCheck } = await chrome.storage.sync.get(['srHoverAssist', 'srLiveCheck']);
+  return { hover: !!srHoverAssist, live: !!srLiveCheck };
+}
+
+// One at a time: turning a feature on fires both permissions.onAdded and the
 // storage change, and two overlapping runs both see "not registered" and
 // both register ("Duplicate script ID"). Each run waits for the last.
 let hoverSync = Promise.resolve();
@@ -248,27 +275,49 @@ function syncHoverScripts() {
   return hoverSync;
 }
 async function syncHoverScriptsNow() {
-  const [{ srHoverAssist }, granted, registered] = await Promise.all([
-    chrome.storage.sync.get(['srHoverAssist']),
+  const [features, granted, registered] = await Promise.all([
+    pageFeaturesOn(),
     chrome.permissions.contains({ origins: ['<all_urls>'] }),
     chrome.scripting.getRegisteredContentScripts({ ids: [HOVER_SCRIPT_ID] }),
   ]);
-  const want = !!srHoverAssist && granted;
+  const want = (features.hover || features.live) && granted;
+  const script = pageScript(features);
   if (want && registered.length === 0) {
-    await chrome.scripting.registerContentScripts([HOVER_SCRIPT]);
-  } else if (want && (registered[0].js || []).join() !== HOVER_SCRIPT.js.join()) {
-    // Registrations outlive updates; one from an older version gets this version's files.
-    await chrome.scripting.updateContentScripts([HOVER_SCRIPT]);
+    await chrome.scripting.registerContentScripts([script]);
+  } else if (want && (registered[0].js || []).join() !== script.js.join()) {
+    // A feature turned on or off, or a registration from an older version.
+    await chrome.scripting.updateContentScripts([script]);
   } else if (!want && registered.length > 0) {
     await chrome.scripting.unregisterContentScripts({ ids: [HOVER_SCRIPT_ID] });
   }
-  // Access revoked from Chrome's own UI: reflect it in the toggle.
-  if (srHoverAssist && !granted) await chrome.storage.sync.set({ srHoverAssist: false });
+  const frames = await chrome.scripting.getRegisteredContentScripts({ ids: [LIVE_FRAMES_ID] });
+  const wantFrames = features.live && granted;
+  if (wantFrames && !frames.length) await chrome.scripting.registerContentScripts([LIVE_FRAMES_SCRIPT]);
+  else if (!wantFrames && frames.length) await chrome.scripting.unregisterContentScripts({ ids: [LIVE_FRAMES_ID] });
+  // Access revoked from Chrome's own UI: reflect it in the switches.
+  if ((features.hover || features.live) && !granted) await chrome.storage.sync.set({ srHoverAssist: false, srLiveCheck: false });
+}
+
+// Turned on with tabs already open: those pages get the checker now, not on
+// their next load. A page that already has Proofr's files gets only the new ones.
+async function addLiveCheckToOpenTabs() {
+  if (!(await chrome.permissions.contains({ origins: ['<all_urls>'] }))) return;
+  const tabs = (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || '')); // web pages only
+  await Promise.all(tabs.map(async (tab) => {
+    try {
+      const [{ result } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => ({ live: !!self.SR_LIVE, base: typeof SR_ruleCheck === 'function' }) });
+      if (!result || result.live) return;
+      const files = [...(result.base ? [] : ['constants.js', 'theme.js']), ...LIVE_FILES];
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+      // Its frames get the loader, as a fresh page's would.
+      await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['live-frame.js'] }).catch(() => {});
+    } catch (_) { /* a page Chrome keeps extensions out of */ }
+  }));
 }
 
 async function dropLegacyHostAccess() {
-  const { srHoverAssist } = await chrome.storage.sync.get(['srHoverAssist']);
-  if (srHoverAssist) return;
+  const { hover, live } = await pageFeaturesOn();
+  if (hover || live) return;
   const { origins = [] } = await chrome.permissions.getAll();
   // Only origins in optional_host_permissions can be removed; the old
   // api.groq.com grant isn't declared anymore, so it's left to Chrome.
@@ -276,7 +325,8 @@ async function dropLegacyHostAccess() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'sync' && changes.srHoverAssist) syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
+  if (area === 'sync' && (changes.srHoverAssist || changes.srLiveCheck)) syncHoverScripts().catch((e) => console.warn('Hover scripts:', e?.message || e));
+  if (area === 'sync' && changes.srLiveCheck && changes.srLiveCheck.newValue) addLiveCheckToOpenTabs().catch(() => {});
 });
 chrome.permissions.onRemoved.addListener(() => { syncHoverScripts().catch(() => {}); });
 chrome.permissions.onAdded.addListener(() => { syncHoverScripts().catch(() => {}); });
@@ -306,11 +356,22 @@ function buildContextMenus() {
 
 async function buildContextMenusNow() {
   const shortcut = await shortcutLabel();
+  // The School setting: Proofread only, no rewriting tones.
+  const school = (await chrome.storage.sync.get(['srSchool'])).srSchool === true;
   await chrome.contextMenus.removeAll();
   const add = (props) => chrome.contextMenus.create(props, () => {
     if (chrome.runtime.lastError) console.warn('Context menu:', chrome.runtime.lastError.message);
   });
   const sel = ['selection'];
+
+  // School: Proofread is the only action, so it's one top-level item instead
+  // of a submenu: right-click, then click. With nothing selected it proofreads
+  // the whole text box. Settings and the panel stay on the toolbar icon.
+  if (school) {
+    add({ id: 'srOne:grammar', title: `Proofread with Proofr${shortcut ? `  (${shortcut})` : ''}`, contexts: ['selection', 'editable'] });
+    add({ id: 'openPanel', title: 'Open Proofr panel', contexts: ['page'] });
+    return;
+  }
 
   // One top-level "Proofr" entry for both selections and text boxes. Two
   // separate top-level items would make Chrome nest them under the extension
@@ -370,6 +431,11 @@ chrome.runtime.onStartup.addListener(() => {
   syncHoverScripts().catch(() => {});
 });
 
+// Turning the School setting on or off changes what the menu offers.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && 'srSchool' in changes) buildContextMenus().catch(() => {});
+});
+
 // Named (not an inline listener) so tests can drive it with a fake click.
 chrome.contextMenus.onClicked.addListener((info, tab) => handleMenuClick(info, tab));
 
@@ -384,7 +450,11 @@ async function handleMenuClick(info, tab) {
     return;
   }
 
-  if (info.menuItemId === 'srField:grammar') {
+  if (info.menuItemId === 'srOne:grammar' && info.selectionText && info.selectionText.trim()) {
+    await handleRewrite(tab.id, info.selectionText, 'grammar', { ensure: true, frameId: info.frameId || 0 });
+    return;
+  }
+  if (info.menuItemId === 'srField:grammar' || info.menuItemId === 'srOne:grammar') {
     try {
       await proofreadWholeBox(tab.id, info.frameId || 0);
     } catch (error) {
@@ -416,7 +486,7 @@ async function proofreadWholeBox(tabId, frameId) {
   await injectWriteBack(tabId, frameId);
   const [{ result: field } = {}] = await chrome.scripting.executeScript({ target: frameTarget(tabId, frameId), func: () => self.SR_WB.selectWhole() });
   const rich = !!(field && field.text && !field.plain);
-  await handleRewrite(tabId, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain), frameId, richBox: rich });
+  await handleRewrite(tabId, field && field.text, 'grammar', { ensure: true, noReplace: !(field && field.plain), frameId, richBox: rich, wholeBox: true });
 }
 
 // The shortcut: the selection may be in any frame. The focused one wins, since
@@ -523,6 +593,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (controller) controller.abort();
     return false;
   }
+  // Check as I type: the handle beside the box proofreads it whole, the same
+  // way as the shortcut with nothing selected (rules, then AI if set up).
+  if (message.action === 'liveFrameNeeded' && sender.tab && sender.frameId) {
+    chrome.storage.sync.get(['srLiveCheck']).then(({ srLiveCheck }) => srLiveCheck && addLiveCheckToFrame(sender.tab.id, sender.frameId))
+      .catch((e) => console.warn('Check as I type:', e?.message || e));
+    return false;
+  }
+  if (message.action === 'liveProofreadBox' && sender.tab) {
+    proofreadWholeBox(sender.tab.id, sender.frameId || 0).catch((e) => console.warn('Proofr could not read this text box:', e?.message || e));
+    return false;
+  }
   if (message.action === 'hoverRewrite') {
     handleHoverRewrite(message, sendResponse);
     return true; // async sendResponse
@@ -535,7 +616,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // page's. Only extension pages may write here, never a content script.
   if (message.action === 'recordInsights') {
     if (sender.tab || !String(sender.url || '').startsWith(chrome.runtime.getURL(''))) return false;
-    recordInsights(String(message.before || ''), String(message.after || '')).then((mastered) => sendResponse({ ok: true, mastered }));
+    recordInsights(String(message.before || ''), String(message.after || ''), message.rulesOnly === true).then((mastered) => sendResponse({ ok: true, mastered }));
     return true; // async sendResponse
   }
   // The hover menu shows its Ask box whenever some AI can answer.
@@ -590,7 +671,7 @@ async function handleHoverAskAI(message, sendResponse) {
 // Rewrites in flight, by request id, so the toast's Stop (or Esc) can end one.
 const activeRewrites = new Map();
 
-async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false, engine: forceEngine, frameId = 0, richBox = false } = {}) {
+async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, noReplace = false, engine: forceEngine, frameId = 0, richBox = false, wholeBox = false } = {}) {
   let requestId = null;
   let usedDevice = false;
   try {
@@ -608,7 +689,15 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // Prefer the language the caller passed (avoids racing storage), else the saved default.
     const lang = targetLang || status.settings.targetLang;
     const problem = setupProblem(status);
-    if (problem) {
+    // The School setting fixes mistakes only: no rewriting, summaries or translations.
+    const school = (await chrome.storage.sync.get(['srSchool'])).srSchool === true;
+    if (school && tone !== 'grammar') {
+      inject(tabId, showErrorMessage, ['The School setting is on, so Proofr only fixes mistakes. Turn it off in the Proofr side panel to rewrite.', 'Proofread only']);
+      return;
+    }
+    // A Proofread never needs AI: with none set up, Proofr's own rules run alone.
+    const rulesOnly = !!problem && tone === 'grammar';
+    if (problem && !rulesOnly) {
       inject(tabId, showErrorMessage, [problem.message, problem.title]);
       return;
     }
@@ -628,8 +717,9 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
       target = await captureTarget(tabId, frameId, requestId, text);
       ownText = !!target;
     }
-    const onDevice = status.settings.engine === 'device' || (status.settings.engine === 'auto' && status.deviceNow);
-    inject(tabId, showLoadingModal, [text, tone, lang, requestId, onDevice, !!target]);
+    const onDevice = !rulesOnly && (status.settings.engine === 'device' || (status.settings.engine === 'auto' && status.deviceNow));
+    // Rules alone answer in milliseconds: no "working" toast to flash.
+    if (!rulesOnly) inject(tabId, showLoadingModal, [text, tone, lang, requestId, onDevice, !!target, school]);
 
     // On-device answers stream; show them arriving in the dialog instead of a
     // long skeleton. Throttled: each update is a script injection.
@@ -644,15 +734,30 @@ async function handleRewrite(tabId, text, tone, { ensure = false, targetLang, no
     // Coach mode marks mistakes without showing fixes, so a streamed answer
     // (which is the fix) must not appear while it runs.
     const coach = tone === 'grammar' && (await chrome.storage.sync.get(['srCoach'])).srCoach === true;
-    const { text: rewritten, provider: providerId, engine } = await rewriteNow(text, tone, status, lang, coach ? null : onToken, controller.signal);
+    let rewritten, providerId, engine, rules = null;
+    if (tone === 'grammar') {
+      // Rules first, then the AI (when one is ready), then the rules again.
+      const res = await SR_proofreadHybrid(text, {
+        school,
+        atStart: wholeBox, // a selection may start mid-sentence; a whole box can't
+        runAI: rulesOnly ? null : (t) => rewriteNow(t, tone, status, lang, coach ? null : onToken, controller.signal),
+      });
+      rewritten = res.text;
+      providerId = res.ai ? res.ai.provider : 'rules';
+      engine = res.ai && res.ai.engine;
+      rules = { count: res.ruleCount, hits: res.hits, hints: res.hints, only: !res.ai, school, base: res.base };
+    } else {
+      ({ text: rewritten, provider: providerId, engine } = await rewriteNow(text, tone, status, lang, coach ? null : onToken, controller.signal));
+    }
     await StatsManager.updateStats(tone);
     // Local storage only, a few ms: awaited so a word mastered by this very
     // proofread can be named in its toast.
-    const mastered = tone === 'grammar' && ownText ? await recordInsights(text, rewritten) : [];
+    const mastered = tone === 'grammar' && ownText ? await recordInsights(text, rewritten, !!(rules && rules.only)) : [];
     // Only when the text can go in place: the dialog path has no note to carry it.
     const week = tone === 'grammar' && ownText && target && !coach ? await weeklyLine() : null;
 
-    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, whereLabel(providerId, status.provider, engine), coach, mastered, target, richBox, week]);
+    const where = providerId === 'rules' ? SR_RULES_LABEL : whereLabel(providerId, status.provider, engine);
+    inject(tabId, showRewriteResult, [text, rewritten, tone, providerId, lang, requestId, where, coach, mastered, target, richBox, week, rules]);
   } catch (error) {
     // Stopped from the toast: it already says "Stopped.", so add nothing.
     if (error && error.name === 'AbortError') return;
@@ -770,16 +875,21 @@ function streamPartial(soFar) {
   if (window.SmartRewriteModal && window.SmartRewriteModal.streamText) window.SmartRewriteModal.streamText(soFar);
 }
 
-function showLoadingModal(originalText, tone, targetLang, requestId, onDevice, inPlace) {
+function showLoadingModal(originalText, tone, targetLang, requestId, onDevice, inPlace, school) {
   if (window.SmartRewriteModal) {
+    window.SmartRewriteModal.school = !!school;
     window.SmartRewriteModal.showLoading(originalText, tone, targetLang, { requestId, onDevice, inPlace });
   }
 }
 
 // Puts the result back through write-back.js, in the frame that holds the box.
 // If the captured text is gone, the result opens in the modal instead.
-async function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered, target, richBox, week) {
+async function showRewriteResult(originalText, rewrittenText, tone, provider, targetLang, requestId, where, coach, mastered, target, richBox, week, rules) {
   let replaced = false;
+  if (window.SmartRewriteModal) window.SmartRewriteModal.school = !!(rules && rules.school);
+  // Every Review of this result explains rule fixes and offers the School
+  // suggestions (off until clicked; the text box gets them only through Apply).
+  const extra = rules ? { reasons: rules.hits || [], hints: rules.hints || [] } : {};
   const inFrame = !!(target && target.frameId);
   // Which box has focus now? In a frame, the top page knows if focus left it.
   const movedOnFrom = async () => {
@@ -795,8 +905,11 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
 
   // Proofread must keep the meaning; every other mode must add nothing the
   // author didn't write (a link or number an instruction hidden in the text asked for).
+  // The guard watches the AI. Proofr's own rules are sure fixes, so a result
+  // from the rules alone isn't held back, and with an AI the guard compares
+  // what the AI was given (after the rules) with what it returned.
   const guard = tone === 'grammar'
-    ? (typeof SR_changeGuard === 'function' ? SR_changeGuard(originalText, rewrittenText) : null)
+    ? (rules && rules.only ? null : typeof SR_changeGuard === 'function' ? SR_changeGuard(rules && rules.base ? rules.base : originalText, rewrittenText) : null)
     : (typeof SR_rewriteGuard === 'function' ? SR_rewriteGuard(originalText, rewrittenText, tone) : null);
   const guardFailed = !!(guard && !guard.ok);
   const doneName = tone === 'grammar' ? 'Proofread' : tone === 'translate' ? 'Translation' : 'Rewrite';
@@ -813,7 +926,7 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
   // flagged gets no one-click Apply: Review shows why, with Replace anyway.
   const movedOn = target && await movedOnFrom();
   if (movedOn) {
-    const review = { original: originalText, rewritten: rewrittenText, tone, provider, where };
+    const review = { original: originalText, rewritten: rewrittenText, tone, provider, where, ...extra };
     if (guardFailed) { review.notice = guardNotice; review.action = replaceAnyway; }
     window.__srLastReview = review;
     if (window.SmartRewriteModal) {
@@ -829,11 +942,11 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
   // With nothing to mark, Coach says so the usual way: the small toast.
   const coachSpots = coach && typeof SR_wordDiffForDisplay === 'function' ? SR_diffCount(SR_wordDiffForDisplay(originalText, rewrittenText, 'grammar') || [{ type: 'ins' }]) : 1;
   if (coach && coachSpots > 0 && window.SmartRewriteModal && window.SmartRewriteModal.showCoach) {
-    const opts = { notice: guardNotice, where };
+    const opts = { notice: guardNotice, where, reasons: extra.reasons };
     const apply = guardFailed ? replaceAnyway
       : target ? { label: 'Apply to text box', run: (accepted) => insertSafely(accepted ?? rewrittenText) } : null;
     if (apply) opts.action = apply;
-    window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: apply };
+    window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: apply, reasons: extra.reasons };
     window.SmartRewriteModal.showCoach(originalText, rewrittenText, {
       where,
       onReveal: () => window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, opts),
@@ -843,9 +956,9 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
 
   if (guardFailed) {
     if (window.SmartRewriteModal) {
-      const opts = { notice: guardNotice, where };
+      const opts = { notice: guardNotice, where, ...extra };
       if (replaceAnyway) opts.action = replaceAnyway;
-      window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: replaceAnyway };
+      window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, notice: guardNotice, action: replaceAnyway, ...extra };
       window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, opts);
     }
     return;
@@ -857,11 +970,20 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
     replaced = false;
   }
 
+  // What the box holds now: the result, until Review or "Use all" changes it.
+  // Undo and Apply both check the box still holds it, so it must stay current.
+  let current = rewrittenText;
   // A visible Undo on the toast: Cmd/Ctrl+Z doesn't work in every editor.
-  const undo = async () => { try { return !!(await op('undo', rewrittenText)); } catch (_) { return false; } };
+  const undo = async () => { try { return !!(await op('undo', current)); } catch (_) { return false; } };
   // After an in-place fix, Review can still change it: changes the user clicks
   // off in the diff are applied to the text box (not just to Copy).
-  const applyAccepted = async (accepted) => { try { return !!(await op('applyAccepted', rewrittenText, accepted)); } catch (_) { return false; } };
+  const applyAccepted = async (accepted) => {
+    try {
+      const ok = !!(await op('applyAccepted', current, accepted));
+      if (ok) current = accepted;
+      return ok;
+    } catch (_) { return false; }
+  };
 
   if (replaced) {
     if (window.SmartRewriteModal) {
@@ -872,27 +994,45 @@ async function showRewriteResult(originalText, rewrittenText, tone, provider, ta
       // Hidden characters (zero-width spaces from copied AI text) can't be
       // marked in the diff, so the note counts them.
       const hidden = tone === 'grammar' && typeof SR_countHidden === 'function' ? SR_countHidden(originalText) - SR_countHidden(rewrittenText) : 0;
-      const hiddenLine = hidden > 0 ? `Removed ${hidden} hidden character${hidden === 1 ? '' : 's'}.` : '';
-      const what = nothing ? 'Nothing to fix.'
-        : fixes === 0 ? (hiddenLine || 'Fixed the spacing.')
-        : `${fixes ? `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.` : 'Text replaced.'}${hiddenLine ? ` ${hiddenLine}` : ''}`;
+      const hiddenNote = hidden > 0 ? `${hidden} hidden character${hidden === 1 ? '' : 's'} removed` : '';
+      // A short count first, details after it in lighter text. Rules alone count
+      // their fixes, not the diff's marks ("alot" → "a lot" is one fix, two marks).
+      // Who made each fix (rules or AI) is in Review's header, not here.
+      const n = rules && rules.only && rules.count ? rules.count : fixes;
+      const what = nothing ? 'No mistakes found'
+        : fixes === 0 ? (hiddenNote ? `${hiddenNote.charAt(0).toUpperCase()}${hiddenNote.slice(1)}` : 'Spacing fixed')
+        : fixes ? `${n} fix${n === 1 ? '' : 'es'}` : 'Text replaced';
+      const hintCount = extra.hints ? extra.hints.length : 0;
+      const hintNote = hintCount ? `${hintCount} suggestion${hintCount === 1 ? '' : 's'} for formal writing` : '';
+      const sub = [fixes ? hiddenNote : '', hintNote].filter(Boolean).join(' · ');
       // "Nothing to fix" needs no Review or Undo; otherwise both are buttons
-      // (showSuccess drops Review when only spacing changed).
-      const review = { original: originalText, rewritten: rewrittenText, tone, provider, where,
+      // (showSuccess drops Review when only spacing changed). School
+      // suggestions open in Review, off until clicked, and go in with Apply.
+      const review = { original: originalText, rewritten: rewrittenText, tone, provider, where, ...extra,
         action: { label: 'Apply to text box', run: (accepted) => applyAccepted(accepted ?? rewrittenText) } };
-      if (fixes !== 0) window.__srLastReview = review; // for the "review last change" shortcut
+      if (fixes !== 0 || hintCount) window.__srLastReview = review; // for the "review last change" shortcut
       // A word this proofread mastered is named in the same toast (no extra UI).
       const won = mastered && mastered.length ? { mastered } : {};
       if (week) won.week = week;
-      window.SmartRewriteModal.showSuccess(what, nothing ? won : { review, undo, ...won });
+      // School suggestions: one click puts them all in, Undo still goes back to the original.
+      if (hintCount) {
+        const withHints = SR_applyHits(rewrittenText, extra.hints);
+        won.useAll = { label: hintCount === 1 ? 'Use it' : `Use all ${hintCount}`, run: async () => {
+          if (!(await applyAccepted(withHints))) return false;
+          const used = `${hintCount === 1 ? 'suggestion' : `${hintCount} suggestions`} used`;
+          window.SmartRewriteModal.showSuccess(nothing ? `${used.charAt(0).toUpperCase()}${used.slice(1)}` : what, { sub: nothing ? '' : used, review: { ...review, rewritten: withHints, hints: [] }, undo });
+          return true;
+        } };
+      }
+      window.SmartRewriteModal.showSuccess(what, { sub, ...(nothing ? (hintCount ? { review, undo, ...won } : won) : { review, undo, ...won }) });
     }
     return;
   }
 
   if (window.SmartRewriteModal) {
-    window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where };
+    window.__srLastReview = { original: originalText, rewritten: rewrittenText, tone, provider, where, ...extra };
     const notice = richBox ? 'This box has links or formatting that Proofr would lose, so it wasn\'t changed. Select just your text to replace it.' : null;
-    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, { where, notice });
+    window.SmartRewriteModal.showResult(originalText, rewrittenText, tone, provider, targetLang, { where, notice, ...extra });
   } else {
     navigator.clipboard.writeText(rewrittenText)
       .then(() => alert('Rewritten text copied to clipboard:\n\n' + rewrittenText))

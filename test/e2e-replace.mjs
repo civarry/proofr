@@ -35,12 +35,12 @@ const BOXES = {
   ceBreaks: { text: two('foxtrot') },
   shadowTextarea: { text: one('golf') },
   shadowCe: { text: two('hotel') },
-  frameCe: { text: two('india') },
+  frameCe: { text: two('indigo') }, // not a country: Proofr's rules would capitalize one
   frameTextarea: { text: one('juliet') },
   frameDesign: { text: two('kilo') },
   rerender: { text: one('lima') },
   pasteOnly: { text: one('mike') },
-  wholePlain: { text: two('november') },
+  wholePlain: { text: two('nimbus') }, // not a month: Proofr's rules would capitalize one before the mock sees it
   wholeRich: { text: one('oscar') },
   // Same letters, only spacing changes: "did the letters change?" can't tell.
   spacing: { text: 'the papa report   is   ready', result: 'the papa report is ready' },
@@ -331,7 +331,9 @@ try {
   };
   for (const how of ['shortcut', 'field']) {
     const r = await whole('wholePlain', how);
-    check(`wholePlain (no selection, plain lines) via ${how}`, r.text === clean(fix(BOXES.wholePlain.text)) && !r.dlg.open, JSON.stringify(r));
+    // A whole box starts a sentence, so its first word gets a capital too.
+    const want = clean(fix(BOXES.wholePlain.text)).replace(/^t/, 'T');
+    check(`wholePlain (no selection, plain lines) via ${how}`, r.text === want && !r.dlg.open, JSON.stringify(r));
     // With a link in it, plain text would destroy the link: never silently, and
     // the box must be unchanged with the result shown for review.
     const rich = await whole('wholeRich', how);

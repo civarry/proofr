@@ -609,8 +609,8 @@ try {
       const n = document.querySelector('.sr-success-notification');
       return n && { text: n.querySelector('.sr-success-text').textContent, review: !!n.querySelector('.sr-success-review'), undo: !!n.querySelector('.sr-success-undo') };
     });
-    check(toast && toast.text === 'Fixed the spacing.' && toast.undo && !toast.review,
-      `spacing-only Proofread: "Fixed the spacing." with Undo, no Review (got ${JSON.stringify(toast)})`);
+    check(toast && toast.text === 'Spacing fixed' && toast.undo && !toast.review,
+      `spacing-only Proofread: "Spacing fixed" with Undo, no Review (got ${JSON.stringify(toast)})`);
     check(await page.evaluate(() => document.querySelector('#ta').value) === OUT, 'spacing-only Proofread: field has the cleaned text');
   });
 
@@ -623,7 +623,7 @@ try {
     await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, hidden);
     await waitFor(() => page.evaluate(() => !!document.querySelector('.sr-success-notification')), 5000);
     const text = await page.evaluate(() => document.querySelector('.sr-success-notification .sr-success-text').textContent);
-    check(text === 'Removed 3 hidden characters.', `hidden characters: the note counts them (got ${JSON.stringify(text)})`);
+    check(text === '3 hidden characters removed', `hidden characters: the note counts them (got ${JSON.stringify(text)})`);
     check(await page.evaluate(() => document.querySelector('#ta').value) === OUT, 'hidden characters: the field has clean text');
   });
 
@@ -827,6 +827,142 @@ try {
     const second = await note();
     check(second === null, `weekly line: not again the same week (got ${JSON.stringify(second)})`);
   });
+
+  // 4i. No AI set up: Proofread still works with Proofr's rules, in place, and
+  // nothing goes to the provider. Other modes still ask for setup.
+  await step('rules only', async () => {
+    // No AI the way a real user has none: Cloud, with a provider whose key was never saved
+    // (Chrome for Testing has no on-device AI either).
+    await sw.evaluate(() => chrome.storage.sync.set({ srEngine: 'cloud', srCloudService: 'groq' }));
+    await page.evaluate(() => document.querySelectorAll('#sr-toast').forEach((n) => n.remove()));
+    const before = requests.length;
+    await selectField('i dont know alot.');
+    await sw.evaluate((id) => handleRewrite(id, 'i dont know alot.', 'grammar', { ensure: true }), tabId);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast .sr-success-text')), 5000);
+    const r = await page.evaluate(() => ({ value: document.querySelector('#ta').value, note: (document.querySelector('#sr-toast .sr-success-text') || {}).textContent }));
+    check(r.value === "I don't know a lot.", `rules only: the box is fixed in place (got ${JSON.stringify(r.value)})`);
+    check(r.note === '3 fixes', `rules only: a short count (got ${JSON.stringify(r.note)})`);
+    check(requests.length === before, `rules only: nothing sent to the provider (${requests.length - before} requests)`);
+    await page.evaluate(() => document.querySelector('#sr-toast .sr-success-review').click());
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text .sr-change')), 3000);
+    const rv = await page.evaluate(() => ({
+      why: [...document.querySelectorAll('#sr-rewritten-text .sr-change[data-why]')].map((e) => e.dataset.why),
+      where: (document.getElementById('sr-where') || {}).textContent,
+    }));
+    check(rv.why.length === 3 && rv.why.some((w) => /two words/.test(w)), `rules only: every change in Review has its rule (got ${JSON.stringify(rv.why)})`);
+    check(rv.where === C.SR_RULES_LABEL, `rules only: Review says where it ran (got ${JSON.stringify(rv.where)})`);
+    await page.keyboard.press('Escape');
+    await sw.evaluate((id) => handleRewrite(id, 'Good morning team.', 'professional', { ensure: true }), tabId);
+    const asks = await waitFor(() => page.evaluate(() => /Set up Proofr/.test((document.querySelector('#smart-rewrite-modal .sr-error-content h4') || {}).textContent || '')), 5000);
+    check(asks, 'rules only: a rewrite still asks for an AI to be set up');
+    await page.keyboard.press('Escape');
+  });
+
+  // 4j. The School setting: rewriting is refused, Review offers formal-writing
+  // suggestions that are off until clicked, and Apply puts the chosen ones in.
+  await step('school setting', async () => {
+    await sw.evaluate(() => chrome.storage.sync.set({ srSchool: true }));
+    await sw.evaluate((id) => handleRewrite(id, 'Good morning team.', 'professional', { ensure: true }), tabId);
+    const refused = await waitFor(() => page.evaluate(() => /Proofread only/.test((document.querySelector('#smart-rewrite-modal .sr-error-content h4') || {}).textContent || '')), 5000);
+    check(refused, 'school: a rewrite is refused with the reason');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.querySelectorAll('#sr-toast').forEach((n) => n.remove()));
+    const text = "i don't know, it's gonna rain.";
+    await selectField(text);
+    await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, text);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast .sr-success-text')), 5000);
+    const note = await page.evaluate(() => document.querySelector('#sr-toast .sr-success-text').textContent);
+    check(note === '1 fix · 3 suggestions for formal writing', `school: the note counts the suggestions (got ${JSON.stringify(note)})`);
+    check(await page.evaluate(() => document.querySelector('#ta').value) === "I don't know, it's gonna rain.", 'school: only the fix goes in; suggestions wait');
+    await page.evaluate(() => document.querySelector('#sr-toast .sr-success-review').click());
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-rewritten-text .sr-change-hint')), 3000);
+    const rv = await page.evaluate(() => {
+      const hints = [...document.querySelectorAll('#sr-rewritten-text .sr-change-hint')];
+      return { n: hints.length, off: hints.every((h) => h.classList.contains('sr-change-rejected')), chips: !!document.querySelector('#smart-rewrite-modal .sr-chips'), why: hints.map((h) => h.dataset.why) };
+    });
+    check(rv.n === 3 && rv.off, `school: Review shows 3 suggestions, all off (got ${rv.n}, off ${rv.off})`);
+    check(!rv.chips, 'school: no rewriting styles in the dialog');
+    check(rv.why.every((w) => w && w.length > 8), `school: each suggestion says why (got ${JSON.stringify(rv.why)})`);
+    await page.evaluate(() => document.querySelector('#sr-rewritten-text .sr-change-hint').click());
+    await page.evaluate(() => document.getElementById('sr-action-btn').click());
+    const applied = await waitFor(() => page.evaluate(() => document.querySelector('#ta').value === "I do not know, it's gonna rain."), 3000);
+    check(applied, `school: a clicked suggestion goes in with Apply (got ${JSON.stringify(await page.evaluate(() => document.querySelector('#ta').value))})`);
+    await page.keyboard.press('Escape');
+
+    // One click for all of them, and Undo still gives back exactly what was written.
+    await page.evaluate(() => document.querySelectorAll('#sr-toast').forEach((n) => n.remove()));
+    await selectField(text);
+    await sw.evaluate((id, t) => handleRewrite(id, t, 'grammar', { ensure: true }), tabId, text);
+    await waitFor(() => page.evaluate(() => !!document.querySelector('#sr-toast .sr-success-use')), 5000);
+    const label = await page.evaluate(() => document.querySelector('#sr-toast .sr-success-use').textContent);
+    check(label === 'Use all 3', `school: the note offers "Use all 3" (got ${JSON.stringify(label)})`);
+    await page.evaluate(() => document.querySelector('#sr-toast .sr-success-use').click());
+    const all = await waitFor(() => page.evaluate(() => document.querySelector('#ta').value === 'I do not know, it is going to rain.'), 3000);
+    const after = await page.evaluate(() => ({ value: document.querySelector('#ta').value, note: (document.querySelector('#sr-toast .sr-success-text') || {}).textContent }));
+    check(all && after.note === '1 fix · 3 suggestions used', `school: Use all puts every suggestion in, in one click (got ${JSON.stringify(after)})`);
+    await page.evaluate(() => document.querySelector('#sr-toast .sr-success-undo').click());
+    const back = await waitFor(() => page.evaluate((t) => document.querySelector('#ta').value === t, text), 3000);
+    check(back, `school: Undo after Use all gives back the original (got ${JSON.stringify(await page.evaluate(() => document.querySelector('#ta').value))})`);
+
+    // The one menu item: nothing selected proofreads the whole box; a selection
+    // proofreads only the selection.
+    await page.evaluate(() => document.querySelectorAll('#sr-toast').forEach((n) => n.remove()));
+    await page.evaluate(() => { const ta = document.querySelector('#ta'); ta.value = 'we was late. i dont know.'; ta.focus(); ta.setSelectionRange(3, 3); });
+    await sw.evaluate((id) => handleMenuClick({ menuItemId: 'srOne:grammar', frameId: 0 }, { id }), tabId);
+    const whole = await waitFor(() => page.evaluate(() => document.querySelector('#ta').value === "We were late. I don't know."), 5000);
+    check(whole, `school menu: one click with nothing selected fixes the whole box (got ${JSON.stringify(await page.evaluate(() => document.querySelector('#ta').value))})`);
+    if (!whole) console.log('DEBUG', JSON.stringify(await page.evaluate(() => ({ toast: (document.querySelector('#sr-toast') || {}).textContent, modal: (document.querySelector('#smart-rewrite-modal') || {}).textContent }))));
+    await page.evaluate(() => document.querySelectorAll('#sr-toast').forEach((n) => n.remove()));
+    await page.evaluate(() => { const ta = document.querySelector('#ta'); ta.value = 'we was late. i dont know.'; ta.focus(); ta.setSelectionRange(0, 12); });
+    await sw.evaluate((id) => handleMenuClick({ menuItemId: 'srOne:grammar', selectionText: 'we was late.', frameId: 0 }, { id }), tabId);
+    const part = await waitFor(() => page.evaluate(() => document.querySelector('#ta').value === 'we were late. i dont know.'), 5000);
+    check(part, `school menu: with a selection, only the selection changes (got ${JSON.stringify(await page.evaluate(() => document.querySelector('#ta').value))})`);
+  });
+
+  // 4k. The side panel: Proofread with rules alone, and School suggestions used with a click.
+  await step('panel rules and school', async () => {
+    await panel.bringToFront();
+    await panel.reload();
+    const send = (t) => waitFor(() => panel.evaluate((x) => {
+      const ta = document.getElementById('ta');
+      const btn = document.getElementById('sendBtn');
+      if (!ta || !btn) return false;
+      const back = document.getElementById('btnSettingsBack');
+      if (back && !document.getElementById('settingsPanel').classList.contains('hidden')) back.click();
+      ta.value = x;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      if (btn.disabled) return false;
+      btn.click();
+      return true;
+    }, t), 8000);
+    await send("i don't know, it's gonna rain.");
+    const card = await waitFor(() => panel.evaluate(() => !![...document.querySelectorAll('.turn')].pop()?.querySelector('.hint-list')), 5000);
+    const r = await panel.evaluate(() => {
+      const last = [...document.querySelectorAll('.turn')].pop();
+      return { head: last.querySelector('.assistant-head').textContent, hints: last.querySelectorAll('[data-action="hint"]').length, tryas: !!last.querySelector('[data-action="tryas"]'), status: last.querySelector('.result-count').textContent };
+    });
+    check(card && r.hints === 3, `panel school: 3 suggestions under the result (got ${r.hints})`);
+    check(r.head.includes(C.SR_RULES_LABEL), `panel: says the rules ran on this computer (got ${JSON.stringify(r.head)})`);
+    check(!r.tryas, 'panel school: no "Try as" rewriting');
+    check(r.status === '30 chars', `panel: the status line is just the length (got ${JSON.stringify(r.status)})`);
+    await panel.evaluate(() => [...document.querySelectorAll('.turn')].pop().querySelector('[data-action="hint"]').click());
+    const used = await waitFor(() => panel.evaluate(() => {
+      const last = [...document.querySelectorAll('.turn')].pop();
+      const c = last.querySelector('.assistant-body').cloneNode(true);
+      c.querySelectorAll('del').forEach((d) => d.remove());
+      return c.textContent === "I do not know, it's gonna rain." && last.querySelectorAll('[data-action="hint"]').length === 2;
+    }), 3000);
+    check(used, 'panel school: Use applies one suggestion and the other two stay');
+    await panel.evaluate(() => [...document.querySelectorAll('.turn')].pop().querySelector('[data-action="hints-all"]').click());
+    const allUsed = await waitFor(() => panel.evaluate(() => {
+      const last = [...document.querySelectorAll('.turn')].pop();
+      const c = last.querySelector('.assistant-body').cloneNode(true);
+      c.querySelectorAll('del').forEach((d) => d.remove());
+      return c.textContent === 'I do not know, it is going to rain.' && !last.querySelector('.hint-list');
+    }), 3000);
+    check(allUsed, 'panel school: Use all applies the rest in one click');
+  });
+  await sw.evaluate(() => chrome.storage.sync.set({ srSchool: false, srEngine: 'cloud', srCloudService: 'custom' }));
 
   // 5. Service worker stayed clean.
   await sleep(500);

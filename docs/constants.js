@@ -1763,20 +1763,640 @@ function SR_ruleFor({ from, to, kind } = {}) {
     if (/^\p{Lu}/u.test(t)) return 'A sentence starts with a capital letter.';
     return null;
   }
-  if (kind === 'spelling' && /^\p{L}+$/u.test(t)) return `Spelled ${t.split('').join('-')}.`;
+  if (kind === 'spelling' && /^\p{L}+$/u.test(t)) {
+    // goes → go, walk → walked: a verb form, not a spelling.
+    const f = String(from || '').toLowerCase();
+    const [short, long] = f.length < low.length ? [f, low] : [low, f];
+    if (long.startsWith(short) && /^(?:s|es|d|ed|ing)$/.test(long.slice(short.length))) return null;
+    return `Spelled ${t.split('').join('-')}.`;
+  }
   return null;
 }
 
 // Why one change in Review was made: the same rule text Progress and Practice
 // use, or null when no rule matches (never a made-up reason). The rules are
 // about words, so a change of more than three words gets none.
-function SR_changeReason(from, to) {
+function SR_changeReason(from, to, extra) {
   const strip = (s) => String(s || '').trim().replace(/^[^\p{L}\p{N}'’]+|[^\p{L}\p{N}'’]+$/gu, '');
   const pair = { from: strip(from), to: strip(to) };
   if (!pair.from || !pair.to || pair.from === pair.to) return null;
   if (pair.from.split(/\s+/).length > 3 || pair.to.split(/\s+/).length > 3) return null;
-  return SR_ruleFor({ ...pair, kind: SR_classifyCorrection(pair) });
+  // A rule's own reason first: it knows why it made the change.
+  return (Array.isArray(extra) ? SR_reasonFromHits(pair, extra) : null)
+    || SR_ruleFor({ ...pair, kind: SR_classifyCorrection(pair) });
 }
+
+// === Proofr's rules: mistakes found without any AI ===
+// Each rule is a pattern for a mistake that is wrong wherever it appears, with
+// the fix and the reason in our own words. The books (Strunk 1918, Fowler 1924,
+// Bierce 1909) decided which rules exist; none of their wording is used.
+// A rule earns its place only if it stays silent on correct writing:
+// test/rules.mjs runs every rule over correct text and fails on any hit.
+// 'fix' rules change the text. 'hint' rules (the School setting) are
+// suggestions for formal writing, never applied without a click.
+
+// "could of been": only before a past participle, so "could of course" is safe.
+const SR_PARTICIPLES = 'been|had|done|gone|seen|known|made|got|gotten|taken|come|said|thought|told|found|given|kept|felt|heard|meant|paid|sent|spent|won|lost|bought|brought|caught|taught|become|begun|written|eaten|driven|chosen|spoken|broken|forgotten|fallen|grown|shown|thrown|worn|flown|drawn|ridden|risen|hidden|beaten|bitten|stood|understood|sold|held|built|slept|met|fought|sat|led|left|[a-z]+ed';
+
+// A missing apostrophe. Left out on purpose because each is also a real word:
+// wont, ill, id, lets, were, shell, hell, well, its, cant is kept (rare as a word).
+const SR_APOS_FIX = {
+  dont: ["don't", 'do not'], doesnt: ["doesn't", 'does not'], didnt: ["didn't", 'did not'], cant: ["can't", 'cannot'],
+  isnt: ["isn't", 'is not'], arent: ["aren't", 'are not'], wasnt: ["wasn't", 'was not'], werent: ["weren't", 'were not'],
+  hasnt: ["hasn't", 'has not'], havent: ["haven't", 'have not'], hadnt: ["hadn't", 'had not'], couldnt: ["couldn't", 'could not'],
+  shouldnt: ["shouldn't", 'should not'], wouldnt: ["wouldn't", 'would not'], mustnt: ["mustn't", 'must not'],
+  im: ["I'm", 'I am'], ive: ["I've", 'I have'], youre: ["you're", 'you are'], theyre: ["they're", 'they are'],
+  thats: ["that's", 'that is'], whats: ["what's", 'what is'], hes: ["he's", 'he is'], shes: ["she's", 'she is'],
+  theyve: ["they've", 'they have'], weve: ["we've", 'we have'], youve: ["you've", 'you have'], youll: ["you'll", 'you will'],
+  theyll: ["they'll", 'they will'], wouldve: ["would've", 'would have'], couldve: ["could've", 'could have'],
+  shouldve: ["should've", 'should have'], theres: ["there's", 'there is'], heres: ["here's", 'here is'],
+  wheres: ["where's", 'where is'], whos: ["who's", 'who is'],
+};
+
+// Words run together that are always two (or three) words.
+const SR_JOINED = {
+  alot: 'a lot', noone: 'no one', eachother: 'each other', infront: 'in front', incase: 'in case',
+  atleast: 'at least', thankyou: 'thank you', aswell: 'as well', everytime: 'every time', inspite: 'in spite',
+  alittle: 'a little', abit: 'a bit', highschool: 'high school', ofcourse: 'of course', allready: 'already',
+  infact: 'in fact', eventhough: 'even though', ontop: 'on top',
+};
+
+// Common misspellings. Chrome underlines these but doesn't fix them; each
+// correction is unambiguous.
+const SR_MISSPELLED = {
+  recieve: 'receive', recieved: 'received', reciept: 'receipt', seperate: 'separate', seperately: 'separately',
+  definately: 'definitely', definatly: 'definitely', occured: 'occurred', occuring: 'occurring',
+  occurence: 'occurrence', untill: 'until', wich: 'which', becuase: 'because', becasue: 'because', tommorow: 'tomorrow',
+  tomorow: 'tomorrow', accomodate: 'accommodate', goverment: 'government', enviroment: 'environment',
+  beleive: 'believe', belive: 'believe', acheive: 'achieve', acheived: 'achieved', wierd: 'weird', truely: 'truly',
+  arguement: 'argument', begining: 'beginning', calender: 'calendar', comming: 'coming', existance: 'existence',
+  foward: 'forward', freind: 'friend', freinds: 'friends', grammer: 'grammar', independant: 'independent',
+  persue: 'pursue', posession: 'possession', publically: 'publicly', recomend: 'recommend', reccomend: 'recommend',
+  refered: 'referred', succesful: 'successful', successfull: 'successful', suprise: 'surprise', thier: 'their',
+  writting: 'writing', occassion: 'occasion', neccessary: 'necessary', necesary: 'necessary', embarass: 'embarrass',
+  concious: 'conscious', commited: 'committed', basicly: 'basically', finaly: 'finally', realy: 'really',
+  responsability: 'responsibility', knowlege: 'knowledge', adress: 'address',
+  apparantly: 'apparently', bussiness: 'business', buisness: 'business', completly: 'completely', curiousity: 'curiosity',
+  dissapoint: 'disappoint', dissapointed: 'disappointed', embarassed: 'embarrassed', excercise: 'exercise',
+  experiance: 'experience', familar: 'familiar', foriegn: 'foreign', fourty: 'forty', gaurd: 'guard',
+  happend: 'happened', immediatly: 'immediately', interupt: 'interrupt', libary: 'library', maintainance: 'maintenance',
+  mispell: 'misspell', noticable: 'noticeable', occurrance: 'occurrence', paralell: 'parallel', particurly: 'particularly',
+  peice: 'piece', percieve: 'perceive', posible: 'possible', prefered: 'preferred', priviledge: 'privilege',
+  probaly: 'probably', proffesor: 'professor', proffessional: 'professional', relevent: 'relevant', resistence: 'resistance',
+  sentance: 'sentence', similiar: 'similar', sincerly: 'sincerely', studing: 'studying', tounge: 'tongue',
+  trully: 'truly', unforseen: 'unforeseen', unfortunatly: 'unfortunately', usefull: 'useful', vaccum: 'vacuum',
+  whereever: 'wherever', wellcome: 'welcome', wheather: 'weather',
+  accross: 'across', agressive: 'aggressive', aquire: 'acquire', begginning: 'beginning', beleif: 'belief',
+  cemetary: 'cemetery', collegue: 'colleague', comittee: 'committee', commitee: 'committee', concensus: 'consensus',
+  dilemna: 'dilemma', dissappear: 'disappear', dissapear: 'disappear', ecstacy: 'ecstasy', equiptment: 'equipment',
+  explaination: 'explanation', facinating: 'fascinating', flourescent: 'fluorescent', guarentee: 'guarantee',
+  garantee: 'guarantee', harrass: 'harass', heighth: 'height', hierachy: 'hierarchy', hygeine: 'hygiene',
+  ignorence: 'ignorance', imediately: 'immediately', indispensible: 'indispensable', intresting: 'interesting',
+  intrested: 'interested', irresistable: 'irresistible', jewelery: 'jewelry', lenght: 'length', liason: 'liaison',
+  millenium: 'millennium', miniscule: 'minuscule', mischievious: 'mischievous', neice: 'niece',
+  occassionally: 'occasionally', oppurtunity: 'opportunity', opprotunity: 'opportunity', oportunity: 'opportunity',
+  perseverence: 'perseverance', potatos: 'potatoes', tomatos: 'tomatoes', preceed: 'precede', presense: 'presence',
+  privelege: 'privilege', pronounciation: 'pronunciation', questionaire: 'questionnaire', religous: 'religious',
+  remeber: 'remember', rythm: 'rhythm', scedule: 'schedule', sieze: 'seize', speach: 'speech', strenght: 'strength',
+  supercede: 'supersede', tendancy: 'tendency', threshhold: 'threshold', tommorrow: 'tomorrow', twelth: 'twelfth',
+  tyrany: 'tyranny', vegeterian: 'vegetarian', villian: 'villain', withold: 'withhold', wellfare: 'welfare',
+  alchohol: 'alcohol', amatuer: 'amateur', athiest: 'atheist', bizzare: 'bizarre', catagory: 'category',
+  changable: 'changeable', cieling: 'ceiling', decieve: 'deceive', definitly: 'definitely', desparate: 'desperate',
+  exagerate: 'exaggerate', febuary: 'february', greatful: 'grateful', hieght: 'height', independance: 'independence',
+  inteligent: 'intelligent', maintenence: 'maintenance', medecine: 'medicine', mideval: 'medieval',
+  necassary: 'necessary', pasttime: 'pastime', persistant: 'persistent', phenomenom: 'phenomenon',
+  politican: 'politician', possable: 'possible', practicly: 'practically', recieving: 'receiving',
+  reciever: 'receiver', refrence: 'reference', resturant: 'restaurant', rediculous: 'ridiculous',
+  sacrafice: 'sacrifice', secratary: 'secretary', seige: 'siege', sophmore: 'sophomore', succesfully: 'successfully',
+  suceed: 'succeed', surley: 'surely', temperture: 'temperature', tempature: 'temperature', tradgedy: 'tragedy',
+  unecessary: 'unnecessary', visable: 'visible', wonderfull: 'wonderful', writen: 'written', yeild: 'yield',
+  beautifull: 'beautiful', beatiful: 'beautiful', carefull: 'careful', hopefull: 'hopeful', powerfull: 'powerful',
+  thankfull: 'thankful', familiy: 'family', teh: 'the', probly: 'probably', differnt: 'different',
+  diffrent: 'different', excelent: 'excellent', exellent: 'excellent', begginer: 'beginner', comunity: 'community',
+  enviromental: 'environmental', stoped: 'stopped', geting: 'getting', puting: 'putting', runing: 'running',
+  dosent: "doesn't", hisself: 'himself', expresso: 'espresso', expecially: 'especially', especialy: 'especially',
+  arguements: 'arguments', beleived: 'believed', recieves: 'receives', accomodation: 'accommodation', truley: 'truly',
+  sucess: 'success', succes: 'success', proffesional: 'professional', occurance: 'occurrence',
+  resposibility: 'responsibility', responsibilty: 'responsibility', enviorment: 'environment',
+  goverments: 'governments', ammount: 'amount', assignement: 'assignment', asignment: 'assignment', benifit: 'benefit',
+  benefitial: 'beneficial', challange: 'challenge', charachter: 'character', comparision: 'comparison',
+  completley: 'completely', conclution: 'conclusion', confortable: 'comfortable', comfortible: 'comfortable',
+  decison: 'decision', descision: 'decision', developement: 'development', dicision: 'decision', disscuss: 'discuss',
+  educaton: 'education', eficient: 'efficient', embarrasing: 'embarrassing', espesially: 'especially',
+  everthing: 'everything', exampel: 'example', finacial: 'financial', generaly: 'generally', importent: 'important',
+  imporant: 'important', influance: 'influence', knowledgable: 'knowledgeable', langauge: 'language',
+  lanugage: 'language', mantain: 'maintain', mentaly: 'mentally', nessecary: 'necessary', nowdays: 'nowadays',
+  oppinion: 'opinion', opinon: 'opinion', paticular: 'particular', percieved: 'perceived', physicaly: 'physically',
+  populer: 'popular', prefrence: 'preference', problme: 'problem', proccess: 'process',
+  recomendation: 'recommendation', relize: 'realize', reponsible: 'responsible', responsable: 'responsible',
+  reserch: 'research', sentances: 'sentences', socity: 'society', specialy: 'specially', stratergy: 'strategy',
+  studys: 'studies', studdy: 'study', successfuly: 'successfully', technolgy: 'technology', togather: 'together',
+  totaly: 'totally', usualy: 'usually', vocabluary: 'vocabulary', whith: 'with', wih: 'with', yeasr: 'years',
+};
+
+// Two words that are fine apart, so only the clearly wrong context is matched.
+const SR_DUP_OK = new Set(['that', 'had', 'is', 'do', 'bye', 'so', 'no', 'ha', 'la', 'very', 'really', 'knock', 'chop',
+  'tut', 'there', 'well', 'yeah', 'oh', 'please', 'go', 'now', 'hip', 'yes', 'ho', 'boo', 'ta', 'tsk', 'dum', 'na', 'blah', 'pom',
+  'her', 'in', 'on', 'what', 'who', 'it', 'which', 'him', 'them', 'us', 'me', 'you']);
+const SR_ABBREV = new Set(['mr', 'mrs', 'ms', 'dr', 'st', 'no', 'fig', 'approx', 'al', 'cf', 'jr', 'sr', 'inc', 'ltd', 'co',
+  'p', 'pp', 'vol', 'ed', 'eds', 'etc', 'vs', 'eg', 'ie', 'prof', 'gen', 'sgt', 'lt', 'col', 'ave', 'dept', 'est', 'min', 'max', 'sec', 'hr', 'hrs', 'mt', 'ft', 'oz', 'lb', 'lbs']);
+// "a" before these vowel letters is right, since they start with a "you" or "w" sound.
+const SR_A_BEFORE_VOWEL_OK = /^(?:one|once|eu|ew|uni|us|ut|ur[aeiou]|ubiq|ufo|ouija)/;
+// "an" before these consonant letters is right: the h is silent.
+const SR_AN_SILENT_H = /^(?:hour|honest|honor|honour|heir|herb)/;
+// "an" before these u-words is wrong: they start with a "you" sound.
+const SR_AN_YOU_SOUND = new Set(['unique', 'university', 'universal', 'unit', 'united', 'union', 'uniform', 'unicorn',
+  'usual', 'useful', 'user', 'usage', 'use', 'utility', 'unanimous', 'european', 'euro', 'one', 'once', 'utensil', 'uniformly', 'usually']);
+const SR_COMPARATIVE = 'more|less|better|worse|rather|other|fewer|greater';
+const SR_FUNCTION_WORDS = new Set(['and', 'or', 'is', 'are', 'was', 'were', 'as', 'at', 'in', 'on', 'of', 'if', 'it', 'its', 'to', 'into', 'onto', 'or', 'nor', 'for', 'by', 'but', 'so', 'than', 'then', 'that', 'the', 'this', 'with', 'will', 'would', 'can', 'could', 'should', 'has', 'have', 'had', 'be', 'been', 'do', 'does', 'did', 'not', 'up', 'out', 'off', 'all', 'any', 'each', 'every', 'only', 'also', 'even', 'just', 'from', 'over', 'under', 'after', 'before']);
+
+// Words that commonly start a sentence. The sentence-capital rule fixes only
+// these: a lowercase word it doesn't know may be a name written that way on
+// purpose (nspell, eBay, a file name), so it's left alone.
+const SR_STARTERS = new Set(('the a an this that these those it its i we you they he she there here my our your their his her '
+  + 'and but or so yet for nor also however therefore thus then now first second third finally next last lastly instead '
+  + 'in on at by to from with without after before when while if although though because since as once until unless '
+  + 'what why how who where which whatever whenever wherever no not yes all some many most much more few each every any both '
+  + 'one two three another other such even only just still maybe perhaps please thanks thank sorry hi hello dear well oh '
+  + 'let do does did is are was were be been have has had can could will would should may might must shall '
+  + 'today tomorrow yesterday tonight overall moreover furthermore additionally besides meanwhile otherwise similarly likewise '
+  + 'people students everyone everybody someone somebody nobody nothing something everything anyone anything '
+  + 'unfortunately fortunately actually basically honestly personally generally usually sometimes often always never '
+  + 'during after despite according following based given regarding about over under through into upon').split(' '));
+
+// Verbs whose he/she form differs from the base: "he go" → "he goes". Verbs
+// whose past looks like the base (read, put, cut, hit, set, let) are left out,
+// since "he read it" is correct.
+const SR_3SG = {
+  go: 'goes', have: 'has', do: 'does', want: 'wants', need: 'needs', like: 'likes', think: 'thinks', know: 'knows',
+  say: 'says', make: 'makes', take: 'takes', get: 'gets', look: 'looks', work: 'works', play: 'plays', live: 'lives',
+  seem: 'seems', try: 'tries', feel: 'feels', believe: 'believes', mean: 'means', use: 'uses', love: 'loves',
+  hate: 'hates', watch: 'watches', study: 'studies', eat: 'eats', write: 'writes', give: 'gives', tell: 'tells',
+  ask: 'asks', keep: 'keeps', leave: 'leaves', talk: 'talks', walk: 'walks', wish: 'wishes', enjoy: 'enjoys',
+  prefer: 'prefers', understand: 'understands', agree: 'agrees', care: 'cares', remember: 'remembers', teach: 'teaches',
+  learn: 'learns', sleep: 'sleeps', speak: 'speaks', drive: 'drives', buy: 'buys', pay: 'pays', bring: 'brings',
+  start: 'starts', finish: 'finishes', miss: 'misses', forget: 'forgets', complete: 'completes', cost: null,
+};
+delete SR_3SG.cost; // "it cost" is also the past
+// The reverse, for "they goes" → "they go", plus the helpers.
+const SR_BASE = Object.fromEntries([...Object.entries(SR_3SG).map(([b, s]) => [s, b]),
+  ['has', 'have'], ['does', 'do'], ['doesn’t', 'don’t'], ["doesn't", "don't"], ['wasn’t', 'weren’t'], ["wasn't", "weren't"]]);
+// Before "he"/"she", these make the base form right: "does he go", "let her go",
+// "he and she go", "insist that he go", "could not he go", "what is he like".
+const SR_BASE_OK_BEFORE = /^(?:do|does|did|don['’]t|doesn['’]t|didn['’]t|will|would|shall|should|can|could|may|might|must|won['’]t|wouldn['’]t|can['’]t|cannot|couldn['’]t|shouldn['’]t|mustn['’]t|need|dare|not|is|was|are|were|am|isn['’]t|wasn['’]t|and|or|nor|that|lest|than|as|if)$/i;
+// Simple past → past participle, for "have went" and "would of came".
+// Left out: saw (a tool), fell (a hill), stole (a scarf), broke (no money), rose, forgot (old usage).
+const SR_PAST_TO_PARTICIPLE = {
+  came: 'come', went: 'gone', did: 'done', ran: 'run', ate: 'eaten', took: 'taken', gave: 'given', knew: 'known',
+  wrote: 'written', began: 'begun', drank: 'drunk', swam: 'swum', threw: 'thrown', drove: 'driven', chose: 'chosen',
+  spoke: 'spoken', grew: 'grown', flew: 'flown', rode: 'ridden', woke: 'woken', sang: 'sung', shook: 'shaken', sank: 'sunk',
+};
+// Words that end in -s but take a singular verb: "the news was".
+const SR_S_SINGULAR = new Set(['news', 'lens', 'series', 'species', 'means', 'measles', 'mumps', 'rabies', 'diabetes',
+  'herpes', 'headquarters', 'barracks', 'crossroads', 'whereabouts', 'gallows', 'innings', 'corps', 'biceps', 'triceps',
+  'forceps', 'summons', 'billiards', 'shambles', 'yes', 'thanks', 'alms', 'ides', 'kudos', 'odds', 'works', 'premises']);
+// Fixed phrases written the way they sound.
+const SR_PHRASES = {
+  'for all intensive purposes': 'for all intents and purposes', 'one in the same': 'one and the same',
+  'case and point': 'case in point', 'nip it in the butt': 'nip it in the bud', 'escape goat': 'scapegoat',
+  'per say': 'per se', 'mute point': 'moot point', 'sneak peak': 'sneak peek', 'deep seeded': 'deep-seated',
+  'free reign': 'free rein', 'statue of limitations': 'statute of limitations', 'baited breath': 'bated breath',
+  'wreck havoc': 'wreak havoc', 'by in large': 'by and large', 'all of the sudden': 'all of a sudden',
+  'slight of hand': 'sleight of hand', 'vise versa': 'vice versa', 'self-depreciating': 'self-deprecating',
+  'doggy dog world': 'dog-eat-dog world', 'doggy-dog world': 'dog-eat-dog world', 'hunger pains': 'hunger pangs',
+  'tongue and cheek': 'tongue in cheek', 'beckon call': 'beck and call', 'on the same token': 'by the same token',
+  'weather or not': 'whether or not', 'peak my interest': 'pique my interest', 'peaked my interest': 'piqued my interest',
+  'peeked my interest': 'piqued my interest', 'tow the line': 'toe the line', 'make due with': 'make do with',
+  'in tact': 'intact', 'scott free': 'scot-free', 'old wives tale': "old wives' tale", 'old wise tale': "old wives' tale",
+  'shoe-in': 'shoo-in', 'piece of mind': 'peace of mind', 'piece and quiet': 'peace and quiet',
+  'wet your appetite': 'whet your appetite', 'wet my appetite': 'whet my appetite', 'bare with me': 'bear with me',
+};
+// Always capitalized: countries, continents, languages, nationalities. Left out
+// because each is also an everyday word: china, turkey, polish, jordan, chad, guinea, japan.
+const SR_PROPER = ('philippines filipino filipina filipinos tagalog cebuano america american americans canada canadian mexico mexican '
+  + 'brazil brazilian argentina colombia peru chile europe european asia asian africa african australia australian antarctica '
+  + 'england english britain british scotland scottish ireland irish wales welsh france french germany german italy italian spain spanish '
+  + 'portugal portuguese russia russian ukraine ukrainian netherlands dutch sweden swedish norway norwegian denmark danish finland finnish '
+  + 'greece greek india pakistan bangladesh nepal korea korean japanese chinese taiwan taiwanese vietnam vietnamese thailand thai '
+  + 'indonesia indonesian malaysia malaysian singapore singaporean cambodia laos myanmar egypt egyptian nigeria kenya ethiopia israel arabic '
+  + 'iran iraq saudi qatar dubai hindi urdu bengali mandarin cantonese hawaii').split(' ');
+// Clearly one thing: "my name are" is always wrong. (No collective nouns: "my
+// family are" is British usage.)
+const SR_SINGULAR_NOUNS = 'name|life|car|house|phone|friend|mother|father|mom|dad|mum|brother|sister|son|daughter|teacher|boss|dog|cat|job|school|problem|question|answer|idea|plan|city|country|hobby|birthday|husband|wife|boyfriend|girlfriend|email|address|number|computer|laptop|room|book';
+const SR_cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+// The replacement in the case the writer used: "Dont" → "Don't", "DONT" → "DON'T".
+function SR_matchCase(src, repl) {
+  if (!repl) return repl;
+  if (src.length > 1 && src === src.toUpperCase() && /\p{L}/u.test(src)) return repl.toUpperCase();
+  if (/^\p{Lu}/u.test(src)) return SR_cap(repl);
+  return repl;
+}
+const SR_wordAlt = (obj) => Object.keys(obj).sort((a, b) => b.length - a.length).join('|');
+const SR_W = '(?<![\\p{L}\\p{N}\'’_@/.-])'; // start of a word (not inside one, a link or a handle)
+const SR_WE = '(?![\\p{L}\\p{N}\'’_-])'; // end of a word
+
+// [{ id, kind, re, fix(m, text) → replacement or null, why(m, to) }]
+const SR_RULES = [
+  { id: 'apostrophe', kind: 'fix', re: new RegExp(`${SR_W}(${SR_wordAlt(SR_APOS_FIX)})${SR_WE}`, 'giu'),
+    fix: (m, text) => {
+      const key = m[1].toLowerCase(), short = SR_APOS_FIX[key][0];
+      if (key === 'im' && m[1] === 'IM') return null; // instant message
+      // "cant" is also a word (a tilt, or empty talk): only after a pronoun or before a verb.
+      if (key === 'cant') {
+        const prev = (text.slice(0, m.index).match(/([\p{L}'’]+)\s*$/u) || [])[1] || '';
+        const next = (text.slice(m.index + m[0].length).match(/^\s+([\p{L}]+)/u) || [])[1] || '';
+        if (!/^(?:i|you|we|they|he|she|it|who|that|this|someone|people|u)$/i.test(prev)
+          && !/^(?:be|go|do|have|wait|believe|find|see|get|make|help|stop|seem|really|even|just|afford|stand|remember|understand|sleep|think|say|tell|hear|read|write|come|use|work|play|log|access|open)$/i.test(next)) return null;
+      }
+      if (/^i['’]/i.test(short)) return m[1] === m[1].toUpperCase() && m[1].length > 1 ? short.toUpperCase() : short;
+      return SR_matchCase(m[1], short);
+    },
+    why: (m) => { const [short, long] = SR_APOS_FIX[m[1].toLowerCase()]; return `The apostrophe stands for the missing letters: ${long} → ${short}.`; } },
+  { id: 'lowercase-i', kind: 'fix', re: /(?<![\p{L}\p{N}'’._\/@-])i(?=['’](?:m|ve|ll|d)\b|\s+\p{L})/gu,
+    // Not a numbered item: "sections i and ii", "part i".
+    fix: (m, text) => (/^\s+(?:and|or|to|through)\s+(?:ii|iii|iv|v|vi)\b/.test(text.slice(m.index + 1))
+      || /\b(?:sections?|items?|parts?|steps?|points?|chapters?|ch|para|appendix|table|figure|question|questions|type|grade)\s+$/i.test(text.slice(0, m.index)) ? null : 'I'),
+    why: () => '"I" is always a capital.' },
+  { id: 'sentence-start', kind: 'fix', re: /([.!?])(\s+)(\p{Ll}[\p{L}'’-]*)/gu,
+    fix: (m, text) => {
+      const word = m[3];
+      if (!SR_STARTERS.has(word.toLowerCase().replace(/['’].*$/, ''))) return null;
+      if (/^[./\\_-]/.test(text.slice(m.index + m[0].length))) return null; // "theme.js", "e2e-ui", "r/subreddit"
+      const before = text.slice(0, m.index);
+      const prev = (before.match(/(\S+)$/) || [])[1] || '';
+      if (!prev || prev.includes('.') || /[.!?]$/.test(before)) return null; // e.g., U.S., an ellipsis
+      if (!/[\p{L}\p{N})"”’']$/u.test(prev)) return null;
+      if (m[1] !== '.' && /^(?:and|or|but|nor)$/.test(word)) return null; // "shall we say? or ..."
+      if (/^[IVXLCM]+$|^\p{Lu}{2,4}$/u.test(prev.replace(/[^\p{L}]/gu, ''))) return null; // "Chapter III.", "MSS."
+      const bare = prev.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+      if (m[1] === '.' && (SR_ABBREV.has(bare) || bare.length < 2)) return null; // Mr. smith, J. smith
+      if (m[1] === '.' && /^\d+$/.test(bare) && bare.length <= 2) return null; // "Step 1. open" lists are fine either way
+      return `${m[1]}${m[2]}${SR_cap(word)}`;
+    },
+    why: () => 'A sentence starts with a capital letter.' },
+  { id: 'days-months', kind: 'fix', re: new RegExp(`${SR_W}(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|april|june|july|september|october|november|december)${SR_WE}`, 'gu'),
+    fix: (m) => SR_cap(m[1]), why: () => 'Days and months start with a capital: Friday, March.' },
+  { id: 'a-an', kind: 'fix', re: /(?<![\p{L}\p{N}'’.\-_])(a|A|an|An)(\s+)(\p{Ll}[\p{L}'’-]*)/gu,
+    fix: (m) => {
+      const art = m[1], next = m[3];
+      const word = next.toLowerCase().replace(/['’-].*$/, '');
+      if (SR_FUNCTION_WORDS.has(word)) return null; // "A and B", "plan a or b": a letter, not an article
+      if (art.toLowerCase() === 'a') {
+        if ((/^[aeio]/.test(word) && !SR_A_BEFORE_VOWEL_OK.test(word)) || SR_AN_SILENT_H.test(word)) return `${art === 'A' ? 'An' : 'an'}${m[2]}${next}`;
+        return null;
+      }
+      if (SR_AN_YOU_SOUND.has(word) || (word.length >= 3 && /^[bcdfgjklmnpqrstvwyz]/.test(word))) return `${art === 'An' ? 'A' : 'a'}${m[2]}${next}`;
+      return null;
+    },
+    why: (m, to) => (/^an\b/i.test(to) ? 'Use "an" before a vowel sound: an hour, an idea.' : 'Use "a" before a consonant sound: a plan, a user.') },
+  { id: 'repeated-word', kind: 'fix', re: /(?<![\p{L}\p{N}'’-])(\p{L}[\p{L}'’]*)([ \t]+)\1(?![\p{L}\p{N}'’-])/giu,
+    fix: (m) => (!SR_DUP_OK.has(m[1].toLowerCase()) && m[1].length > 1 ? m[1] : null),
+    why: () => 'The same word was written twice.' },
+  { id: 'could-of', kind: 'fix', re: new RegExp(`${SR_W}(could|should|would|must|might|may)(\\s+)of(?=\\s+(?:${SR_PARTICIPLES}|${Object.keys(SR_PAST_TO_PARTICIPLE).join('|')})${SR_WE})`, 'giu'),
+    fix: (m) => `${m[1]}${m[2]}${SR_matchCase('of', 'have')}`, why: (m) => `After "${m[1].toLowerCase()}", write "have", not "of": ${m[1].toLowerCase()} have.` },
+  { id: 'joined', kind: 'fix', re: new RegExp(`${SR_W}(${SR_wordAlt(SR_JOINED)})${SR_WE}`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], SR_JOINED[m[1].toLowerCase()]),
+    why: (m) => `"${SR_JOINED[m[1].toLowerCase()]}" is written as ${SR_JOINED[m[1].toLowerCase()].split(' ').length === 2 ? 'two words' : 'one word'}.` },
+  { id: 'misspelled', kind: 'fix', re: new RegExp(`${SR_W}(${SR_wordAlt(SR_MISSPELLED)})${SR_WE}`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], SR_MISSPELLED[m[1].toLowerCase()]),
+    why: (m) => `Spelled ${SR_MISSPELLED[m[1].toLowerCase()].split('').join('-')}.` },
+  { id: 'everyday', kind: 'fix', re: new RegExp(`${SR_W}(everyday)(?=\\s*(?:[.,;!?]|$))`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], 'every day'), why: () => '"Every day" means each day. "Everyday" means ordinary, as in everyday clothes.' },
+  { id: 'we-was', kind: 'fix', re: new RegExp(`${SR_W}(we|they)(\\s+)(was)${SR_WE}`, 'giu'),
+    fix: (m) => `${m[1]}${m[2]}${SR_matchCase(m[3], 'were')}`, why: () => 'Use "were" with we, you and they.' },
+  { id: 'he-dont', kind: 'fix', re: new RegExp(`${SR_W}(he|she|it)(\\s+)(don['’]?t)${SR_WE}`, 'giu'),
+    fix: (m) => `${m[1]}${m[2]}${SR_matchCase(m[3], m[3].includes('’') ? 'doesn’t' : "doesn't")}`, why: () => 'Use "doesn\'t" with he, she and it.' },
+  { id: 'he-goes', kind: 'fix', re: new RegExp(`${SR_W}(he|she|it)(\\s+)(${Object.keys(SR_3SG).join('|')}|are)${SR_WE}`, 'giu'),
+    fix: (m, text) => {
+      const prev = (text.slice(0, m.index).match(/([\p{L}'’]+)[\s,]*$/u) || [])[1] || '';
+      if (SR_BASE_OK_BEFORE.test(prev)) return null;
+      // "it" is also an object ("let it go", "make it work"): only as the subject
+      // of a new sentence or after a joining word.
+      if (m[1].toLowerCase() === 'it' && !(/(?:^|[.!?;:]\s*)$/.test(text.slice(0, m.index)) || /^(?:because|but|so|when|since|although|though|while|and|then)$/i.test(prev))) return null;
+      const verb = m[3].toLowerCase(), after = text.slice(m.index + m[0].length);
+      if (verb === 'need' && /^\s+(?:not|only|hardly|never)\b/i.test(after)) return null; // "he need not worry"
+      if (verb === 'use' && /^\s+to\b/i.test(after)) return null; // "she use to": the used-to rule
+      if (/^\p{Lu}/u.test(m[3]) && /^\p{Ll}/u.test(m[1])) return null; // "she Miss Smith"
+      return `${m[1]}${m[2]}${SR_matchCase(m[3], verb === 'are' ? 'is' : SR_3SG[verb])}`;
+    },
+    why: (m, to) => `With he, she or it, the verb takes -s: ${to.toLowerCase().replace(/\s+/, ' ')}.` },
+  { id: 'they-go', kind: 'fix', re: new RegExp(`${SR_W}(I|[Ww]e|[Tt]hey)(\\s+)(${Object.keys(SR_BASE).join('|')}|is|isn['’]t)${SR_WE}`, 'gu'),
+    fix: (m, text) => {
+      const subj = m[1], verb = m[3].toLowerCase();
+      const before = text.slice(0, m.index);
+      // "Part I has", "Henry I is": a numeral, not the pronoun.
+      const prevWord = (before.match(/(\p{Lu}[\p{L}]*)\s+$/u) || [])[1];
+      if (subj === 'I' && prevWord && !SR_STARTERS.has(prevWord.toLowerCase())) return null;
+      if (/\b(?:the|a|royal)\s+$/i.test(before)) return null; // "the royal we"
+      if (/^wasn/.test(verb) && subj === 'I') return null;
+      let to;
+      if (verb === 'is') to = subj === 'I' ? 'am' : 'are';
+      else if (/^isn/.test(verb)) { if (subj === 'I') return null; to = `aren${verb[3]}t`; }
+      else to = SR_BASE[verb];
+      return `${subj}${m[2]}${m[3][0] === m[3][0].toUpperCase() ? SR_cap(to) : to}`;
+    },
+    why: (m) => `With ${m[1] === 'I' ? 'I' : m[1].toLowerCase()}, the verb has no -s: ${m[1] === 'I' ? 'I' : m[1].toLowerCase()} go, ${m[1] === 'I' ? 'I' : m[1].toLowerCase()} have.` },
+  { id: 'plural-was', kind: 'fix', re: /(?<![\p{L}\p{N}'’_-])(the|these|those|my|our|your|their|his|her|its|some|many|all|both|several)(\s+)(\p{Ll}{2,}s)(\s+)(was|is|has|does|wasn['’]t|isn['’]t|hasn['’]t|doesn['’]t)(?![\p{L}\p{N}'’_-])/giu,
+    fix: (m, text) => {
+      const noun = m[3];
+      if (/\p{Lu}/u.test(noun)) return null; // "the Beatles was": a name
+      if (SR_S_SINGULAR.has(noun) || /(?:ss|us|is|os|as|ics)$/.test(noun)) return null;
+      // Only when the noun starts the clause: "What surprised the parents was" is correct.
+      const before = text.slice(0, m.index);
+      if (!(/(?:^|[.!?;:]\s*|,\s*)$/.test(before) || /\b(?:because|that|when|if|while|although|though|so|but)\s+$/i.test(before))) return null;
+      const v = m[5].toLowerCase();
+      const to = { was: 'were', is: 'are', has: 'have', does: 'do' }[v] || v.replace(/^was/, 'were').replace(/^is/, 'are').replace(/^has/, 'have').replace(/^does/, 'do');
+      return `${m[1]}${m[2]}${noun}${m[4]}${to}`;
+    },
+    why: (m, to) => `"${m[3]}" is more than one, so the verb is "${to.split(/\s+/).pop()}".` },
+  { id: 'caps-lock', kind: 'fix', re: /(?<![\p{L}\p{N}'’_@\/.-])(\p{Ll}\p{Lu}{4,})(?![\p{L}\p{N}'’_-])/gu,
+    fix: (m) => SR_cap(m[1].toLowerCase()), why: (m, to) => `Looks like Caps Lock was on: "${to}".` },
+  { id: 'name-are', kind: 'fix', re: new RegExp(`${SR_W}(my|your|his|her|our|their|the|this|that)(\\s+)(${SR_SINGULAR_NOUNS})(\\s+)(are|aren['’]t)${SR_WE}`, 'giu'),
+    fix: (m, text) => {
+      // Not when the noun belongs to something else or is one of two:
+      // "the parents of my friend are", "the keys to my house are", "my mom and my dad are".
+      const prev = (text.slice(0, m.index).match(/([\p{L}'’]+)\s*$/u) || [])[1] || '';
+      if (/^(?:of|with|to|for|from|about|than|like|by|at|in|on|into|under|over|near|behind|between|and|or|nor|as|both|all|whose)$/i.test(prev)) return null;
+      return `${m[1]}${m[2]}${m[3]}${m[4]}${/^are$/i.test(m[5]) ? SR_matchCase(m[5], 'is') : SR_matchCase(m[5], `isn${m[5][4]}t`)}`;
+    },
+    why: (m) => `"${m[3].toLowerCase()}" is one, so the verb is "is".` },
+  { id: 'proper-noun', kind: 'fix', re: new RegExp(`${SR_W}(the)?(${SR_PROPER.join('|')})${SR_WE}`, 'gu'),
+    fix: (m) => `${m[1] ? 'the ' : ''}${SR_cap(m[2])}`,
+    why: (m) => (m[1] ? `"The" is its own word, and names of places and languages start with a capital: the ${SR_cap(m[2])}.` : `Names of places, languages and peoples start with a capital: ${SR_cap(m[2])}.`) },
+  { id: 'there-are-many', kind: 'fix', re: new RegExp(`${SR_W}(there)(?:(\\s+)(is|was)|(['’]s))(?=\\s+(?:many|several|numerous|various|countless)\\s+(?!a${SR_WE})\\p{L})`, 'giu'),
+    fix: (m) => `${m[1]}${m[2] || ' '}${m[4] ? 'are' : m[3].toLowerCase() === 'was' ? 'were' : 'are'}`,
+    why: (m, to) => `With more than one, write "${to.toLowerCase()}": there are many reasons.` },
+  { id: 'have-went', kind: 'fix', re: new RegExp(`(?<=(?:${SR_W}(?:have|has|had|having|haven['’]t|hasn['’]t|hadn['’]t)|\\p{L}['’](?:ve|d))\\s+(?:(?:already|never|just|ever|always|not|also|finally)\\s+)?)(${Object.keys(SR_PAST_TO_PARTICIPLE).join('|')})${SR_WE}`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], SR_PAST_TO_PARTICIPLE[m[1].toLowerCase()]),
+    why: (m, to) => `After have, has or had, use "${to.toLowerCase()}", not "${m[1].toLowerCase()}".` },
+  { id: 'i-seen', kind: 'fix', re: new RegExp(`${SR_W}(I|we|they|you|he|she)(\\s+)(seen)${SR_WE}`, 'giu'),
+    fix: (m, text) => {
+      const prev = (text.slice(0, m.index).match(/([\p{L}'’]+)\s*$/u) || [])[1] || '';
+      if (/^(?:have|has|had|having|haven['’]t|hasn['’]t|hadn['’]t|was|were|is|are|am|be|been|being|wasn['’]t|weren['’]t|isn['’]t|aren['’]t)$/i.test(prev)) return null;
+      if (m[1] === 'i') return null;
+      return `${m[1]}${m[2]}${SR_matchCase(m[3], 'saw')}`;
+    },
+    why: () => '"Seen" needs have: I saw it, or I have seen it.' },
+  { id: 'me-and-him', kind: 'fix', re: /(?<=^|[.!?]\s+)(Me|me|Him|Her|Them)\s+and\s+(him|her|them|he|she|they|me|I|(?:my|his|her|our|their|the)\s+\p{Ll}+|\p{Lu}\p{Ll}+)(\s+)(went|go|are|were|have|had|did|do|will|would|can|could|got|get|played|play|was|is|saw|met|both|always|never|used|love|like|made|make|took|take|walked|came|come|ate|watched|talked|tried|left|decided|started|spent|stayed|live|lived)(?![\p{L}'’-])/gu,
+    fix: (m) => {
+      const first = m[1].toLowerCase(), other = m[2];
+      const verb = `${m[3]}${{ was: 'were', is: 'are' }[m[4]] || m[4]}`; // two people: "were", "are"
+      const SUBJ = { him: 'he', her: 'she', them: 'they', me: 'I', i: 'I', he: 'he', she: 'she', they: 'they' };
+      if (first === 'me') {
+        if (/^(?:me|I)$/.test(other)) return null;
+        const o = SUBJ[other] || other;
+        return `${SR_cap(o)} and I${verb}`;
+      }
+      if (!/^(?:me|I)$/.test(other)) return null; // "Him and her" is left to the AI
+      return `${SR_cap(SUBJ[first])} and I${verb}`;
+    },
+    why: () => 'For the people doing the action, use I, he, she or they, and put yourself last: my friend and I went.' },
+  { id: 'between-you-and-me', kind: 'fix', re: new RegExp(`${SR_W}(between|for|with|to|from|like|against|about|behind|beside)(\\s+)(you|him|her|them|us)(\\s+)and(\\s+)I(?![\\p{L}\\p{N}'’_-])`, 'giu'),
+    fix: (m, text) => {
+      if (m[1].toLowerCase() !== 'between' && !/^\s*(?:[.,;:!?)]|$)/.test(text.slice(m.index + m[0].length))) return null; // "to him and I left"
+      return `${m[1]}${m[2]}${m[3]}${m[4]}and${m[5]}me`;
+    },
+    why: () => 'After a word like between, for or with, use me: between you and me.' },
+  { id: 'too-much', kind: 'fix', re: /(?<=(?:\b(?:is|are|was|were|be|been|am|way|far|not)|['’](?:s|re|m))\s+)(to)(?=\s+(?:much|many|late|early|big|small|expensive|busy|tired|young|old|hot|cold|difficult|loud|tall|heavy|soon)(?![\p{L}'’-]))/giu,
+    fix: (m, text) => (/^\s+(?:many|much)\s+an?\s/i.test(text.slice(m.index + m[0].length)) ? null : SR_matchCase(m[1], 'too')), why: () => 'too = more than enough, or also. to = toward.' },
+  { id: 'advice-advise', kind: 'fix', re: new RegExp(`${SR_W}(?:(I|we|they|would|to|strongly)(\\s+)(advice)(?=\\s+(?:you|him|her|them|us|me|against|that)${SR_WE})|(an|some|good|bad|any|my|your|his|our|their|great|expert|legal|medical|financial|of|for)(\\s+)(advise)${SR_WE})`, 'giu'),
+    fix: (m) => (m[3] ? `${m[1]}${m[2]}${SR_matchCase(m[3], 'advise')}` : `${m[4]}${m[5]}${SR_matchCase(m[6], 'advice')}`),
+    why: (m) => (m[3] ? 'advise is the action (I advise you). advice is the thing (good advice).' : 'advice is the thing (good advice). advise is the action (I advise you).') },
+  { id: 'breath-breathe', kind: 'fix', re: new RegExp(`${SR_W}(?:(to|can|can['’]t|cannot|couldn['’]t|could|not)(\\s+)(breath)(?=\\s*(?:[.,!?]|$)|\\s+(?:in|out|again|properly|normally|deeply)${SR_WE})|(a|deep|another|of)(\\s+)(breathe)${SR_WE})`, 'giu'),
+    fix: (m) => (m[3] ? `${m[1]}${m[2]}${SR_matchCase(m[3], 'breathe')}` : `${m[4]}${m[5]}${SR_matchCase(m[6], 'breath')}`),
+    why: (m) => (m[3] ? 'breathe is the action. breath is the air (a deep breath).' : 'breath is the air (a deep breath). breathe is the action.') },
+  { id: 'phrase', kind: 'fix', re: new RegExp(`${SR_W}(${SR_wordAlt(SR_PHRASES).replace(/ /g, '\\s+')})${SR_WE}`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], SR_PHRASES[m[1].toLowerCase().replace(/\s+/g, ' ')]),
+    why: (m, to) => `The phrase is "${to.toLowerCase()}".` },
+  { id: 'their-is', kind: 'fix', re: new RegExp(`${SR_W}(their)(?=\\s+(?:is|are|was|were|has been|have been|will be)${SR_WE})`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], 'there'), why: () => 'there = a place, or "there is". their = belonging to them.' },
+  { id: 'theyre-going', kind: 'fix', re: new RegExp(`${SR_W}(their)(?=\\s+(?:going to|gonna|not)${SR_WE})`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], "they're"), why: () => "they're = they are. their = belonging to them." },
+  { id: 'its-a', kind: 'fix', re: new RegExp(`${SR_W}(its)(?=\\s+(?:a|an|the|not|been|going to)${SR_WE})`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], "it's"), why: () => 'it\'s = it is. "its" shows ownership.' },
+  { id: 'its-own', kind: 'fix', re: new RegExp(`${SR_W}(it['’]s)(?=\\s+own${SR_WE})`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], 'its'), why: () => 'its shows ownership. it\'s = it is.' },
+  { id: 'youre-a', kind: 'fix', re: new RegExp(`${SR_W}(your)(?=\\s+(?:a|an|the|not)${SR_WE}|\\s+welcome\\s*(?:[.,!]|$))`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], "you're"), why: () => "you're = you are. your = belonging to you." },
+  { id: 'then-than', kind: 'fix', re: new RegExp(`${SR_W}(${SR_COMPARATIVE})(\\s+)(then)${SR_WE}`, 'giu'),
+    fix: (m) => `${m[1]}${m[2]}${SR_matchCase(m[3], 'than')}`, why: () => 'than compares (bigger than). then is about time.' },
+  { id: 'than-then', kind: 'fix', re: new RegExp(`${SR_W}(since|until|back)(\\s+)(than)${SR_WE}`, 'giu'),
+    fix: (m) => `${m[1]}${m[2]}${SR_matchCase(m[3], 'then')}`, why: () => 'then is about time (first this, then that). than compares.' },
+  { id: 'lose-loose', kind: 'fix', re: new RegExp(`${SR_W}(?:(to|will|would|could|might|don['’]t|didn['’]t|won['’]t)(\\s+)(loose)(?!\\s+(?:fitting|end|ends)\\b)|(loose)(?=\\s+weight${SR_WE}))${SR_WE}`, 'giu'),
+    fix: (m) => (m[3] ? `${m[1]}${m[2]}${SR_matchCase(m[3], 'lose')}` : SR_matchCase(m[4], 'lose')),
+    why: () => 'lose = not win, or misplace. loose = not tight.' },
+  { id: 'affect-effect', kind: 'fix', re: new RegExp(`${SR_W}(an|the|no|positive|negative|side)(\\s+)(affect)(s?)(?=\\s+(?:on|of)${SR_WE}|\\s*[.,;!?]|$)`, 'giu'),
+    fix: (m) => `${m[1]}${m[2]}${SR_matchCase(m[3], 'effect')}${m[4]}`, why: () => 'effect is the thing (the effect). affect is the action (it affects me).' },
+  { id: 'supposed-to', kind: 'fix', re: /(?<=(?:\b(?:was|were|is|are|am|be|being|been)|['’](?:re|s|m))\s+)(suppose)(?=\s+to\b)/giu,
+    fix: (m) => SR_matchCase(m[1], 'supposed'), why: () => '"Supposed to" (meaning expected to) ends in -d.' },
+  { id: 'used-to', kind: 'fix', re: /(?<=\b(?:I|we|they|you|he|she)\s+)(use)(?=\s+to\s+(?:be|have|go|live|work|like|think|play|say|get|make|know|love|hate|eat|watch)\b)/giu,
+    fix: (m) => SR_matchCase(m[1], 'used'), why: () => '"Used to" (meaning in the past) ends in -d.' },
+  { id: 'double-space', kind: 'fix', re: /(?<=[\p{L},;:])( {2})(?=\p{L})/gu, // exactly two: wider gaps are layout (aligned columns)
+    fix: () => ' ', why: () => 'One space between words.' },
+  { id: 'space-before', kind: 'fix', re: /(?<=[\p{L}\p{N}])( +)(?=[,.](?:\s|$))/gu,
+    // A link keeps the gap after it, so the comma doesn't become part of the link.
+    fix: (m, text) => (/[/:@]\S*$/.test(text.slice(0, m.index)) ? null : ''),
+    why: () => 'No space before a comma or full stop.' },
+  { id: 'space-after-comma', kind: 'fix', re: /(?<=\p{L}{2})(,)(?=\p{L}{2})/gu,
+    fix: () => ', ', why: () => 'A comma is followed by a space.' },
+
+  // --- School hints: suggestions for formal writing, never applied without a click ---
+  { id: 'formal-contraction', kind: 'hint', re: /(?<![\p{L}\p{N}'’_-])(don|doesn|didn|isn|aren|wasn|weren|hasn|haven|hadn|couldn|shouldn|wouldn|can|won|it|that|there|what|I|you|we|they|he|she|let)(['’])(t|s|m|re|ve|ll)(?![\p{L}\p{N}'’_-])/giu,
+    fix: (m, text) => {
+      const [, a, , b] = m, low = a.toLowerCase();
+      const after = text.slice(m.index + m[0].length);
+      const NT = { don: 'do not', doesn: 'does not', didn: 'did not', isn: 'is not', aren: 'are not', wasn: 'was not', weren: 'were not', hasn: 'has not', haven: 'have not', hadn: 'had not', couldn: 'could not', shouldn: 'should not', wouldn: 'would not', can: 'cannot', won: 'will not' };
+      if (b === 't') return NT[low] ? SR_matchCase(a, NT[low]) : null;
+      if (low === 'let' && b === 's') return SR_matchCase(a, 'let us');
+      if (b === 's') {
+        if (!['it', 'that', 'there', 'what', 'he', 'she'].includes(low)) return null;
+        return `${a} ${/^\s+(?:been|got)\b/.test(after) ? 'has' : 'is'}`;
+      }
+      const tail = { m: 'am', re: 'are', ve: 'have', ll: 'will' }[b];
+      const ok = { m: ['i'], re: ['you', 'we', 'they'], ve: ['i', 'you', 'we', 'they'], ll: ['i', 'you', 'we', 'they', 'he', 'she', 'it', 'that', 'there'] }[b];
+      return ok && ok.includes(low) ? `${a} ${tail}` : null;
+    },
+    why: (m, to) => `Formal writing spells out contractions: ${to.toLowerCase().replace(/^i /, 'I ')}.` },
+  { id: 'informal', kind: 'hint', re: new RegExp(`${SR_W}(gonna|wanna|gotta|kinda|sorta|cuz|irregardless)${SR_WE}`, 'giu'),
+    fix: (m) => SR_matchCase(m[1], { gonna: 'going to', wanna: 'want to', gotta: 'have to', kinda: 'kind of', sorta: 'sort of', cuz: 'because', irregardless: 'regardless' }[m[1].toLowerCase()]),
+    why: (m, to) => (m[1].toLowerCase() === 'irregardless' ? '"Irregardless" isn\'t standard English. Use "regardless".' : `Too casual for an essay. Write "${to.toLowerCase()}".`) },
+  { id: 'wordy', kind: 'hint', re: new RegExp(`${SR_W}(due to the fact that|in spite of the fact that|despite the fact that|in order to|at this point in time|at the present time|for the purpose of|in the event that|a large number of|has the ability to|have the ability to|prior to|in close proximity to|each and every|first and foremost|with regard to|in regard to|with regards to|a majority of|until such time as|on a daily basis|in the near future|the reason why is because|end result|past history|basic fundamentals|absolutely essential)${SR_WE}`, 'giu'),
+    fix: (m) => {
+      const map = { 'due to the fact that': 'because', 'in spite of the fact that': 'although', 'despite the fact that': 'although', 'in order to': 'to', 'at this point in time': 'now', 'at the present time': 'now', 'for the purpose of': 'for', 'in the event that': 'if', 'a large number of': 'many', 'has the ability to': 'can', 'have the ability to': 'can', 'prior to': 'before', 'in close proximity to': 'near', 'each and every': 'every', 'first and foremost': 'first', 'with regard to': 'about', 'in regard to': 'about', 'with regards to': 'about', 'a majority of': 'most', 'until such time as': 'until', 'on a daily basis': 'daily', 'in the near future': 'soon', 'the reason why is because': 'the reason is that', 'end result': 'result', 'past history': 'history', 'basic fundamentals': 'fundamentals', 'absolutely essential': 'essential' };
+      return SR_matchCase(m[1], map[m[1].toLowerCase()]);
+    },
+    why: (m, to) => `Shorter says the same: "${to.toLowerCase()}".` },
+];
+
+// Spans the rules never touch: links, emails, @handles, `code`, and quoted
+// text (a student's quotation must stay exactly as the source wrote it).
+function SR_protectedSpans(text) {
+  const spans = [];
+  const add = (re) => { for (const m of text.matchAll(re)) spans.push([m.index, m.index + m[0].length]); };
+  add(new RegExp(SR_LINK_RE.source, 'gi'));
+  add(new RegExp(SR_EMAIL_RE.source, 'g'));
+  add(new RegExp(SR_HANDLE_RE.source, 'g'));
+  add(/`[^`\n]*`/g);
+  add(/“[^”\n]{1,400}”/g);
+  add(/(?<![\p{L}\p{N}])"[^"\n]{1,400}"(?![\p{L}\p{N}])/gu);
+  return spans;
+}
+
+// Every place a rule matches: [{ start, end, from, to, why, id, kind }],
+// sorted, none overlapping (the earliest and longest match wins).
+function SR_ruleCheck(text, { kind = 'fix', atStart = false } = {}) {
+  const src = String(text || '');
+  if (!src.trim()) return [];
+  const spans = SR_protectedSpans(src);
+  const free = (s, e) => !spans.some(([a, b]) => s < b && e > a);
+  const hits = [];
+  // A whole text box (not a selection, which may start mid-sentence): its
+  // first word starts a sentence.
+  if (atStart && kind === 'fix') {
+    const m = src.match(/^(\s*)(\p{Ll}[\p{Ll}'’-]*)(?![\p{L}])/u); // "hELLO" is Caps Lock's, not this
+    if (m && SR_STARTERS.has(m[2].toLowerCase().replace(/['’].*$/, '')) && !/^[./\\_-]/.test(src.slice(m[0].length)) && free(m[1].length, m[0].length)) {
+      hits.push({ start: m[1].length, end: m[0].length, from: m[2], to: SR_cap(m[2]), why: 'A sentence starts with a capital letter.', id: 'sentence-start', kind: 'fix' });
+    }
+  }
+  for (const rule of SR_RULES) {
+    if (rule.kind !== kind) continue;
+    rule.re.lastIndex = 0;
+    for (const m of src.matchAll(rule.re)) {
+      const start = m.index, end = m.index + m[0].length;
+      if (!free(start, end)) continue;
+      const to = rule.fix(m, src);
+      if (to == null || to === m[0]) continue;
+      hits.push({ start, end, from: m[0], to, why: rule.why(m, to), id: rule.id, kind: rule.kind });
+    }
+  }
+  hits.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const out = [];
+  let last = -1;
+  for (const h of hits) if (h.start >= last) { out.push(h); last = h.end; }
+  return out;
+}
+
+function SR_applyHits(text, hits) {
+  let out = '', at = 0;
+  for (const h of hits) { out += text.slice(at, h.start) + h.to; at = h.end; }
+  return out + String(text).slice(at);
+}
+
+// Fix with the rules until nothing more matches (a fix can uncover another:
+// "i dont" → "I don't" is two). { text, hits }.
+// atStart: the text is a whole box, so its first word starts a sentence.
+function SR_ruleFix(text, { atStart = false } = {}) {
+  let cur = String(text || '');
+  const all = [];
+  for (let pass = 0; pass < 3; pass++) {
+    const hits = SR_ruleCheck(cur, { atStart });
+    if (!hits.length) break;
+    all.push(...hits);
+    cur = SR_applyHits(cur, hits);
+  }
+  return { text: cur, hits: all };
+}
+
+// The reason for one Review change from the rules that made it, matched by
+// its words (edge punctuation and spaces ignored).
+function SR_reasonFromHits(pair, hits) {
+  const norm = (s) => String(s || '').trim().replace(/^[^\p{L}\p{N}'’]+|[^\p{L}\p{N}'’]+$/gu, '').toLowerCase();
+  const f = norm(pair.from), t = norm(pair.to);
+  const h = hits.find((x) => x && x.why && norm(x.from) === f && norm(x.to) === t)
+    || hits.find((x) => x && x.why && norm(x.from).includes(f) && norm(x.to).includes(t) && f && t);
+  if (h) return h.why;
+  // Two rules side by side ("would of came" → "would have come"): each hit
+  // that removed a word of this change and added one of its new words.
+  const words = (s) => norm(s).split(/\s+/).filter(Boolean);
+  const fw = new Set(words(pair.from)), tw = new Set(words(pair.to));
+  const parts = hits.filter((x) => x && x.why && words(x.from).some((w) => fw.has(w))
+    && words(x.to).some((w) => tw.has(w) && !words(x.from).includes(w)));
+  const whys = [...new Set(parts.map((x) => x.why))];
+  return whys.length >= 1 && whys.length <= 2 ? whys.join(' ') : null;
+}
+
+// Proofread with rules first, then the AI when one is ready, then the rules
+// again (anything the AI missed or brought back). runAI(text) → { text, ... }
+// or null for rules only. hints: the School suggestions on the result.
+// { text, ai, hits, ruleCount, hints }.
+async function SR_proofreadHybrid(text, { runAI = null, school = false, atStart = false } = {}) {
+  const first = SR_ruleFix(text, { atStart });
+  let out = first.text, ai = null;
+  if (runAI) {
+    ai = await runAI(first.text);
+    out = ai && typeof ai.text === 'string' ? ai.text : first.text;
+  }
+  const second = runAI ? SR_ruleFix(out, { atStart }) : { text: out, hits: [] };
+  const hits = [...first.hits, ...second.hits].map(({ from, to, why, id }) => ({ from, to, why, id }));
+  const hints = school ? SR_freshHints(text, second.text) : [];
+  // base: what the AI was given, so the change guard judges the AI alone.
+  return { text: second.text, ai, hits, ruleCount: hits.length, hints, base: first.text };
+}
+
+// School suggestions on `fixed`, leaving out any that touch a spot changed
+// from `original`: it would merge with that fix in Review ("dont" → "do not"
+// as one change), so it waits for the next check.
+function SR_freshHints(original, fixed) {
+  const changed = SR_changedRanges(original, fixed);
+  if (!changed) return [];
+  return SR_ruleCheck(fixed, { kind: 'hint' })
+    .filter((h) => !changed.some(([a, b]) => h.start <= b && h.end >= a))
+    .map(({ start, end, from, to, why, id }) => ({ start, end, from, to, why, id }));
+}
+
+// [start, end] in `after` of every change from `before` (a deletion is a
+// point), or null when the texts are too far apart to diff.
+function SR_changedRanges(before, after) {
+  const ops = SR_wordDiff(before, after);
+  if (!ops) return null;
+  const out = [];
+  let pos = 0;
+  for (const op of ops) {
+    if (op.type === 'del') { out.push([pos, pos]); continue; }
+    if (op.type === 'ins') out.push([pos, pos + op.text.length]);
+    pos += op.text.length;
+  }
+  return out;
+}
+
+// Review's School suggestions: the Proofread diff with each hint spliced in
+// as its own change, off until clicked. The hints' places are known exactly
+// (they come from the rules), so they're placed by position, not re-diffed.
+// { ops, hintGroups }, or null when they can't be kept apart from the fixes
+// (then Review shows the fixes alone).
+function SR_hintDiff(original, fixed, hints) {
+  if (!Array.isArray(hints) || !hints.length) return null;
+  const base = SR_wordDiffForDisplay(original, fixed, 'grammar');
+  if (!base) return null;
+  const sorted = [...hints].sort((x, y) => x.start - y.start);
+  const ops = [];
+  let pos = 0, next = 0;
+  for (const op of base) {
+    if (op.type === 'del') { ops.push(op); continue; }
+    const end = pos + op.text.length;
+    if (op.type === 'same') {
+      let cur = pos;
+      while (next < sorted.length && sorted[next].start >= pos && sorted[next].end <= end) {
+        const h = sorted[next++];
+        if (h.start > cur) ops.push({ type: 'same', text: fixed.slice(cur, h.start) });
+        ops.push({ type: 'del', text: h.from, hint: true }, { type: 'ins', text: h.to, hint: true });
+        cur = h.end;
+      }
+      if (end > cur) ops.push({ type: 'same', text: fixed.slice(cur, end) });
+    } else ops.push(op);
+    pos = end;
+  }
+  if (next !== sorted.length) return null;
+  const groups = SR_diffGroups(ops);
+  const hintGroups = new Set(ops.filter((op, k) => op.hint && groups[k] >= 0).map((op) => groups[ops.indexOf(op)]));
+  // A hint group holds only the hint (no fix right next to it).
+  if (ops.some((op, k) => !op.hint && hintGroups.has(groups[k]))) return null;
+  if (hintGroups.size !== hints.length) return null;
+  return SR_applyDiff(ops, hintGroups) === SR_applyDiff(base, new Set()) ? { ops, hintGroups } : null;
+}
+
+// Where a rules-only or hybrid result came from, for the result label.
+const SR_RULES_LABEL = 'Proofr\'s rules · on this computer';
 
 // Habits: a pattern across the user's own working pairs. Each pair counts for the
 // first habit it fits. [id, label, fits(from, to) on lowercase-folded apostrophes,
@@ -2768,6 +3388,16 @@ if (typeof self !== 'undefined') {
   self.SR_insightsView = SR_insightsView;
   self.SR_ruleFor = SR_ruleFor;
   self.SR_changeReason = SR_changeReason;
+  self.SR_RULES = SR_RULES;
+  self.SR_ruleCheck = SR_ruleCheck;
+  self.SR_applyHits = SR_applyHits;
+  self.SR_ruleFix = SR_ruleFix;
+  self.SR_reasonFromHits = SR_reasonFromHits;
+  self.SR_proofreadHybrid = SR_proofreadHybrid;
+  self.SR_changedRanges = SR_changedRanges;
+  self.SR_freshHints = SR_freshHints;
+  self.SR_hintDiff = SR_hintDiff;
+  self.SR_RULES_LABEL = SR_RULES_LABEL;
   self.SR_weeklyLine = SR_weeklyLine;
   self.SR_buildPractice = SR_buildPractice;
   self.SR_checkPractice = SR_checkPractice;

@@ -1,9 +1,12 @@
 // welcome.js — the tab opened on first install (background.js onInstalled).
 // Built around one real first proofread, plus the two things that decide
-// whether Proofr gets used again: a pinned toolbar icon and a working AI.
+// whether Proofr gets used again: a pinned toolbar icon and, optionally, an AI.
+// Proofread works on every computer with Proofr's own rules; an AI adds
+// sentence-level fixes.
 
 const $ = (id) => document.getElementById(id);
 let windowId = null; // cached so sidePanel.open can run synchronously inside a click
+let aiReady = false; // an AI can answer the "Try it here" proofread
 
 function escapeHtml(s) {
   // Quotes too: values go inside attributes (model ids from a provider's list).
@@ -11,8 +14,14 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => map[c]);
 }
 
+// A step finished while you watch gets a short pop on its number; steps
+// already done when the page opens just show green.
+let pageReady = false;
 function markDone(stepId, done) {
-  $(stepId).classList.toggle('done', !!done);
+  const step = $(stepId);
+  const was = step.classList.contains('done');
+  step.classList.toggle('done', !!done);
+  if (done && !was && pageReady) { step.classList.remove('just'); void step.offsetWidth; step.classList.add('just'); }
 }
 
 function openPanel() {
@@ -67,12 +76,13 @@ async function refreshAI() {
     button('Use a cloud provider instead', false, openPanel);
     markDone('stepAI', false);
   } else {
-    $('aiText').innerHTML = 'This Chrome can\'t run on-device AI. Connect an AI provider instead: <b>Groq</b> has a free tier and takes about a minute, and <b>Ollama</b> or <b>LM Studio</b> run on your own computer with no key.';
-    button('Connect a provider', true, openPanel);
+    $('aiText').innerHTML = 'Proofread already works on this computer with Proofr\'s own rules, which fix common mistakes like <i>its</i> and <i>it\'s</i>. For rewriting styles and fixes that need the whole sentence, you can connect an AI provider: <b>Groq</b> has a free tier and takes about a minute, and <b>Ollama</b> or <b>LM Studio</b> run on your own computer with no key.';
+    button('Connect a provider (optional)', false, openPanel);
     markDone('stepAI', false);
   }
-  $('btnTry').disabled = !(availability === 'available' || ready);
-  $('tryStatus').textContent = $('btnTry').disabled ? 'Finish step 2 first.' : '';
+  aiReady = availability === 'available' || ready;
+  $('btnTry').disabled = false;
+  $('tryStatus').textContent = '';
 }
 
 // The model download needs a click on a page; this is that click.
@@ -117,15 +127,30 @@ async function tryProofread() {
   if (!text) return;
   $('btnTry').disabled = true;
   $('tryStatus').textContent = 'Proofreading…';
-  const response = await sendMessage({ action: 'hoverRewrite', text, tone: 'grammar', targetLang: 'en' });
-  $('btnTry').disabled = false;
-  if (!response || response.error) {
-    $('tryStatus').textContent = (response && response.message) || 'Something went wrong. Try again.';
+  // Rules first, then the AI when one is set up, then the rules again (the
+  // same order as a Proofread anywhere else).
+  let failed = null;
+  const askAI = async (t) => {
+    const r = await sendMessage({ action: 'hoverRewrite', text: t, tone: 'grammar', targetLang: 'en' });
+    if (!r || r.error) { failed = (r && r.message) || 'Something went wrong. Try again.'; throw new Error(failed); }
+    return r;
+  };
+  let response;
+  try {
+    response = await SR_proofreadHybrid(text, { runAI: aiReady ? askAI : null });
+  } catch (_) {
+    $('btnTry').disabled = false;
+    $('tryStatus').textContent = failed || 'Something went wrong. Try again.';
     return;
   }
+  $('btnTry').disabled = false;
   const fixes = (typeof SR_wordDiffForDisplay === 'function' && typeof SR_diffCount === 'function')
     ? SR_diffCount(SR_wordDiffForDisplay(text, response.text, 'grammar') || []) : null;
-  $('tryStatus').textContent = fixes == null ? 'Done.' : fixes === 0 ? (response.text === text ? 'No changes needed.' : 'Fixed the spacing.') : `Fixed ${fixes} thing${fixes === 1 ? '' : 's'}.`;
+  // The same short count as the note on a page; rules alone count their fixes.
+  const n = !response.ai && response.ruleCount ? response.ruleCount : fixes;
+  $('tryStatus').textContent = fixes == null ? 'Done.'
+    : fixes === 0 ? (response.text === text ? 'No mistakes found' : 'Spacing fixed')
+    : `${n} fix${n === 1 ? '' : 'es'}${response.ai ? '' : ' · on this computer, no AI needed'}`;
   $('tryResult').innerHTML = renderDiff(text, response.text);
   $('tryResult').classList.remove('hidden');
   markDone('stepTry', true);
@@ -148,6 +173,43 @@ async function refreshShortcut() {
   }
 }
 
+// === Step 5: Check as I type, with Chrome's permission asked from this click ===
+async function refreshLive() {
+  const on = (await chrome.storage.sync.get(['srLiveCheck'])).srLiveCheck === true;
+  $('btnLive').textContent = on ? 'Turn off Check as I type' : 'Turn on Check as I type';
+  $('btnLive').setAttribute('aria-pressed', String(on));
+  $('liveStatus').textContent = on ? 'On. Try it in any text box.' : '';
+  $('liveStatus').className = on ? 'status ok' : 'status';
+  markDone('stepLive', on);
+}
+async function toggleLive() {
+  const on = (await chrome.storage.sync.get(['srLiveCheck'])).srLiveCheck === true;
+  if (on) {
+    await chrome.storage.sync.set({ srLiveCheck: false });
+    if (!(await chrome.storage.sync.get(['srHoverAssist'])).srHoverAssist) await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
+  } else {
+    const granted = await chrome.permissions.request({ origins: ['<all_urls>'] }).catch(() => false);
+    if (granted) await chrome.storage.sync.set({ srLiveCheck: true });
+    else { $('liveStatus').textContent = 'Stays off: Chrome needs your permission to read text boxes on pages.'; $('liveStatus').className = 'status bad'; return; }
+  }
+  await refreshLive();
+}
+
+// === Step 6: School in one click, instead of finding it in Settings ===
+async function refreshSchool() {
+  const on = (await chrome.storage.sync.get(['srSchool'])).srSchool === true;
+  $('btnSchool').textContent = on ? 'Turn off School' : 'Turn on School';
+  $('btnSchool').setAttribute('aria-pressed', String(on));
+  $('schoolStatus').textContent = on ? 'School is on. Change it any time in Settings, under Proofread.' : '';
+  $('schoolStatus').className = on ? 'status ok' : 'status';
+  markDone('stepSchool', on);
+}
+async function toggleSchool() {
+  const on = (await chrome.storage.sync.get(['srSchool'])).srSchool === true;
+  await chrome.storage.sync.set(on ? { srSchool: false } : { srSchool: true, srCoach: false });
+  await refreshSchool();
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   if (typeof SR_LOGO_SVG !== 'undefined') $('mark').innerHTML = SR_LOGO_SVG;
   $('undoKey').textContent = /Mac/i.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
@@ -155,8 +217,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   $('btnTry').addEventListener('click', tryProofread);
   $('btnPanel').addEventListener('click', openPanel);
+  $('btnSchool').addEventListener('click', toggleSchool);
+  $('btnLive').addEventListener('click', toggleLive);
 
-  await Promise.all([refreshPin(), refreshAI(), refreshShortcut()]);
+  await Promise.all([refreshPin(), refreshAI(), refreshShortcut(), refreshSchool(), refreshLive()]);
+  pageReady = true;
 
   // Pinning happens in Chrome's own UI; tick the step off as soon as it does.
   if (chrome.action.onUserSettingsChanged) chrome.action.onUserSettingsChanged.addListener(refreshPin);

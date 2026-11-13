@@ -209,7 +209,7 @@
     .advanced { margin-top: 20px; }
     .advanced > summary {
       cursor: pointer; list-style: none;
-      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      font-size: 13px; font-weight: 600;
       color: var(--ink-soft);
       padding: 4px 0;
     }
@@ -489,6 +489,15 @@
     .prog-icon svg { width: 11px; height: 11px; display: block; }
     .prog-icon.ok { background: var(--live-bg); color: var(--live-ink); }
     .prog-icon.miss { background: var(--warn-bg); color: var(--warn-ink); font-size: 11px; font-weight: 700; }
+    /* School suggestions under a Proofread: one row each, used with a click. */
+    .hint-list { margin: 0 12px 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+    .hint-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 4px; }
+    .hint-head .pill-btn { text-transform: none; letter-spacing: 0; }
+    .hint-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+    .hint-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
+    .hint-pair { color: var(--ink); }
+    .hint-from { color: var(--ink-faint); }
+    .hint-why { font-size: 12px; color: var(--ink-soft); }
     .mastered-line { display: flex; align-items: center; gap: 8px; padding: 0 12px 10px; font-size: 13px; color: var(--live-ink); }
     .mastered-line b { font-weight: 650; }
     /* Hero: the headline in plain words, the rate behind it, the trend, and Practice. */
@@ -686,9 +695,9 @@
     }
     .settings-body label {
       display: block;
-      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      color: var(--ink-soft);
-      margin-bottom: 9px;
+      font-size: 13px; font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 8px;
     }
 
     /* No-AI first run: explains why nothing works yet and the fastest fix. */
@@ -698,10 +707,10 @@
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 8px;
-      font-size: 12px; line-height: 1.55; color: var(--ink-soft);
+      font-size: 13px; line-height: 1.55; color: var(--ink-soft);
     }
     .setup-card.hidden { display: none; }
-    .setup-card > b, .setup-card > .setup-title { display: block; font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+    .setup-card > b, .setup-card > .setup-title { display: block; font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
     .setup-card p { margin-bottom: 8px; }
     .setup-card ol { padding-left: 18px; }
     .setup-card li { margin-bottom: 3px; }
@@ -715,7 +724,7 @@
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 8px;
-      font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none;
+      font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none;
       color: var(--ink);
       cursor: pointer;
       margin-bottom: 6px;
@@ -729,7 +738,7 @@
       display: flex; align-items: center; gap: 10px;
       padding: 11px 12px; margin-bottom: 6px;
       background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-      font-size: 13px;
+      font-size: 14px;
     }
     .shortcut-row > span { flex: 1; min-width: 0; }
     .shortcut-row b { display: block; font-weight: 600; margin-bottom: 2px; }
@@ -784,7 +793,18 @@
     .rate-line button { background: none; border: none; padding: 0; font-size: 12px; color: var(--ink-soft); text-decoration: underline; cursor: pointer; }
     .rate-line button:hover { color: var(--ink); }
     .toggle-row .settings-hint { display: block; margin: 0; }
-    .toggle-row input { flex: none; margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
+    /* An on/off switch: easier to read at a glance than a small checkbox. */
+    .toggle-row input[type=checkbox] {
+      flex: none; appearance: none; -webkit-appearance: none; margin: 2px 0 0;
+      width: 38px; height: 22px; border-radius: 999px; background: var(--line);
+      position: relative; cursor: pointer; transition: background .15s ease;
+    }
+    .toggle-row input[type=checkbox]::after {
+      content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease;
+    }
+    .toggle-row input[type=checkbox]:checked { background: var(--accent); }
+    .toggle-row input[type=checkbox]:checked::after { transform: translateX(16px); }
 
     /* "Saved" confirmation toast for the instant-apply engine control */
     .saved-toast {
@@ -807,6 +827,7 @@
     /* Segmented control: atomic single-value settings commit instantly, no
        Save button, matching native OS settings (macOS System Settings, iOS). */
     .seg-control {
+      position: relative;
       display: flex; gap: 2px;
       background: var(--card);
       border: 1px solid var(--line);
@@ -818,18 +839,34 @@
       min-width: 0;
       border: none; background: transparent;
       color: var(--ink-soft);
-      font-size: 12px; font-weight: 600;
-      padding: 7px 6px;
+      font-size: 13px; font-weight: 600;
+      padding: 9px 6px;
       border-radius: 8px;
       text-align: center;
       white-space: nowrap;
     }
     .seg-btn:hover:not(.active):not(:disabled) { color: var(--ink); background: var(--line-soft); }
     .seg-btn.active { background: var(--accent); color: var(--accent-fg); }
+    /* The choice's highlight slides to the option picked (sidepanel.js segIndicator). */
+    .seg-ind { position: absolute; left: 0; top: 0; border-radius: 8px; background: var(--accent); pointer-events: none;
+      transition: transform 180ms cubic-bezier(0, 0, 0, 1), width 180ms cubic-bezier(0, 0, 0, 1); }
+    .seg-control.has-ind .seg-btn { position: relative; z-index: 1; transition: color 180ms ease; }
+    .seg-control.has-ind .seg-btn.active { background: transparent; }
+    /* Opening AI: its contents arrive, so the eye follows the fold. */
+    .ai-section[open] > .ai-body { animation: ai-open 180ms cubic-bezier(0, 0, 0, 1); }
+    @keyframes ai-open { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+    /* A School suggestion used: its row slides out before the card updates. */
+    .hint-row.used { animation: row-out 160ms cubic-bezier(0.3, 0, 1, 1) both; }
+    @keyframes row-out { to { opacity: 0; transform: translateX(8px); } }
+    @media (prefers-reduced-motion: reduce) {
+      .seg-ind, .seg-control.has-ind .seg-btn { transition: none; }
+      .ai-section[open] > .ai-body, .hint-row.used { animation: none; }
+    }
     .seg-btn:disabled { color: var(--ink-faint); cursor: not-allowed; }
     .seg-btn:disabled:hover { background: transparent; }
 
-    .settings-hint { margin-top: 9px; font-size: 11px; color: var(--ink-soft); line-height: 1.5; }
+    .settings-hint { margin-top: 8px; font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+    .settings-body .settings-hint:empty { display: none; }
     .settings-hint a { color: var(--ink); text-decoration: none; font-weight: 600; }
     .settings-hint a:hover { text-decoration: underline; }
 
@@ -1002,18 +1039,37 @@
     .link-danger.hidden { visibility: hidden; }
 
     .settings-section-label {
-      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      color: var(--ink-soft);
-      margin-top: 20px;
-      margin-bottom: 8px;
+      font-size: 15px; font-weight: 650;
+      color: var(--ink);
+      margin-top: 24px;
+      margin-bottom: 10px;
     }
+    #settingsPanel .settings-body > .settings-section-label:first-of-type { margin-top: 2px; }
+    .settings-sub-label { font-size: 14px; font-weight: 600; color: var(--ink); margin: 4px 0 8px; }
+    #liveLookRow { margin-bottom: 8px; }
+
+    /* AI, folded to one status line: open it to connect or change one. */
+    .ai-section { margin-top: 24px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+    .ai-section > summary {
+      list-style: none; cursor: pointer;
+      display: flex; align-items: center; gap: 10px; padding: 13px 12px;
+    }
+    .ai-section > summary::-webkit-details-marker { display: none; }
+    .ai-sum { flex: 1; min-width: 0; }
+    .ai-sum b { display: block; font-size: 15px; font-weight: 650; color: var(--ink); }
+    .ai-sum span { display: block; margin-top: 2px; font-size: 13px; color: var(--ink-soft); line-height: 1.45; }
+    .ai-section > summary .chevron { width: 16px; height: 16px; flex: none; color: var(--ink-soft); transition: transform .15s ease; }
+    .ai-section[open] > summary .chevron { transform: rotate(90deg); }
+    .ai-body { padding: 14px 12px 12px; border-top: 1px solid var(--line); }
+    .ai-body .setup-card { background: var(--paper); }
+    .ai-body .advanced { margin-top: 18px; }
     .settings-row {
       display: flex; align-items: center; justify-content: space-between;
       padding: 11px 12px;
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 8px;
-      font-size: 13px;
+      font-size: 14px;
       color: var(--ink);
       cursor: pointer;
       margin-bottom: 6px;
@@ -1121,7 +1177,7 @@
         <div class="prog-card prog-empty" id="progEmpty" hidden>
           <b id="progEmptyTitle">Nothing here yet</b>
           <span id="progEmptyText">Proofread something you wrote. The words Proofr fixes for you show up here, and so does how your mistake rate changes week to week.</span>
-          <br><button type="button" class="btn-outline" id="btnProgEmpty" hidden>Turn on in Settings</button>
+          <br><button type="button" class="btn-outline" id="btnProgEmpty" hidden>Turn on</button>
           <button type="button" class="btn-outline" id="btnProgMixups" hidden>Practice common mix-ups</button>
         </div>
         <div class="prog" id="progBody" hidden>
@@ -1151,8 +1207,8 @@
             <button type="button" class="link-btn btn-more" id="btnAllWords" hidden></button>
             <p class="prog-note" id="progMasteredLine" hidden></p>
           </section>
-          <p class="prog-note">Only corrected words and word counts are kept, on this computer. Never your sentences. <button type="button" class="link-danger" id="btnClearInsights">Clear history</button></p>
         </div>
+        <p class="prog-note" id="progPrivacy"><span id="progPrivacyText">Only corrected words and word counts are kept, on this computer. Never your sentences.</span> <button type="button" class="link-btn" id="btnInsightsOff">Turn off</button> <button type="button" class="link-danger" id="btnClearInsights">Clear history</button></p>
       </div>
     </div>
 
@@ -1166,6 +1222,7 @@
         <div class="pr-bar" id="prBar" role="progressbar" aria-label="Round progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="prBarFill"></i></div>
         <span class="pr-tally" id="prTally" hidden></span>
         <span class="pr-combo" id="prCombo" hidden></span>
+        <button class="icon-btn" id="btnPrSound" type="button" aria-pressed="false" aria-label="Sounds" title="Sounds"></button>
       </div>
       <div class="pr-today" id="prChoose" hidden>
         <h3>Practice</h3>
@@ -1224,101 +1281,22 @@
       <div class="saved-toast" id="savedToast">✓ Saved</div>
 
       <div class="settings-body">
-        <!-- The device can run on-device AI but hasn't downloaded the model yet. -->
-        <div class="setup-card hidden" id="deviceSetupCard">
-          <b>On-device AI needs a one-time setup</b>
-          <p>Your Chrome can run Proofr privately on this computer. It first downloads Chrome's AI model, which is large and may take a while on a slow connection.</p>
-          <button type="button" class="btn-solid" id="btnDeviceSetup">Set up on-device AI</button>
-          <p class="settings-hint" id="deviceSetupStatus" role="status"></p>
+        <div class="settings-section-label">Proofread</div>
+        <div class="seg-control" id="proofSeg" role="group" aria-label="Proofread">
+          <button type="button" class="seg-btn" data-value="fix" aria-pressed="false">Fix</button>
+          <button type="button" class="seg-btn" data-value="school" aria-pressed="false">School</button>
+          <button type="button" class="seg-btn" data-value="coach" aria-pressed="false">Coach</button>
         </div>
+        <p class="settings-hint" id="proofHint" role="status"></p>
 
-        <!-- Shown only when nothing can run yet (no on-device AI, no key).
-             Answers "why isn't this working" before asking for anything. -->
-        <div class="setup-card hidden" id="setupCard">
-          <b>On-device AI isn't available in this Chrome</b>
-          <p>Proofr's built-in mode uses Chrome's own AI model, which only runs on some desktop computers. <a href="https://developer.chrome.com/docs/ai/get-started#hardware" target="_blank" rel="noopener">See Chrome's requirements</a>.</p>
-          <p>Connect any OpenAI-compatible AI provider below instead. Groq has a free tier and takes about a minute:</p>
-          <ol>
-            <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> and sign in.</li>
-            <li>Click <b>Create API Key</b> and copy it.</li>
-            <li>Paste it in the <b>API key</b> field below and press Save.</li>
-          </ol>
-          <p>Running Ollama or LM Studio on this computer? Pick it under <b>AI provider</b>; no key needed.</p>
+        <div class="settings-section-label">Appearance</div>
+        <div class="seg-control" id="themeSeg" role="group" aria-label="Appearance">
+          <button type="button" class="seg-btn" data-value="auto" aria-pressed="false">Auto</button>
+          <button type="button" class="seg-btn" data-value="light" aria-pressed="false">Light</button>
+          <button type="button" class="seg-btn" data-value="dark" aria-pressed="false">Dark</button>
         </div>
+        <p class="settings-hint" id="themeHint">Auto follows your computer's light or dark setting. Also used for Proofr on web pages.</p>
 
-        <div class="setup-card hidden" id="cloudOffer">
-          <b>On-device AI is ready</b>
-          <p>Proofr runs privately on this computer, with no account or key. You can also connect a cloud AI provider for more languages and longer text.</p>
-          <button type="button" class="btn-outline" id="btnUseCloud">Use a cloud AI provider instead</button>
-        </div>
-
-        <div id="cloudSection">
-          <label>AI provider</label>
-          <div class="cloud-select-wrap">
-            <button type="button" class="cloud-select-btn" id="cloudServiceBtn">
-              <span id="cloudServiceBtnLabel">Groq</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-            <div class="cloud-select-menu hidden" id="cloudServiceMenu" role="listbox">
-            </div>
-          </div>
-          <p class="settings-hint" id="providerNote"></p>
-
-          <!-- A custom endpoint is one form with one Save: name, URL and key are
-               checked against the server together. Nothing here saves by itself. -->
-          <div id="customBaseURLRow" class="hidden" style="margin-top:10px;">
-            <label for="customNameInput">Name</label>
-            <input type="text" id="customNameInput" class="cloud-field" placeholder="Shown in menus, e.g. Work server" autocomplete="off" spellcheck="false" maxlength="40">
-            <label for="customBaseURLInput" style="margin-top:12px;">Base URL</label>
-            <input type="text" id="customBaseURLInput" class="cloud-field" placeholder="https://your-endpoint.example.com/v1" autocomplete="off" spellcheck="false">
-            <label for="customKeyInput" style="margin-top:12px;">API key</label>
-            <div class="key-input-wrap">
-              <input type="password" id="customKeyInput" autocomplete="off" spellcheck="false">
-              <button type="button" class="eye-btn" id="btnCustomKeyEye" aria-label="Show key"></button>
-            </div>
-            <p class="settings-hint saved-line" id="customHint" role="status"></p>
-            <div class="custom-actions" id="customActions">
-              <button id="btnRemoveCustom" class="btn-outline btn-danger" type="button">Remove</button>
-              <button id="btnCancelCustom" class="btn-outline" type="button">Cancel</button>
-              <button id="btnSaveCustom" class="btn-solid" type="button">Save</button>
-            </div>
-            <div class="custom-actions custom-confirm hidden" id="customConfirm" role="alertdialog" aria-labelledby="customConfirmText">
-              <p id="customConfirmText"></p>
-              <button id="btnRemoveKeep" class="btn-outline" type="button">Keep</button>
-              <button id="btnRemoveConfirm" class="btn-solid btn-danger-solid" type="button">Remove</button>
-            </div>
-          </div>
-
-          <div id="keySection">
-            <label for="apiKeyInput" id="apiKeyLabel" style="margin-top:12px;">API key</label>
-            <div class="key-row">
-              <div class="key-input-wrap">
-                <input type="password" id="apiKeyInput" autocomplete="off" spellcheck="false">
-                <button type="button" class="eye-btn" id="btnToggleKeyEye" aria-label="Show key"></button>
-              </div>
-              <button id="btnSaveKey" class="btn-outline" type="button">Change</button>
-            </div>
-            <div class="settings-actions">
-              <p class="settings-hint saved-line" id="keyHint"></p>
-              <button id="btnClearKey" class="link-danger hidden" type="button">Remove</button>
-            </div>
-          </div>
-
-          <div id="modelSection">
-          <label for="cloudModelInput" style="margin-top:12px;">Model</label>
-          <div class="model-field-wrap">
-            <input type="text" id="cloudModelInput" class="cloud-field" placeholder="model name" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="modelMenuList" aria-expanded="false">
-            <button type="button" class="model-browse-btn" id="btnBrowseModels" aria-label="Show available models" title="Show available models" tabindex="-1">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-          </div>
-          <div class="model-menu hidden" id="modelMenu">
-            <div class="model-menu-list" id="modelMenuList" role="listbox"></div>
-          </div>
-          <p class="settings-hint" id="modelHint" role="status"></p>
-          </div>
-
-        </div>
 
         <div class="settings-section-label">On web pages</div>
         <div class="shortcut-row">
@@ -1329,6 +1307,23 @@
           <kbd id="shortcutValue">…</kbd>
           <button type="button" class="btn-outline" id="btnChangeShortcut">Change</button>
         </div>
+        <label class="toggle-row" for="liveToggle">
+          <span>
+            <b>Check as I type</b>
+            <span class="settings-hint">Underlines mistakes in text boxes as you type. Point at one to see the fix and why. Uses Proofr's rules on this computer; nothing is sent. Chrome asks for permission first.</span>
+          </span>
+          <input type="checkbox" id="liveToggle">
+        </label>
+        <p class="settings-hint" id="liveHint" role="status"></p>
+        <div id="liveLookRow" hidden>
+          <div class="settings-sub-label" id="liveLookLabel">Beside the text box</div>
+          <div class="seg-control" id="liveLookSeg" role="group" aria-labelledby="liveLookLabel">
+            <button type="button" class="seg-btn" data-value="caterpillar" aria-pressed="false">Caterpillar</button>
+            <button type="button" class="seg-btn" data-value="capsule" aria-pressed="false">Capsule</button>
+            <button type="button" class="seg-btn" data-value="plain" aria-pressed="false">Plain</button>
+          </div>
+          <p class="settings-hint" id="liveLookHint" role="status"></p>
+        </div>
         <label class="toggle-row" for="hoverToggle">
           <span>
             <b>Hover actions</b>
@@ -1338,47 +1333,123 @@
         </label>
         <p class="settings-hint" id="hoverKeyHint" hidden></p>
         <p class="settings-hint" id="hoverHint" role="status"></p>
-        <label class="toggle-row" for="insightsToggle">
-          <span>
-            <b>Learn from my proofreads</b>
-            <span class="settings-hint">Keeps the words Proofread fixes for you and how many words you proofread (never your sentences) on this computer, for the Progress tab.</span>
-          </span>
-          <input type="checkbox" id="insightsToggle">
-        </label>
-        <label class="toggle-row" for="coachToggle">
-          <span>
-            <b>Coach mode</b>
-            <span class="settings-hint">Proofread marks the mistakes in your text box instead of fixing them, so you can fix them yourself. Show fixes is one click away.</span>
-          </span>
-          <input type="checkbox" id="coachToggle">
-        </label>
-        <label class="toggle-row" for="soundToggle">
-          <span>
-            <b>Practice sounds</b>
-            <span class="settings-hint">A soft chime for a right answer and a low tone for a wrong one, made on this computer.</span>
-          </span>
-          <input type="checkbox" id="soundToggle">
-        </label>
 
-        <div class="settings-section-label">Appearance</div>
-        <div class="seg-control" id="themeSeg" role="group" aria-label="Appearance">
-          <button type="button" class="seg-btn" data-value="auto" aria-pressed="false">Auto</button>
-          <button type="button" class="seg-btn" data-value="light" aria-pressed="false">Light</button>
-          <button type="button" class="seg-btn" data-value="dark" aria-pressed="false">Dark</button>
-        </div>
-        <p class="settings-hint" id="themeHint">Auto follows your computer's light or dark setting. Also used for Proofr on web pages.</p>
+        <!-- AI is optional: Proofread works without it. Folded to one status
+             line; "Set up AI" anywhere opens it. -->
+        <details class="ai-section" id="aiSection">
+          <summary>
+            <span class="ai-sum"><b>AI (optional)</b><span id="aiStatusLine">Checking…</span></span>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+          </summary>
+          <div class="ai-body">
+          <!-- The device can run on-device AI but hasn't downloaded the model yet. -->
+          <div class="setup-card hidden" id="deviceSetupCard">
+            <b>On-device AI needs a one-time setup</b>
+            <p>Your Chrome can run Proofr privately on this computer. It first downloads Chrome's AI model, which is large and may take a while on a slow connection.</p>
+            <button type="button" class="btn-solid" id="btnDeviceSetup">Set up on-device AI</button>
+            <p class="settings-hint" id="deviceSetupStatus" role="status"></p>
+          </div>
 
-        <details class="advanced" id="advancedSection">
-          <summary>Advanced: AI engine</summary>
-          <div class="advanced-body">
-            <label>AI engine</label>
-            <div class="seg-control" id="engineSeg" role="group" aria-label="AI engine">
-              <button type="button" class="seg-btn" data-value="auto">Auto</button>
-              <button type="button" class="seg-btn" data-value="device">On-device</button>
-              <button type="button" class="seg-btn" data-value="cloud">Cloud</button>
+          <!-- Shown only when nothing can run yet (no on-device AI, no key).
+               Answers "why isn't this working" before asking for anything. -->
+          <div class="setup-card hidden" id="setupCard">
+            <b>Add an AI for rewriting and harder fixes</b>
+            <p>Proofread already works with Proofr's rules. An AI adds the rewriting styles and catches mistakes that need the whole sentence.</p>
+            <p>Groq has a free tier and takes about a minute:</p>
+            <ol>
+              <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> and sign in.</li>
+              <li>Click <b>Create API Key</b> and copy it.</li>
+              <li>Paste it in the <b>API key</b> field below and press Save.</li>
+            </ol>
+            <p>Running Ollama or LM Studio on this computer? Pick it under <b>AI provider</b>; no key needed.</p>
+          </div>
+
+          <div class="setup-card hidden" id="cloudOffer">
+            <b>On-device AI is ready</b>
+            <p>Proofr runs privately on this computer, with no account or key. You can also connect a cloud AI provider for more languages and longer text.</p>
+            <button type="button" class="btn-outline" id="btnUseCloud">Use a cloud AI provider instead</button>
+          </div>
+
+          <div id="cloudSection">
+            <label>AI provider</label>
+            <div class="cloud-select-wrap">
+              <button type="button" class="cloud-select-btn" id="cloudServiceBtn">
+                <span id="cloudServiceBtnLabel">Groq</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="cloud-select-menu hidden" id="cloudServiceMenu" role="listbox">
+              </div>
             </div>
-            <p class="settings-hint" id="engineHint"></p>
+            <p class="settings-hint" id="providerNote"></p>
 
+            <!-- A custom endpoint is one form with one Save: name, URL and key are
+                 checked against the server together. Nothing here saves by itself. -->
+            <div id="customBaseURLRow" class="hidden" style="margin-top:10px;">
+              <label for="customNameInput">Name</label>
+              <input type="text" id="customNameInput" class="cloud-field" placeholder="Shown in menus, e.g. Work server" autocomplete="off" spellcheck="false" maxlength="40">
+              <label for="customBaseURLInput" style="margin-top:12px;">Base URL</label>
+              <input type="text" id="customBaseURLInput" class="cloud-field" placeholder="https://your-endpoint.example.com/v1" autocomplete="off" spellcheck="false">
+              <label for="customKeyInput" style="margin-top:12px;">API key</label>
+              <div class="key-input-wrap">
+                <input type="password" id="customKeyInput" autocomplete="off" spellcheck="false">
+                <button type="button" class="eye-btn" id="btnCustomKeyEye" aria-label="Show key"></button>
+              </div>
+              <p class="settings-hint saved-line" id="customHint" role="status"></p>
+              <div class="custom-actions" id="customActions">
+                <button id="btnRemoveCustom" class="btn-outline btn-danger" type="button">Remove</button>
+                <button id="btnCancelCustom" class="btn-outline" type="button">Cancel</button>
+                <button id="btnSaveCustom" class="btn-solid" type="button">Save</button>
+              </div>
+              <div class="custom-actions custom-confirm hidden" id="customConfirm" role="alertdialog" aria-labelledby="customConfirmText">
+                <p id="customConfirmText"></p>
+                <button id="btnRemoveKeep" class="btn-outline" type="button">Keep</button>
+                <button id="btnRemoveConfirm" class="btn-solid btn-danger-solid" type="button">Remove</button>
+              </div>
+            </div>
+
+            <div id="keySection">
+              <label for="apiKeyInput" id="apiKeyLabel" style="margin-top:12px;">API key</label>
+              <div class="key-row">
+                <div class="key-input-wrap">
+                  <input type="password" id="apiKeyInput" autocomplete="off" spellcheck="false">
+                  <button type="button" class="eye-btn" id="btnToggleKeyEye" aria-label="Show key"></button>
+                </div>
+                <button id="btnSaveKey" class="btn-outline" type="button">Change</button>
+              </div>
+              <div class="settings-actions">
+                <p class="settings-hint saved-line" id="keyHint"></p>
+                <button id="btnClearKey" class="link-danger hidden" type="button">Remove</button>
+              </div>
+            </div>
+
+            <div id="modelSection">
+            <label for="cloudModelInput" style="margin-top:12px;">Model</label>
+            <div class="model-field-wrap">
+              <input type="text" id="cloudModelInput" class="cloud-field" placeholder="model name" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-controls="modelMenuList" aria-expanded="false">
+              <button type="button" class="model-browse-btn" id="btnBrowseModels" aria-label="Show available models" title="Show available models" tabindex="-1">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            </div>
+            <div class="model-menu hidden" id="modelMenu">
+              <div class="model-menu-list" id="modelMenuList" role="listbox"></div>
+            </div>
+            <p class="settings-hint" id="modelHint" role="status"></p>
+            </div>
+
+          </div>
+          <details class="advanced" id="advancedSection">
+            <summary>Advanced: which AI to use</summary>
+            <div class="advanced-body">
+              <label>AI engine</label>
+              <div class="seg-control" id="engineSeg" role="group" aria-label="AI engine">
+                <button type="button" class="seg-btn" data-value="auto">Auto</button>
+                <button type="button" class="seg-btn" data-value="device">On-device</button>
+                <button type="button" class="seg-btn" data-value="cloud">Cloud</button>
+              </div>
+              <p class="settings-hint" id="engineHint"></p>
+
+            </div>
+          </details>
           </div>
         </details>
 

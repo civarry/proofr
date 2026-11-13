@@ -17,8 +17,10 @@ assert.ok(section.includes('buildContextMenus'), 'found the menu section of back
 const items = new Map();
 const errors = [];
 const tick = () => new Promise((r) => setTimeout(r, 1));
+let school = false;
 const chrome = {
   runtime: { lastError: undefined },
+  storage: { sync: { get: async () => { await tick(); return { srSchool: school }; } } },
   commands: { getAll: async () => { await tick(); return [{ name: 'proofread-selection', shortcut: 'Alt+Shift+P' }]; } },
   contextMenus: {
     // Chrome runs calls in the order they're made; the promise settles later.
@@ -52,5 +54,25 @@ await tick(); await tick();
 assert.deepEqual(errors, [], 'no duplicate-id errors when builds overlap');
 assert.deepEqual(warnings, [], 'nothing warned');
 assert.equal(items.size, expected, 'each item exists once');
+
+// The School setting: one top-level Proofread (no submenu to open), for a
+// selection or a whole text box, and no rewriting tones.
+school = true;
+items.clear();
+await build();
+await tick();
+const ids = [...items.keys()];
+const one = items.get('srOne:grammar');
+assert.ok(one && !one.parentId, 'Proofread is a top-level item, not inside a submenu');
+assert.deepEqual(one.contexts, ['selection', 'editable'], 'it works on a selection and in a text box with nothing selected');
+assert.match(one.title, /^Proofread with Proofr {2}\(Alt\+Shift\+P\)$/, 'it names the shortcut');
+const inBox = [...items.values()].filter((p) => !p.parentId && p.contexts.some((c) => c === 'selection' || c === 'editable'));
+assert.equal(inBox.length, 1, 'only one top-level item in a text box, so Chrome shows it directly');
+assert.ok(!ids.some((id) => /^sr:|^srMore$|^smartRewrite$/.test(id)), 'no tones, no More, no Proofr submenu');
+school = false;
+items.clear();
+await build();
+await tick();
+assert.equal(items.size, expected, 'turning it off brings every item back');
 
 console.log('context-menu: ok');
