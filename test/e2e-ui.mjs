@@ -944,17 +944,8 @@ check('Settings: picking School saves it and says what it does', schoolFlags.srS
 await clk(panel, '#proofSeg .seg-btn[data-value="fix"]'); await sleep(400);
 const fixFlags = await sw.evaluate(async () => chrome.storage.sync.get(['srSchool', 'srCoach']));
 check('Settings: back to Fix turns School off', fixFlags.srSchool === false && fixFlags.srCoach === false, JSON.stringify(fixFlags));
-// What sits beside the box: shown only with Check as I type on; Caterpillar by default.
-const lookOff = await panel.evaluate(() => document.getElementById('liveLookRow').hidden);
-await sw.evaluate(() => chrome.storage.sync.set({ srLiveCheck: true }));
-await panel.reload(); await sleep(800);
-await clk(panel, '#btnSettings'); await sleep(500);
-const lookOn = await panel.evaluate(() => ({ hidden: document.getElementById('liveLookRow').hidden, active: [...document.querySelectorAll('#liveLookSeg .seg-btn.active')].map((b) => b.dataset.value), opts: [...document.querySelectorAll('#liveLookSeg .seg-btn')].map((b) => b.textContent), hint: document.getElementById('liveLookHint').textContent }));
-check('Settings: "Beside the text box" shows only with Check as I type on, starting on Caterpillar', lookOff === true && !lookOn.hidden && lookOn.active.join() === 'caterpillar' && lookOn.opts.join() === 'Caterpillar,Capsule,Plain' && /segment for each line/.test(lookOn.hint), JSON.stringify({ lookOff, lookOn }));
-await clk(panel, '#liveLookSeg .seg-btn[data-value="plain"]'); await sleep(400);
-const lookPlain = { saved: (await sw.evaluate(async () => chrome.storage.sync.get(['srLiveLook']))).srLiveLook, hint: await panel.evaluate(() => document.getElementById('liveLookHint').textContent) };
-check('Settings: picking Plain saves it and says there is no face', lookPlain.saved === 'plain' && /no face/.test(lookPlain.hint), JSON.stringify(lookPlain));
-await sw.evaluate(() => chrome.storage.sync.remove(['srLiveCheck', 'srLiveLook']));
+// Beside the box there's one plain dot, so there's no look to pick.
+check('Settings: no "Beside the text box" choice (the dot is the only look)', await panel.evaluate(() => !document.getElementById('liveLookRow') && !document.getElementById('liveLookSeg')));
 await clk(panel, '#btnSettingsBack'); await sleep(300);
 const putBox = (id, value) => demo.evaluate((id, value) => {
   document.getElementById(id)?.remove();

@@ -434,30 +434,9 @@ async function refreshSettingsPanel() {
   const { srHoverAssist, srLiveCheck } = await chrome.storage.sync.get(['srHoverAssist', 'srLiveCheck']);
   refs.hoverToggle.checked = !!srHoverAssist;
   refs.liveToggle.checked = !!srLiveCheck;
-  await refreshLiveLook();
   await refreshHoverKeyHint();
   await refreshProofSeg();
   refreshWeekLine();
-}
-
-// What sits beside the box while Check as I type is on: Proofr's caterpillar
-// (the default), the capsule face, or a plain dot with no face.
-const LOOK_HINTS = {
-  caterpillar: 'Proofr\'s face, with a segment for each line of text. A dot on a segment marks a line with a mistake.',
-  capsule: 'Proofr\'s face on a capsule as tall as your text, with a dot beside each line with a mistake.',
-  plain: 'A plain blue dot and bar, no face and no character animation. Dots still mark lines with mistakes.',
-};
-async function refreshLiveLook() {
-  const { srLiveLook, srLiveCheck } = await chrome.storage.sync.get(['srLiveLook', 'srLiveCheck']);
-  const value = LOOK_HINTS[srLiveLook] ? srLiveLook : 'caterpillar';
-  refs.liveLookSeg.querySelectorAll('.seg-btn').forEach((btn) => {
-    const on = btn.dataset.value === value;
-    btn.classList.toggle('active', on);
-    btn.setAttribute('aria-pressed', String(on));
-  });
-  refs.liveLookHint.textContent = LOOK_HINTS[value];
-  refs.liveLookRow.hidden = !srLiveCheck;
-  if (!refs.liveLookRow.hidden) segPlacers.forEach((p) => p());
 }
 
 // What Proofread does, as one choice: Fix (the default), School or Coach.
@@ -2538,7 +2517,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   [
     'mark', 'providerPill', 'providerPillText', 'engineMenu', 'btnClearHistory', 'tabBar', 'btnSettings', 'btnSettingsBack',
     'settingsPanel', 'aiSection', 'aiStatusLine', 'advancedSection', 'savedToast', 'setupCard', 'deviceSetupCard', 'btnDeviceSetup', 'deviceSetupStatus',
-    'hoverToggle', 'hoverHint', 'liveToggle', 'liveHint', 'liveLookRow', 'liveLookSeg', 'liveLookHint', 'hoverKeyHint', 'engineSeg', 'engineHint', 'themeSeg',
+    'hoverToggle', 'hoverHint', 'liveToggle', 'liveHint', 'hoverKeyHint', 'engineSeg', 'engineHint', 'themeSeg',
     'cloudOffer', 'btnUseCloud', 'panelNotice', 'undoToast', 'undoToastText', 'btnUndo', 'sendTip', 'supportRow', 'shortcutValue', 'btnChangeShortcut', 'weekLine',
     'tabWrite', 'tabProgress', 'progressPanel', 'progEmpty', 'progEmptyTitle', 'progEmptyText', 'btnProgEmpty', 'btnProgMixups', 'progBody',
     'progHeadLead', 'progHeadText', 'progLine', 'progSpark', 'progStart', 'progStartFill', 'progStartText', 'progMasteredChip', 'progPracticeChip', 'btnPractice', 'progPracticeNote',
@@ -2557,7 +2536,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'thread', 'palette', 'paletteHintLeft', 'paletteList',
     'modeTag', 'modeTagLabel', 'ta', 'charCount', 'sendBtn',
   ].forEach((id) => { refs[id] = el(id); });
-  for (const seg of [refs.proofSeg, refs.themeSeg, refs.engineSeg, refs.liveLookSeg]) if (seg) segIndicator(seg);
+  for (const seg of [refs.proofSeg, refs.themeSeg, refs.engineSeg]) if (seg) segIndicator(seg);
 
   if (typeof SR_LOGO_SVG !== 'undefined') refs.mark.innerHTML = SR_LOGO_SVG;
 
@@ -2658,28 +2637,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  refs.liveLookSeg.querySelectorAll('.seg-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      await Settings.set({ srLiveLook: btn.dataset.value });
-      await refreshLiveLook();
-      showSavedToast();
-    });
-  });
-
   // Check as I type: the same page access as hover actions, asked for here.
   refs.liveToggle.addEventListener('change', () => {
     if (refs.liveToggle.checked) {
       chrome.permissions.request({ origins: ['<all_urls>'] }).then(async (granted) => {
         refs.liveToggle.checked = granted;
         await Settings.set({ srLiveCheck: granted });
-        await refreshLiveLook();
         refs.liveHint.textContent = granted ? '' : 'Check as I type stays off: Chrome needs your permission to read text boxes on pages.';
         if (granted) showSavedToast();
       }, () => { refs.liveToggle.checked = false; });
     } else {
       Settings.set({ srLiveCheck: false }).then(async () => {
         refs.liveHint.textContent = '';
-        await refreshLiveLook();
         if (!(await chrome.storage.sync.get(['srHoverAssist'])).srHoverAssist) await chrome.permissions.remove({ origins: ['<all_urls>'] }).catch(() => {});
         showSavedToast();
       });

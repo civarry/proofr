@@ -1046,7 +1046,6 @@
     }
     #settingsPanel .settings-body > .settings-section-label:first-of-type { margin-top: 2px; }
     .settings-sub-label { font-size: 14px; font-weight: 600; color: var(--ink); margin: 4px 0 8px; }
-    #liveLookRow { margin-bottom: 8px; }
 
     /* AI, folded to one status line: open it to connect or change one. */
     .ai-section { margin-top: 24px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
@@ -1315,15 +1314,6 @@
           <input type="checkbox" id="liveToggle">
         </label>
         <p class="settings-hint" id="liveHint" role="status"></p>
-        <div id="liveLookRow" hidden>
-          <div class="settings-sub-label" id="liveLookLabel">Beside the text box</div>
-          <div class="seg-control" id="liveLookSeg" role="group" aria-labelledby="liveLookLabel">
-            <button type="button" class="seg-btn" data-value="caterpillar" aria-pressed="false">Caterpillar</button>
-            <button type="button" class="seg-btn" data-value="capsule" aria-pressed="false">Capsule</button>
-            <button type="button" class="seg-btn" data-value="plain" aria-pressed="false">Plain</button>
-          </div>
-          <p class="settings-hint" id="liveLookHint" role="status"></p>
-        </div>
         <label class="toggle-row" for="hoverToggle">
           <span>
             <b>Hover actions</b>
