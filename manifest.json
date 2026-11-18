@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Proofr: Private AI Proofreader & Rewriter",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Fix grammar right where you type and see why each fix was made. Works with no account or setup. Add AI to rewrite in any tone.",
   "permissions": [
     "contextMenus",

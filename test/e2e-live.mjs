@@ -183,19 +183,24 @@ try {
   const dotOn = (pg) => pg.evaluate(() => {
     const h = document.getElementById('sr-live-host').shadowRoot.querySelector('.handle');
     const r = h.getBoundingClientRect(), a = getComputedStyle(h, '::after');
-    return { shown: !h.hidden, state: h.dataset.state, color: a.backgroundColor, dot: a.width, radius: a.borderRadius, text: h.textContent, label: h.getAttribute('aria-label'), working: h.classList.contains('working'), left: r.left, right: r.right, top: r.top, height: r.height, width: r.width };
+    return { shown: !h.hidden, state: h.dataset.state, color: a.backgroundColor, dot: a.width, radius: a.borderRadius, text: h.textContent, label: h.getAttribute('aria-label'), working: h.classList.contains('working'), halo: getComputedStyle(h, '::before').animationName, haloDur: getComputedStyle(h, '::before').animationDuration, left: r.left, right: r.right, top: r.top, height: r.height, width: r.width };
   });
   const hd = { ...(await dotOn(page)), ...(await page.evaluate(() => { const b = document.getElementById('ta').getBoundingClientRect(); return { boxLeft: b.left, boxTop: b.top, boxHeight: b.height }; })) };
   // One line of text: a circle centered on that line (line 1 is 24px tall, 9px into the box).
   const lineMid = hd.boxTop + 9 + 12;
   check('dot: one mistake gives a yellow circle beside the first line, with no number on it (the count is in its label)', hd.shown && hd.state === 'fix' && hd.color === YELLOW && hd.dot === '12px' && hd.radius === '50%' && !/\d/.test(hd.text) && /1 mistake underlined/.test(hd.label) && hd.right <= hd.boxLeft && hd.height === 22 && hd.width === 22 && Math.abs(hd.top + 11 - lineMid) < 3, JSON.stringify(hd));
+  check('dot: with a mistake a faint ring swells out from it, slowly (3s), while the dot itself stays still', hd.halo === 'halo' && hd.haloDur === '3s' && await page.evaluate(() => getComputedStyle(document.getElementById('sr-live-host').shadowRoot.querySelector('.handle'), '::after').animationName) === 'none', JSON.stringify(hd));
   // More lines: it stays a 22px circle by the first line.
+  await page.evaluate(() => { const h = document.getElementById('sr-live-host').shadowRoot.querySelector('.handle'); window.__shifts = []; new MutationObserver(() => { if (h.classList.contains('shift')) window.__shifts.push(h.dataset.state + h.dataset.level + '/' + getComputedStyle(h, '::after').animationName); }).observe(h, { attributes: true, attributeFilter: ['class'] }); });
   await page.keyboard.press('End');
   await page.keyboard.type('\nsecond line dont\nthird line');
   await sleep(700);
   const hd2 = await dotOn(page);
   check('dot: three mistakes turn it orange', hd2.color === ORANGE && /3 mistakes/.test(hd2.label), JSON.stringify(hd2));
   check('dot: more lines of text never make it grow; it stays by the first line', hd2.height === 22 && hd2.width === 22 && Math.abs(hd2.top + 11 - lineMid) < 3, JSON.stringify(hd2));
+  const shifts = await page.evaluate(() => window.__shifts);
+  const blend = await page.evaluate(() => getComputedStyle(document.getElementById('sr-live-host').shadowRoot.querySelector('.handle'), '::after').transitionDuration);
+  check('dot: a new color blends in (450ms) and the dot springs once, and only when the color changes', shifts.length >= 1 && shifts.every((x) => /\/settle$/.test(x)) && shifts[0].startsWith('fix2') && /^0\.45s/.test(blend) && !(await dotOn(page)).working && await page.evaluate(() => !document.getElementById('sr-live-host').shadowRoot.querySelector('.handle').classList.contains('shift')), JSON.stringify({ shifts, blend }));
   await page.keyboard.down('Shift'); for (let i = 0; i < 28; i++) await page.keyboard.press('ArrowLeft'); await page.keyboard.up('Shift');
   await page.keyboard.press('Backspace');
   await sleep(700);
@@ -216,7 +221,7 @@ try {
   check('dot: a click proofreads the whole box and shows the note', whole.value === "I don't ok think they're going to win today." && whole.note === '2 fixes', JSON.stringify(whole));
   await sleep(700);
   const clean = await dotOn(page);
-  check('dot: with nothing left to fix it turns green and stops pulsing, still with no number', clean.state === 'clean' && clean.color === GREEN && !clean.working && !/\d/.test(clean.text) && /no mistakes/.test(clean.label), JSON.stringify(clean));
+  check('dot: with nothing left to fix it turns green and stops pulsing, still with no number', clean.state === 'clean' && clean.color === GREEN && !clean.working && clean.halo === 'none' && !/\d/.test(clean.text) && /no mistakes/.test(clean.label), JSON.stringify(clean));
   await page.evaluate(() => document.querySelectorAll('#sr-toast').forEach((n) => n.remove()));
 
   // 4c. The sentence from a real report: Caps Lock, "name are", a place run into "the", lowercase i.
@@ -321,7 +326,7 @@ try {
   await page.evaluate(() => { const ta = document.getElementById('ta'); ta.value = "I don't know."; ta.dispatchEvent(new Event('input', { bubbles: true })); });
   await sleep(700);
   const dotHint = await dotOn(page);
-  check('School: with only suggestions left the dot is blue', dotHint.state === 'hint' && dotHint.color === BLUE && /1 suggestion/.test(dotHint.label), JSON.stringify(dotHint));
+  check('School: with only suggestions left the dot is blue', dotHint.state === 'hint' && dotHint.color === BLUE && dotHint.halo === 'halo' && /1 suggestion/.test(dotHint.label), JSON.stringify(dotHint));
 
   await sw.evaluate(() => chrome.storage.sync.set({ srSchool: false }));
   await sleep(300);
@@ -372,7 +377,7 @@ try {
   await rp.click('#ta');
   await rp.keyboard.type('we was late.');
   await sleep(700);
-  const still = await rp.evaluate(() => [...document.getElementById('sr-live-host').shadowRoot.querySelectorAll('.u, .handle')].map((u) => `${getComputedStyle(u).animationName}/${getComputedStyle(u).transitionDuration}`));
+  const still = await rp.evaluate(() => { const sr = document.getElementById('sr-live-host').shadowRoot, h = sr.querySelector('.handle'); return [...sr.querySelectorAll('.u, .handle')].map((u) => `${getComputedStyle(u).animationName}/${getComputedStyle(u).transitionDuration}`).concat(`${getComputedStyle(h, '::before').animationName}/0s`); });
   check('reduced motion: nothing animates', still.length >= 2 && still.every((x) => /^none\/0s/.test(x)), JSON.stringify(still));
   await rp.close();
 

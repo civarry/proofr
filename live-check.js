@@ -66,14 +66,14 @@
     /* Beside the box: one dot by the first line, and its color is the news.
        Mistakes to fix: yellow for 1, orange for 2 or 3, red for 4 or more.
        Blue: only School suggestions. Green: nothing found.
-       Grey: an empty box. It pulses while a click proofreads the whole box.
+       Grey: an empty box. It blinks while a click proofreads the whole box.
        The button is 22px to be easy to hit; the dot inside is 12px. */
     .handle { position: fixed; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%;
       background: transparent; pointer-events: auto; cursor: pointer; }
     .handle[hidden] { display: none; }
     .handle::after { content: ""; position: absolute; left: 5px; top: 5px; width: 12px; height: 12px; border-radius: 50%;
       background: var(--dot, var(--ok)); box-shadow: 0 1px 2px rgba(0,0,0,.22);
-      transition: background-color 200ms ease, transform 120ms cubic-bezier(0, 0, 0, 1), box-shadow 120ms ease; }
+      transition: background-color 450ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(0, 0, 0, 1), box-shadow 120ms ease; }
     /* Pointed at: it grows a little and gets a ring in its own color, so it reads as a button. */
     .handle:hover::after { transform: scale(1.2); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dot, var(--ok)) 22%, transparent), 0 1px 2px rgba(0,0,0,.22); }
     .handle[data-state="fix"] { --dot: var(--fix); }
@@ -83,6 +83,18 @@
     .handle[data-state="clean"] { --dot: var(--ok); }
     .handle[data-state="empty"] { --dot: var(--idle); }
     .handle.working::after { animation: pulse 900ms ease-in-out infinite; }
+    /* While there is something to fix (or a suggestion), a faint ring in the dot's
+       color swells out from behind it and fades, about every 3 seconds. The dot itself
+       never moves or dims, so it reads as "there is something here", not as an alarm.
+       Green and grey stay still; it stops while pointed at or working. */
+    .handle::before { content: ""; position: absolute; left: 5px; top: 5px; width: 12px; height: 12px; border-radius: 50%;
+      background: var(--dot, var(--ok)); opacity: 0; pointer-events: none;
+      transition: background-color 450ms cubic-bezier(.4, 0, .2, 1); }
+    .handle[data-state="fix"]::before, .handle[data-state="hint"]::before { animation: halo 3s cubic-bezier(0, 0, .2, 1) infinite; }
+    .handle:hover::before, .handle.working::before { animation: none; }
+    /* When the color changes (a mistake found, one fixed, all clear), the new color
+       blends in over 450ms while the dot swells a touch and springs back. */
+    .handle.shift::after { animation: settle 520ms cubic-bezier(.34, 1.4, .64, 1); }
     /* What the dot means, the moment you point at it (a title shows only after a second). */
     .tip { position: fixed; pointer-events: none; white-space: nowrap; padding: 6px 10px; border-radius: 8px;
       background: var(--ink); color: var(--card); font: 600 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -100,6 +112,8 @@
     .card.enter { animation: card-in 140ms cubic-bezier(0, 0, 0, 1) both; }
     .card.leave { animation: fade-out 120ms cubic-bezier(0.3, 0, 1, 1) both; }
     @keyframes pulse { 50% { opacity: .35; } }
+    @keyframes halo { 0% { transform: scale(1); opacity: 0; } 12% { transform: scale(1.35); opacity: .45; } 70%, 100% { transform: scale(2.5); opacity: 0; } }
+    @keyframes settle { 0% { transform: scale(1); } 40% { transform: scale(1.3); } 100% { transform: scale(1); } }
     @keyframes draw-in { from { transform: scaleX(0); } to { transform: scaleX(1); } }
     @keyframes shrink-away { from { transform: scaleX(1); opacity: 1; } to { transform: scaleX(0); opacity: 0; } }
     @keyframes fade-out { to { opacity: 0; } }
@@ -294,8 +308,18 @@
     draw();
   }
 
+  // The dot swells and springs back once when its color changes (restarted if it changes again mid-way).
+  let shownLook = '', settleTimer = 0;
+  function settle() {
+    handle.classList.remove('shift');
+    void handle.offsetWidth;
+    handle.classList.add('shift');
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => handle.classList.remove('shift'), 560);
+  }
+
   function placeHandle() {
-    if (!el || !el.isConnected || !hasText) { handle.hidden = true; return; }
+    if (!el || !el.isConnected || !hasText) { handle.hidden = true; shownLook = ''; return; }
     attach();
     const r = el.getBoundingClientRect();
     const { top, bottom } = viewRect(el);
@@ -305,6 +329,9 @@
     const hints = marks.length - n;
     handle.dataset.state = empty ? 'empty' : n ? 'fix' : hints ? 'hint' : 'clean';
     handle.dataset.level = n >= 4 ? '3' : n >= 2 ? '2' : n ? '1' : '0'; // yellow, orange, red
+    const look = `${handle.dataset.state}${handle.dataset.level}`;
+    if (shownLook && look !== shownLook && !handle.classList.contains('working')) settle();
+    shownLook = look;
     const what = n ? `${n} mistake${n === 1 ? '' : 's'}` : hints ? `${hints} suggestion${hints === 1 ? '' : 's'}` : '';
     handle.setAttribute('aria-label', empty ? 'Proofr: start typing and mistakes are underlined as you go' : what ? `Proofread this text box: ${what} underlined` : 'Proofread this text box: no mistakes underlined');
     handle.dataset.tip = empty ? 'Start typing. I\'ll check as you go.' : what ? `${what}. Click to fix the whole box.` : 'No mistakes found. Click to proofread the whole box.';
@@ -391,6 +418,7 @@
     hasText = false;
     layer.textContent = '';
     handle.hidden = true;
+    shownLook = ''; // a new box shows its dot without a spring
     empty = false;
     working = false; // leaving the box: stop at once
     handle.classList.remove('working');
